@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::error::Error;
 
 use async_openai::{
@@ -76,6 +77,7 @@ pub async fn ask_openai_stream(
     messages: Vec<Value>,
     model: String,
 	provider: Provider,
+    parameters: Option<HashMap<String, Value>>,
 ) -> Result<(), Box<dyn Error>> {
 	let base_url = provider.base_url;
 	let key_manager_local = KeyManager::new("wisp".to_string());
@@ -83,12 +85,52 @@ pub async fn ask_openai_stream(
 	let client = get_openai_client(base_url, api_key)?;
     let converted_messages = convert_messages(messages)?;
 
-    let request = CreateChatCompletionRequestArgs::default()
-        .max_tokens(1024u32)
-		.model(model)
+    let mut args = CreateChatCompletionRequestArgs::default();
+    args.model(model.clone())
         .messages(converted_messages)
-        .stream(true)
-        .build()?;
+        .stream(true);
+    let request_builder = &mut args;
+
+    // Apply custom parameters if provided
+    if let Some(params) = parameters {
+        // Apply temperature
+        if let Some(temp) = params.get("temperature").and_then(|v| v.as_f64()) {
+            request_builder.temperature(temp as f32);
+        }
+        
+        // Apply top_p
+        if let Some(top_p) = params.get("top_p").and_then(|v| v.as_f64()) {
+            request_builder.top_p(top_p as f32);
+        }
+        
+        // Apply max_tokens
+        if let Some(max_tokens) = params.get("max_tokens").and_then(|v| v.as_i64()) {
+            request_builder.max_tokens(max_tokens as u32);
+        } else {
+            // Default max_tokens
+            request_builder.max_tokens(1024u32);
+        }
+        
+        // Apply presence_penalty
+        if let Some(penalty) = params.get("presence_penalty").and_then(|v| v.as_f64()) {
+            request_builder.presence_penalty(penalty as f32);
+        }
+        
+        // Apply frequency_penalty
+        if let Some(penalty) = params.get("frequency_penalty").and_then(|v| v.as_f64()) {
+            request_builder.frequency_penalty(penalty as f32);
+        }
+        
+        // Apply seed if supported
+        if let Some(seed) = params.get("seed").and_then(|v| v.as_i64()) {
+            request_builder.seed(seed as i32);
+        }
+    } else {
+        // Default max_tokens
+        request_builder.max_tokens(1024u32);
+    }
+
+    let request = args.build()?;
 
     let mut stream = client.chat().create_stream(request).await?;
 

@@ -15,6 +15,7 @@ import AutoScrollWrapper from "./AutoScrollWrapper.vue";
 import { ref, inject, watch, onMounted, computed } from "vue";
 import { Message, MessageRole } from "../libs/types";
 import { useProviderStore } from "../stores/provider";
+import { useCharacterStore } from "../stores/character";
 import MessageBubbleEditor from "./MessageBubbleEditor.vue";
 import { useChatStore } from "../stores/chat";
 
@@ -25,12 +26,24 @@ const chatStore = inject("ChatStore") as ReturnType<typeof useChatStore>;
 const providerStore = inject("ProviderStore") as ReturnType<
   typeof useProviderStore
 >;
+const characterStore = inject("CharacterStore") as ReturnType<
+  typeof useCharacterStore
+>;
 
 const providerOptions = computed<SelectOption[]>(() =>
   providerStore.providers.map((p) => ({
     label: p.display_name,
     value: p.name,
   }))
+);
+
+const characterOptions = computed<SelectOption[]>(() =>
+  [{ label: "Default (No Character)", value: "" }].concat(
+    characterStore.characters.map((c) => ({
+      label: c.name,
+      value: c.id,
+    }))
+  )
 );
 
 const modelOptions = computed<SelectOption[]>(
@@ -50,6 +63,18 @@ watch(chosenProviderId, (newId) => {
       providerStore.providers.find((p) => p.name === newId) ?? null;
   } else {
     chatStore.chosenProvider = null;
+  }
+});
+
+const chosenCharacterId = ref<string | null>(null);
+watch(chosenCharacterId, (newId) => {
+  characterStore.selectCharacter(newId);
+  if (newId) {
+    const character = characterStore.characters.find((c) => c.id === newId);
+    if (character) {
+      // Auto-select the model from the character
+      chatStore.chosenModel = character.model_id;
+    }
   }
 });
 
@@ -260,6 +285,16 @@ onMounted(() => {
                 filterable
                 :disabled="!chatStore.chosenProvider"
                 style="min-width: 12em;"
+              />
+              <span style="font-size: 1.5em;">@</span>
+              <n-select
+                v-model:value="chosenCharacterId"
+                :options="characterOptions"
+                placeholder="Select character"
+                :consistent-menu-width="false"
+                clearable
+                filterable
+                style="width: 10em;"
               />
             </n-space>
             <n-button

@@ -5,7 +5,7 @@ export const usePromptAssembly = () => {
   const promptStore = usePromptStore()
 
   const assembleMessages = (userMessage: string) => {
-    return [
+	return [
       {
         role: 'system',
         message: INTERFACE_PROMPT

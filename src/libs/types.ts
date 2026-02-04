@@ -35,6 +35,41 @@ export interface ModelMetadata {
 	description?: string;
 }
 
+export interface ParameterDefinition {
+	name: string;
+	label: string;
+	description: string;
+	type: 'number' | 'string' | 'boolean' | 'enum' | 'array';
+	required?: boolean;
+	default?: any;
+	min?: number;
+	max?: number;
+	enum_values?: string[];
+	step?: number;
+}
+
+export interface CharacterParameter {
+	name: string;
+	value: any;
+	metadata?: {
+		label?: string;
+		description?: string;
+	}
+}
+
+export interface Character {
+	id: string;
+	name: string;
+	alias?: string;
+	avatar?: string;
+	description: string;
+	system_prompt: string;
+	parameters: CharacterParameter[];
+	model_id: string;
+	created_at: number;
+	updated_at: number;
+}
+
 export interface TextGenerationParams {
 	temperature?: number;
 	top_p?: number;

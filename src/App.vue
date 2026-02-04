@@ -26,6 +26,7 @@ import { useMermaid } from "./composables/useMermaid";
 import { useVNodeRenderer } from "./composables/useMarkdown";
 import { useChatStore } from "./stores/chat";
 import { useProviderStore } from './stores/provider';
+import { useCharacterStore } from './stores/character';
 
 const osThemeRef = useOsTheme();
 const isDark = computed(() => osThemeRef.value === "dark");
@@ -40,6 +41,9 @@ onMounted(() => {
     const providerStore = useProviderStore();
     provide("ProviderStore", providerStore);
     providerStore.loadProviders()
+    const characterStore = useCharacterStore();
+    provide("CharacterStore", characterStore);
+    characterStore.loadCharacters()
   })()
 })
 

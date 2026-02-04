@@ -1,4 +1,4 @@
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 // ========== COMMON STRUCTURES ==========
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -92,19 +92,13 @@ pub enum ModelInfo {
     },
 
     #[serde(rename = "image_generation")]
-    ImageGeneration {
-        parameters: ImageGenerationParams,
-    },
+    ImageGeneration { parameters: ImageGenerationParams },
 
     #[serde(rename = "embedding")]
-    Embedding {
-        parameters: EmbeddingParams,
-    },
+    Embedding { parameters: EmbeddingParams },
 
     #[serde(rename = "reranker")]
-    Reranker {
-        parameters: RerankerParams,
-    },
+    Reranker { parameters: RerankerParams },
 
     #[serde(rename = "audio")]
     Audio {

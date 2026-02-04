@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { Message, Conversation, Provider, Model } from "./types";
+import { Message, Conversation, Provider, Model, Character } from "./types";
 
 export async function hashContent(content: string) {
 	return invoke<string>('hash_content', { content })
@@ -146,4 +146,25 @@ export async function configsUpdateModel(providerName: string, modelName: string
 
 export async function configsDeleteModel(providerName: string, modelName: string) {
     return invoke<void>('configs_delete_model', { providerName, modelName })
+}
+
+// Character commands
+export async function configsGetCharacters() {
+    return invoke<Character[]>('configs_get_characters', {})
+}
+
+export async function configsGetCharacter(id: string) {
+    return invoke<Character | null>('configs_get_character', { id })
+}
+
+export async function configsCreateCharacter(character: Character) {
+    return invoke<void>('configs_create_character', { character })
+}
+
+export async function configsUpdateCharacter(id: string, character: Character) {
+    return invoke<void>('configs_update_character', { id, character })
+}
+
+export async function configsDeleteCharacter(id: string) {
+    return invoke<void>('configs_delete_character', { id })
 }

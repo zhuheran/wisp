@@ -1,7 +1,7 @@
-use thiserror::Error;
-use serde::{Serialize, Deserialize};
 use super::model::Model;
 use crate::key_manager::{KeyManager, KeyManagerError};
+use serde::{Deserialize, Serialize};
+use thiserror::Error;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Provider {
@@ -13,12 +13,12 @@ pub struct Provider {
 
 #[derive(Error, Debug)]
 pub enum ProviderError {
-	#[error("KeyManager error: {0}")]
-	KeyManagerError(#[from] KeyManagerError),
-	#[error("Model not found: {0}")]
-	ModelNotFoundError(String),
-	#[error("Model already exists: {0}")]
-	ModelAlreadyExistError(String),
+    #[error("KeyManager error: {0}")]
+    KeyManagerError(#[from] KeyManagerError),
+    #[error("Model not found: {0}")]
+    ModelNotFoundError(String),
+    #[error("Model already exists: {0}")]
+    ModelAlreadyExistError(String),
 }
 
 #[allow(unused)]
@@ -36,8 +36,14 @@ impl Provider {
     }
 
     pub fn add_model(&mut self, model: Model) -> Result<(), ProviderError> {
-        if self.models.iter().any(|m| m.metadata.name == model.metadata.name) {
-            return Err(ProviderError::ModelAlreadyExistError(model.metadata.name.clone()));
+        if self
+            .models
+            .iter()
+            .any(|m| m.metadata.name == model.metadata.name)
+        {
+            return Err(ProviderError::ModelAlreadyExistError(
+                model.metadata.name.clone(),
+            ));
         }
         self.models.push(model);
         Ok(())

@@ -1,11 +1,12 @@
 import { defineStore } from 'pinia'
-import { ref, watch, type ComputedRef, computed, reactive } from 'vue'
+import { ref, watch, type ComputedRef, computed, reactive, inject } from 'vue'
 import type { Message, Conversation, Provider } from '../libs/types'
 import * as Commands from '../libs/commands'
 import MessageThreadTree from '../libs/message-thread-tree'
 import { MessageRole } from '../libs/types';
 import debounce from "lodash/debounce";
 import { useOpenAI } from '../composables/useOpenAI'
+import { useCharacterStore } from './character'
 
 type MessageDisplay = Omit<Omit<Message, 'text'>, 'reasoning'> & {
 	over: boolean,
@@ -23,6 +24,9 @@ export const useChatStore = defineStore('chat', () => {
 	const conversations = ref<Conversation[]>([])
 	const chosenModel = ref<string | null>(null)
 	const chosenProvider = ref<Provider | null>(null)
+
+	const characterStore = inject("CharacterStore") as ReturnType<typeof useCharacterStore> | null
+	const currentCharacter = computed(() => characterStore?.currentCharacter || null)
 
 	const messages = ref<Map<string, Message>>(new Map())
 
@@ -81,6 +85,8 @@ export const useChatStore = defineStore('chat', () => {
 					if (onFinish) onFinish(responseText, !!reasoningText ? reasoningText : undefined);
 				},
 				true,
+				false,
+				currentCharacter.value,
 			);
 		}
 		catch (e) {
@@ -135,7 +141,8 @@ export const useChatStore = defineStore('chat', () => {
 					if (onFinish) onFinish(responseText, !!reasoningText ? reasoningText : undefined);
 				},
 				true,
-				insertGuidance
+				insertGuidance,
+				currentCharacter.value,
 			);
 		}
 		catch (e) {

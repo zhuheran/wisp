@@ -3,7 +3,7 @@ use std::sync::Mutex;
 
 use crate::{
     cache::DiagramCacheEntry,
-    configs::{model, provider::{self, Provider}},
+    configs::{model, character, provider::{self, Provider}},
 	db::types::{Conversation, Message, ThreadTreeItem},
     inet::HttpClient,
     types::AppData,
@@ -231,8 +231,9 @@ pub async fn ask_openai_stream(
     messages: Vec<Value>,
     model: String,
 	provider: Provider,
+    parameters: Option<HashMap<String, Value>>,
 ) -> Result<(), String> {
-    crate::api::ask_openai_stream(app_handle, messages, model, provider)
+    crate::api::ask_openai_stream(app_handle, messages, model, provider, parameters)
         .await
         .map_err(|e| e.to_string())
 }
@@ -420,4 +421,64 @@ pub async fn list_conversations(app_handle: AppHandle) -> Result<Vec<Conversatio
     let mut state = state.lock().unwrap();
 
     state.chat.list_conversations().map_err(|e| e.to_string())
+}
+
+// Character commands
+#[tauri::command]
+pub async fn configs_get_characters(
+    app_handle: AppHandle,
+) -> Result<Vec<character::Character>, String> {
+    let state = app_handle.state::<Mutex<AppData>>();
+    let state = state.lock().unwrap();
+    Ok(state.config_manager.get_characters())
+}
+
+#[tauri::command]
+pub async fn configs_get_character(
+    app_handle: AppHandle,
+    id: String,
+) -> Result<Option<character::Character>, String> {
+    let state = app_handle.state::<Mutex<AppData>>();
+    let state = state.lock().unwrap();
+    Ok(state.config_manager.get_character(&id))
+}
+
+#[tauri::command]
+pub async fn configs_create_character(
+    app_handle: AppHandle,
+    character: character::Character,
+) -> Result<(), String> {
+    let state = app_handle.state::<Mutex<AppData>>();
+    let state = state.lock().unwrap();
+    state
+        .config_manager
+        .add_character(character)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn configs_update_character(
+    app_handle: AppHandle,
+    id: String,
+    character: character::Character,
+) -> Result<(), String> {
+    let state = app_handle.state::<Mutex<AppData>>();
+    let state = state.lock().unwrap();
+    state
+        .config_manager
+        .update_character(&id, character)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn configs_delete_character(
+    app_handle: AppHandle,
+    id: String,
+) -> Result<(), String> {
+    let state = app_handle.state::<Mutex<AppData>>();
+    let state = state.lock().unwrap();
+    state
+        .config_manager
+        .delete_character(&id)
+        .map_err(|e| e.to_string())
 }

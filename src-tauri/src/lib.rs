@@ -64,7 +64,7 @@ pub fn run() {
 			commands::set_api_key,
             commands::get_api_key,
             commands::delete_api_key,
-			commands::configs_get_providers,
+            commands::configs_get_providers,
 			commands::configs_get_provider,
 			commands::configs_create_provider,
 			commands::configs_update_provider,
@@ -73,6 +73,11 @@ pub fn run() {
 			commands::configs_get_model,
 			commands::configs_update_model,
 			commands::configs_delete_model,
+			commands::configs_get_characters,
+			commands::configs_get_character,
+			commands::configs_create_character,
+			commands::configs_update_character,
+			commands::configs_delete_character,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
