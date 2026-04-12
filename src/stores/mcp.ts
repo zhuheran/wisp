@@ -335,108 +335,211 @@ export const useMcpStore = defineStore('mcp', () => {
     
     if (toolsToUse.length === 0) return ''
 
-    const toolDescriptions = toolsToUse.map((tool) => {
-      const params = tool.inputSchema.properties
-        ? Object.entries(tool.inputSchema.properties)
-            .map(([name, prop]) => `    - ${name}: ${(prop as any).description || (prop as any).type}`)
-            .join('\n')
-        : '    (no parameters)'
+    // 按 server 分组显示工具
+    const toolsByServer = toolsToUse.reduce((acc, tool) => {
+      if (!acc[tool.serverId]) acc[tool.serverId] = []
+      acc[tool.serverId].push(tool)
+      return acc
+    }, {} as Record<string, NormalizedTool[]>)
 
-      return `${tool.qualifiedName}:\n${params}${tool.description ? `\n  Description: ${tool.description}` : ''}`
+    const toolSections = Object.entries(toolsByServer).map(([serverId, serverTools]) => {
+      const toolList = serverTools.map(tool => {
+        const params = tool.inputSchema.properties
+          ? Object.entries(tool.inputSchema.properties)
+              .map(([name, prop]) => `      - ${name}: ${(prop as any).description || (prop as any).type}`)
+              .join('\n')
+          : '      (no parameters)'
+
+        return `    - **${tool.name}**: ${tool.description || 'No description'}\n${params}`
+      }).join('\n\n')
+
+      return `### Server: \`${serverId}\`\n${toolList}`
     })
 
     return `## Available Tools
 
-You have access to the following tools. When you need to use a tool, you MUST output a tool call in the exact format shown below.
+You have access to the following tools organized by server.
 
-### Tool List:
-${toolDescriptions.join('\n\n')}
+### CRITICAL: Tool Name Format
+When calling a tool, you MUST use the **full qualified name** in this exact format:
+\`server_id:tool_name\`
+
+Examples:
+- CORRECT: \`"chrome-devtools:new_page"\`
+- CORRECT: \`"filesystem:read_file"\`
+- WRONG: \`"new_page"\` (missing server_id)
+- WRONG: \`"call-123:new_page"\` (don't add call-id prefix)
+
+### Tool List by Server:
+
+${toolSections.join('\n\n')}
 
 ### How to Call Tools:
-When you want to use a tool, output EXACTLY this format on a separate line:
 
-\`\`\`tool_call
-{"name": "server_id:tool_name", "arguments": {"arg1": "value1"}}
+When you want to use a tool, output EXACTLY this JSON format:
+
+\`\`\`json
+{
+  "name": "server_id:tool_name",
+  "arguments": {
+    "arg1": "value1",
+    "arg2": "value2"
+  }
+}
 \`\`\`
-
-IMPORTANT:
-- The tool name must be the full qualified name including server_id prefix (e.g., "chrome-devtools:new_page")
-- Arguments must be a valid JSON object
-- Output ONLY the code block, nothing else
-- Do NOT use any other format like <|tool_call|> or XML tags
 
 ### Example:
-If you want to call the tool "chrome-devtools:new_page" with url "https://example.com":
 
-\`\`\`tool_call
-{"name": "chrome-devtools:new_page", "arguments": {"url": "https://example.com"}}
+To open a new page in Chrome:
+\`\`\`json
+{
+  "name": "chrome-devtools:new_page",
+  "arguments": {
+    "url": "https://example.com"
+  }
+}
 \`\`\`
 
-After you output the tool call, the system will execute it and return the result. You can then continue the conversation based on the result.`
+**IMPORTANT**:
+- Always use the full \`server_id:tool_name\` format
+- Never add UUID/call-id prefixes
+- Arguments must be a valid JSON object
+- Output ONLY the JSON, no explanations
+`
   }
 
   const parseToolCallFromResponse = (response: string): { name: string; arguments: Record<string, unknown> } | null => {
+    console.log('[MCP] Parsing tool call from response, length:', response.length)
+    
+    // 尝试多种格式匹配
     const patterns = [
-      /```tool_call\s*\n?([\s\S]*?)\n?```/,
+      // Pattern 1: ```json ... ``` 或 ```tool_call ... ```
+      /```(?:json|tool_call)\s*\n?([\s\S]*?)\n?```/,
+      // Pattern 2: <|tool_call|>...<tool_call|>
       /<\|tool_call\|>([\s\S]*?)<\|tool_call\|>/,
+      // Pattern 3: <tool_call ...>...</tool_call >
       /<tool_call(?:\s+[^>]*)?>([\s\S]*?)<\/tool_call>/,
-      /\{"tool_call":\s*\{[\s\S]*?\}\}/,
-      /\{"name":\s*"[^"]+",\s*"arguments":\s*\{[\s\S]*?\}\}/,
     ]
 
     for (const pattern of patterns) {
       const match = response.match(pattern)
       if (match) {
-        try {
-          let jsonStr = match[1] || match[0]
-          
-          const parsed = JSON.parse(jsonStr)
-          
-          if (parsed.tool_call) {
-            return {
-              name: parsed.tool_call.name,
-              arguments: parsed.tool_call.arguments || {}
-            }
+        console.log('[MCP] Matched pattern:', pattern.source.substring(0, 30))
+        const content = match[1].trim()
+        
+        // 尝试解析 JSON
+        const result = tryParseToolCallJson(content)
+        if (result) return result
+      }
+    }
+
+    // Pattern 4: 直接在响应中查找 JSON 对象
+    // 使用更健壮的方法：找到所有可能的 JSON 对象
+    const jsonStartIndices: number[] = []
+    for (let i = 0; i < response.length; i++) {
+      if (response[i] === '{') {
+        jsonStartIndices.push(i)
+      }
+    }
+
+    for (const startIndex of jsonStartIndices) {
+      // 尝试从每个 '{' 开始解析 JSON
+      for (let endIndex = response.length; endIndex > startIndex; endIndex--) {
+        if (response[endIndex - 1] === '}') {
+          const jsonStr = response.slice(startIndex, endIndex)
+          const result = tryParseToolCallJson(jsonStr)
+          if (result) {
+            console.log('[MCP] Found tool call JSON at position:', startIndex)
+            return result
           }
-          
-          if (parsed.name) {
-            // Handle name format - could be:
-            // 1. "call-id:tool_name" (AI adds call-id prefix)
-            // 2. "server_id:tool_name" (our expected format)
-            let rawName = parsed.name as string
-            let toolName: string
-            
-            const parts = rawName.split(':')
-            if (parts.length >= 2) {
-              // Last part is always the tool name
-              toolName = parts[parts.length - 1]
-            } else {
-              toolName = rawName
-            }
-            
-            // Find the tool in our registry by matching the tool name
-            // and return the qualified name (server_id:tool_name)
-            const matchedTool = tools.value.find(t => t.name === toolName)
-            if (matchedTool) {
-              return {
-                name: matchedTool.qualifiedName,
-                arguments: parsed.arguments || {}
-              }
-            }
-            
-            // If no match found, return the original name
-            return {
-              name: rawName,
-              arguments: parsed.arguments || {}
-            }
-          }
-        } catch (e) {
-          console.warn('Failed to parse tool call:', e)
         }
       }
     }
 
+    console.log('[MCP] No tool call pattern matched')
     return null
+  }
+
+  const tryParseToolCallJson = (jsonStr: string): { name: string; arguments: Record<string, unknown> } | null => {
+    try {
+      const parsed = JSON.parse(jsonStr)
+      
+      // 格式 1: {"tool_call": {"name": "...", "arguments": {...}}}
+      if (parsed.tool_call?.name) {
+        return resolveToolName(parsed.tool_call.name, parsed.tool_call.arguments)
+      }
+      
+      // 格式 2: {"name": "...", "arguments": {...}}
+      if (parsed.name) {
+        return resolveToolName(parsed.name, parsed.arguments)
+      }
+    } catch (e) {
+      // JSON 解析失败，忽略
+    }
+    
+    return null
+  }
+
+  const resolveToolName = (rawName: string, rawArgs?: Record<string, unknown>): { name: string; arguments: Record<string, unknown> } | null => {
+    // 清理可能的 UUID 前缀（AI 可能错误添加）
+    let cleanedName = rawName
+    
+    const parts = rawName.split(':')
+    if (parts.length >= 2) {
+      const firstPart = parts[0]
+      // 检测是否为 UUID（36字符，含连字符）
+      if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(firstPart)) {
+        // UUID 前缀，移除它
+        cleanedName = parts.slice(1).join(':')
+        console.warn(`[MCP] Removed UUID prefix from tool name: ${rawName} → ${cleanedName}`)
+      }
+    }
+    
+    // 尝试精确匹配 qualifiedName（server_id:tool_name）
+    const exactMatch = tools.value.find(t => t.qualifiedName === cleanedName)
+    if (exactMatch) {
+      return {
+        name: exactMatch.qualifiedName,
+        arguments: rawArgs || {}
+      }
+    }
+    
+    // 降级：如果只提供了 tool_name（无 server_id），尝试模糊匹配
+    if (!cleanedName.includes(':')) {
+      const matches = tools.value.filter(t => t.name === cleanedName)
+      
+      if (matches.length === 1) {
+        // 唯一匹配
+        console.warn(`[MCP] Tool name missing server_id, auto-resolved: ${cleanedName} → ${matches[0].qualifiedName}`)
+        return {
+          name: matches[0].qualifiedName,
+          arguments: rawArgs || {}
+        }
+      } else if (matches.length > 1) {
+        // 多义性错误
+        const serverIds = matches.map(m => m.serverId).join(', ')
+        console.error(
+          `[MCP] Ambiguous tool name "${cleanedName}". Multiple servers provide this tool: [${serverIds}]. ` +
+          `Please use the full qualified name (e.g., "server_id:${cleanedName}")`
+        )
+        // 返回第一个匹配，但记录警告
+        return {
+          name: matches[0].qualifiedName,
+          arguments: rawArgs || {}
+        }
+      }
+    }
+    
+    // 完全未找到
+    const availableTools = tools.value.map(t => t.qualifiedName).join(', ')
+    console.error(
+      `[MCP] Tool not found: "${cleanedName}". ` +
+      `Available tools: [${availableTools}]`
+    )
+    return {
+      name: cleanedName,
+      arguments: rawArgs || {}
+    }
   }
 
   // Server management

@@ -86,8 +86,13 @@ export const useChatStore = defineStore('chat', () => {
 				async () => {
 					updateMessage(botMessageId, responseText, reasoningText);
 					
+					console.log('[Chat] Stream finished. Response length:', responseText.length)
+					console.log('[Chat] Response text (last 500 chars):', responseText.slice(-500))
+					
 					const mcpStore = useMcpStore()
 					const toolCall = mcpStore.parseToolCallFromResponse(responseText)
+					
+					console.log('[Chat] Parsed tool call:', toolCall)
 					
 					if (toolCall) {
 						console.log('[Chat] Detected tool call:', toolCall)
