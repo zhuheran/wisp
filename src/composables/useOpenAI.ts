@@ -5,6 +5,7 @@ import { INTERFACE_PROMPT, INTERFACE_REGENERATE_INSERT } from '../prompt-managem
 import { cloneDeep } from 'lodash'
 import { getUrl } from '../libs/commands'
 import type { Model, Provider, Character } from '../libs/types'
+import { useMcpStore } from '../stores/mcp'
 
 export function useOpenAI() {
 	const isStreaming = ref(false)
@@ -19,6 +20,7 @@ export function useOpenAI() {
 		ignoreLastMessage: boolean = false,
 		insertRegenerateGuidancePrompt: boolean = false,
 		character?: Character | null,
+		enabledMcpTools?: Set<string>,
 	): Promise<void> => {
 		isStreaming.value = true
 		const unlistenContent = await listen<string>('openai_stream_chunk', (event) => {
@@ -39,11 +41,17 @@ Chatting interface version: 1.0.0
 Current time: ${new Date().toString()}
 === END OF ENVIRONMENT INFO ===
 	`;
-			// Combine interface prompt with character's system prompt if available
 			let systemPrompt = INTERFACE_PROMPT + environmentPrompt
 			if (character?.system_prompt) {
 				systemPrompt = character.system_prompt + "\n\n" + systemPrompt
 			}
+			
+			const mcpStore = useMcpStore()
+			const mcpToolsPrompt = mcpStore.getToolsPrompt(enabledMcpTools)
+			if (mcpToolsPrompt) {
+				systemPrompt = systemPrompt + "\n\n" + mcpToolsPrompt
+			}
+			
 			messages.unshift({role: "system", content: systemPrompt})
 			
 			if (ignoreLastMessage) messages = messages.slice(0, -1)

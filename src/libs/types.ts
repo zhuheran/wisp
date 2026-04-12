@@ -144,3 +144,181 @@ export interface Provider {
 	base_url: string;
 	models: Model[];
 }
+
+// ========== MCP Types ==========
+
+export type TransportKind = 'stdio' | 'sse' | 'http';
+
+export interface StdioTransportConfig {
+	kind: 'stdio';
+	command: string;
+	args?: string[];
+	env?: Record<string, string>;
+	cwd?: string;
+}
+
+export interface SseTransportConfig {
+	kind: 'sse';
+	url: string;
+	headers?: Record<string, string>;
+}
+
+export interface HttpTransportConfig {
+	kind: 'http';
+	url: string;
+	headers?: Record<string, string>;
+	sessionId?: string;
+}
+
+export type TransportConfig = StdioTransportConfig | SseTransportConfig | HttpTransportConfig;
+
+export interface ServerConfig {
+	id: string;
+	name: string;
+	transport: TransportConfig;
+	autoReconnect?: boolean;
+	reconnectIntervalMs?: number;
+	maxReconnectAttempts?: number;
+	heartbeatIntervalMs?: number;
+	protocolVersion?: string;
+}
+
+export interface ConnectionStatus {
+	serverId: string;
+	connected: boolean;
+	lastPingAt?: number;
+	reconnectAttempts: number;
+	error?: string;
+}
+
+// Registry Types
+export interface NormalizedTool {
+	name: string;
+	serverId: string;
+	qualifiedName: string;
+	description?: string;
+	inputSchema: {
+		type: 'object';
+		properties?: Record<string, NormalizedProperty>;
+		required?: string[];
+	};
+	annotations?: {
+		title?: string;
+		readOnlyHint?: boolean;
+		destructiveHint?: boolean;
+		idempotentHint?: boolean;
+		openWorldHint?: boolean;
+	};
+}
+
+export interface NormalizedProperty {
+	type: string;
+	description?: string;
+	default?: unknown;
+	enum?: string[];
+	items?: NormalizedProperty;
+	properties?: Record<string, NormalizedProperty>;
+	required?: string[];
+	anyOf?: NormalizedProperty[];
+	oneOf?: NormalizedProperty[];
+}
+
+export interface ToolCallResult {
+	serverId: string;
+	toolName: string;
+	content: ToolCallContent[];
+	isError?: boolean;
+}
+
+export type ToolCallContent =
+	| { type: 'text'; text: string }
+	| { type: 'image'; data: string; mimeType: string }
+	| { type: 'resource'; uri: string; mimeType?: string; text?: string; blob?: string };
+
+// Pipeline Types
+export interface PayloadItem {
+	type: 'text' | 'image' | 'resource';
+	text?: string;
+	data?: string;
+	mimeType?: string;
+	uri?: string;
+	blob?: string;
+}
+
+export interface DetectionResult {
+	kind: 'text' | 'image_base64' | 'image_url' | 'binary_resource' | 'unknown';
+	mimeType: string | null;
+	sizeBytes: number;
+	needsCompression: boolean;
+	needsPrefixFix: boolean;
+	isBase64: boolean;
+}
+
+export interface TransformResult {
+	type: 'text' | 'image_url';
+	text?: string;
+	imageUrl?: { url: string };
+	originalSizeBytes: number;
+	transformedSizeBytes: number;
+	wasCompressed: boolean;
+}
+
+export interface VisionRouteResult {
+	content: VisionContent;
+	fallbackUsed: boolean;
+	fallbackReason?: string;
+}
+
+export type VisionContent =
+	| { type: 'image_url'; image_url: { url: string } }
+	| { type: 'text'; text: string };
+
+export interface PipelineConfig {
+	compressionThresholdBytes: number;
+	maxPayloadBytes: number;
+	jpegQuality: number;
+	maxWidth: number;
+	maxHeight: number;
+	mimeWhitelist: string[];
+	enableCompression: boolean;
+	tempUrlEndpoint?: string;
+}
+
+// Engine Types
+export interface ToolCall {
+	id: string;
+	name: string;
+	arguments: Record<string, unknown>;
+}
+
+export interface ToolResult {
+	toolCallId: string;
+	content: VisionContent[];
+	isError?: boolean;
+}
+
+export interface ConversationMessage {
+	role: 'system' | 'user' | 'assistant' | 'tool';
+	content: string | VisionContent[];
+	toolCalls?: ToolCall[];
+	toolCallId?: string;
+	name?: string;
+}
+
+export interface ConversationLoopConfig {
+	maxToolRounds: number;
+	maxContextTokens: number;
+	imageTokenCost: number;
+	contextWindowSlidingRatio: number;
+	retryAttempts: number;
+	retryDelayMs: number;
+	enableVisionInjection: boolean;
+}
+
+export interface SessionState {
+	id: string;
+	messages: ConversationMessage[];
+	createdAt: number;
+	updatedAt: number;
+	metadata: Record<string, unknown>;
+}

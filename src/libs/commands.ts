@@ -168,3 +168,123 @@ export async function configsUpdateCharacter(id: string, character: Character) {
 export async function configsDeleteCharacter(id: string) {
     return invoke<void>('configs_delete_character', { id })
 }
+
+// MCP commands
+import type {
+    ServerConfig,
+    PipelineConfig,
+    ConversationLoopConfig,
+    SessionState
+} from './types';
+
+export async function mcpGetServers() {
+    return invoke<ServerConfig[]>('mcp_get_servers', {})
+}
+
+export async function mcpGetServer(serverId: string) {
+    return invoke<ServerConfig | null>('mcp_get_server', { serverId })
+}
+
+export async function mcpAddServer(server: ServerConfig) {
+    return invoke<void>('mcp_add_server', { server })
+}
+
+export async function mcpUpdateServer(serverId: string, server: ServerConfig) {
+    return invoke<void>('mcp_update_server', { serverId, server })
+}
+
+export async function mcpRemoveServer(serverId: string) {
+    return invoke<void>('mcp_remove_server', { serverId })
+}
+
+export async function mcpGetPipelineConfig() {
+    return invoke<PipelineConfig>('mcp_get_pipeline_config', {})
+}
+
+export async function mcpUpdatePipelineConfig(config: PipelineConfig) {
+    return invoke<void>('mcp_update_pipeline_config', { config })
+}
+
+export async function mcpGetConversationConfig() {
+    return invoke<ConversationLoopConfig>('mcp_get_conversation_config', {})
+}
+
+export async function mcpUpdateConversationConfig(config: ConversationLoopConfig) {
+    return invoke<void>('mcp_update_conversation_config', { config })
+}
+
+export async function mcpSaveSession(session: SessionState) {
+    return invoke<void>('mcp_save_session', { session })
+}
+
+export async function mcpLoadSession(sessionId: string) {
+    return invoke<SessionState | null>('mcp_load_session', { sessionId })
+}
+
+export async function mcpDeleteSession(sessionId: string) {
+    return invoke<void>('mcp_delete_session', { sessionId })
+}
+
+export async function mcpListSessions() {
+    return invoke<SessionState[]>('mcp_list_sessions', {})
+}
+
+// MCP stdio commands
+import type { ConnectionStatus } from './types'
+
+export async function mcpStdioConnect(config: ServerConfig) {
+    return invoke<void>('mcp_stdio_connect', { config })
+}
+
+export async function mcpStdioDisconnect(serverId: string) {
+    return invoke<void>('mcp_stdio_disconnect', { serverId })
+}
+
+export async function mcpStdioGetStatus(serverId: string) {
+    return invoke<ConnectionStatus | null>('mcp_stdio_get_status', { serverId })
+}
+
+export async function mcpStdioGetAllStatuses() {
+    return invoke<ConnectionStatus[]>('mcp_stdio_get_all_statuses', {})
+}
+
+export async function mcpStdioListTools(serverId: string, cursor?: string) {
+    return invoke<unknown>('mcp_stdio_list_tools', { serverId, cursor })
+}
+
+export async function mcpStdioCallTool(serverId: string, toolName: string, arguments_?: Record<string, unknown>) {
+    return invoke<unknown>('mcp_stdio_call_tool', { serverId, toolName, arguments: arguments_ })
+}
+
+export async function mcpStdioIsConnected(serverId: string) {
+    return invoke<boolean>('mcp_stdio_is_connected', { serverId })
+}
+
+// MCP http commands
+export async function mcpHttpConnect(config: ServerConfig) {
+    return invoke<void>('mcp_http_connect', { config })
+}
+
+export async function mcpHttpDisconnect(serverId: string) {
+    return invoke<void>('mcp_http_disconnect', { serverId })
+}
+
+export async function mcpHttpGetStatus(serverId: string) {
+    return invoke<ConnectionStatus | null>('mcp_http_get_status', { serverId })
+}
+
+export async function mcpHttpGetAllStatuses() {
+    return invoke<ConnectionStatus[]>('mcp_http_get_all_statuses', {})
+}
+
+export async function mcpHttpListTools(serverId: string, cursor?: string) {
+    return invoke<unknown>('mcp_http_list_tools', { serverId, cursor })
+}
+
+export async function mcpHttpCallTool(serverId: string, toolName: string, arguments_?: Record<string, unknown>) {
+    return invoke<unknown>('mcp_http_call_tool', { serverId, toolName, arguments: arguments_ })
+}
+
+export async function mcpHttpIsConnected(serverId: string) {
+    return invoke<boolean>('mcp_http_is_connected', { serverId })
+}

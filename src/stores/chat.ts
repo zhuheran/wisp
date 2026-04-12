@@ -7,6 +7,7 @@ import { MessageRole } from '../libs/types';
 import debounce from "lodash/debounce";
 import { useOpenAI } from '../composables/useOpenAI'
 import { useCharacterStore } from './character'
+import { useMcpStore } from './mcp'
 
 type MessageDisplay = Omit<Omit<Message, 'text'>, 'reasoning'> & {
 	over: boolean,
@@ -24,6 +25,8 @@ export const useChatStore = defineStore('chat', () => {
 	const conversations = ref<Conversation[]>([])
 	const chosenModel = ref<string | null>(null)
 	const chosenProvider = ref<Provider | null>(null)
+	const enabledMcpServers = ref<Set<string>>(new Set())
+	const enabledMcpTools = ref<Set<string>>(new Set())
 
 	const characterStore = inject("CharacterStore") as ReturnType<typeof useCharacterStore> | null
 	const currentCharacter = computed(() => characterStore?.currentCharacter || null)
@@ -51,10 +54,10 @@ export const useChatStore = defineStore('chat', () => {
 		const botMessageId = await addMessage(botMessage, userMessageId, true);
 
 		const updateMessageLocal = (text: string, isReasoning: boolean) => {
-			const message = messages.value.get(botMessageId);
-			if (message) {
-				if (!isReasoning) messages.value.set(botMessageId, { ...message, text });
-				else messages.value.set(botMessageId, { ...message, reasoning: text });
+			const msg = messages.value.get(botMessageId);
+			if (msg) {
+				if (!isReasoning) messages.value.set(botMessageId, { ...msg, text });
+				else messages.value.set(botMessageId, { ...msg, reasoning: text });
 			}
 		};
 		const updateBubbleText = debounce(updateMessageLocal, 10);
@@ -80,13 +83,34 @@ export const useChatStore = defineStore('chat', () => {
 					updateBubbleText(reasoningText, true);
 					if (onReceiving) onReceiving(chunk, true)
 				},
-				() => {
+				async () => {
 					updateMessage(botMessageId, responseText, reasoningText);
+					
+					const mcpStore = useMcpStore()
+					const toolCall = mcpStore.parseToolCallFromResponse(responseText)
+					
+					if (toolCall) {
+						console.log('[Chat] Detected tool call:', toolCall)
+						try {
+							const result = await mcpStore.executeTool(toolCall.name, toolCall.arguments)
+							console.log('[Chat] Tool result:', result)
+							
+							const toolResultText = `[Tool: ${toolCall.name}]\nResult: ${JSON.stringify(result, null, 2)}`
+							responseText += `\n\n---\n${toolResultText}`
+							updateMessage(botMessageId, responseText, reasoningText)
+						} catch (e) {
+							console.error('[Chat] Tool execution failed:', e)
+							responseText += `\n\n---\n[Tool: ${toolCall.name}]\nError: ${e}`
+							updateMessage(botMessageId, responseText, reasoningText)
+						}
+					}
+					
 					if (onFinish) onFinish(responseText, !!reasoningText ? reasoningText : undefined);
 				},
 				true,
 				false,
 				currentCharacter.value,
+				enabledMcpTools.value,
 			);
 		}
 		catch (e) {
@@ -143,6 +167,7 @@ export const useChatStore = defineStore('chat', () => {
 				true,
 				insertGuidance,
 				currentCharacter.value,
+				enabledMcpTools.value,
 			);
 		}
 		catch (e) {
@@ -493,6 +518,8 @@ export const useChatStore = defineStore('chat', () => {
 		isStreaming,
 		chosenModel,
 		chosenProvider,
+		enabledMcpServers,
+		enabledMcpTools,
 		sendMessage,
 		regenerateMessage,
 		deriveMessage,

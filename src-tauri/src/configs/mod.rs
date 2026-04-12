@@ -46,8 +46,10 @@ impl ConfigManager {
             .app_data_dir()
             .expect("Failed to get config directory");
 
-        let config_path = config_dir.join("configs.toml");
+        // 确保配置目录存在
+        fs::create_dir_all(&config_dir).map_err(|e| format!("Failed to create config directory: {}", e))?;
 
+        let config_path = config_dir.join("configs.toml");
         let toml_content = fs::read_to_string(&config_path).unwrap_or_default();
 
         let configs = toml::from_str::<Config>(&toml_content).unwrap_or_default();

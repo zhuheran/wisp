@@ -5,11 +5,14 @@ import {
   NEmpty,
   NIcon,
   NSelect,
+  NTag,
+  NPopover,
+  NSpace,
   useThemeVars,
   useMessage,
   type SelectOption,
 } from "naive-ui";
-import { Chat48Regular, Send20Regular } from "@vicons/fluent";
+import { Chat48Regular, Send20Regular, Toolbox24Regular } from "@vicons/fluent";
 import MessageBubble from "./MessageBubble.vue";
 import AutoScrollWrapper from "./AutoScrollWrapper.vue";
 import { ref, inject, watch, onMounted, computed } from "vue";
@@ -18,6 +21,7 @@ import { useProviderStore } from "../stores/provider";
 import { useCharacterStore } from "../stores/character";
 import MessageBubbleEditor from "./MessageBubbleEditor.vue";
 import { useChatStore } from "../stores/chat";
+import { useMcpStore } from "../stores/mcp";
 
 const theme = useThemeVars();
 const notificationMessage = useMessage();
@@ -29,6 +33,7 @@ const providerStore = inject("ProviderStore") as ReturnType<
 const characterStore = inject("CharacterStore") as ReturnType<
   typeof useCharacterStore
 >;
+const mcpStore = useMcpStore();
 
 const providerOptions = computed<SelectOption[]>(() =>
   providerStore.providers.map((p) => ({
@@ -45,6 +50,43 @@ const characterOptions = computed<SelectOption[]>(() =>
     }))
   )
 );
+
+// MCP Server Selection (instead of individual tools)
+const mcpConnectedServers = computed(() => {
+  return mcpStore.servers.filter(server => {
+    const status = mcpStore.getConnectionStatus(server.id)
+    return status?.connected
+  })
+})
+
+const mcpEnabledServers = ref<Set<string>>(new Set())
+
+const toggleMcpServer = (serverId: string) => {
+  if (mcpEnabledServers.value.has(serverId)) {
+    mcpEnabledServers.value.delete(serverId)
+  } else {
+    mcpEnabledServers.value.add(serverId)
+  }
+  chatStore.enabledMcpServers = new Set(mcpEnabledServers.value)
+  
+  // Update enabled tools based on selected servers
+  const enabledTools = new Set<string>()
+  for (const serverId of mcpEnabledServers.value) {
+    const serverTools = mcpStore.tools.filter(t => t.serverId === serverId)
+    for (const tool of serverTools) {
+      enabledTools.add(tool.qualifiedName)
+    }
+  }
+  chatStore.enabledMcpTools = enabledTools
+}
+
+const isMcpServerEnabled = (serverId: string) => {
+  return mcpEnabledServers.value.has(serverId)
+}
+
+watch(() => chatStore.enabledMcpServers, (newServers) => {
+  mcpEnabledServers.value = new Set(newServers)
+}, { deep: true })
 
 const modelOptions = computed<SelectOption[]>(
   () =>
@@ -296,6 +338,39 @@ onMounted(() => {
                 filterable
                 style="width: 10em;"
               />
+              <n-popover
+                v-if="mcpConnectedServers.length > 0"
+                trigger="click"
+                placement="top"
+              >
+                <template #trigger>
+                  <n-button
+                    size="small"
+                    :type="mcpEnabledServers.size > 0 ? 'success' : 'default'"
+                  >
+                    <template #icon>
+                      <n-icon><Toolbox24Regular /></n-icon>
+                    </template>
+                    MCP ({{ mcpEnabledServers.size }}/{{ mcpConnectedServers.length }})
+                  </n-button>
+                </template>
+                <div class="mcp-server-selector">
+                  <div class="mcp-server-header">MCP Servers</div>
+                  <n-space vertical size="small">
+                    <n-tag
+                      v-for="server in mcpConnectedServers"
+                      :key="server.id"
+                      :type="isMcpServerEnabled(server.id) ? 'success' : 'default'"
+                      :bordered="false"
+                      clickable
+                      @click="toggleMcpServer(server.id)"
+                      class="mcp-server-tag"
+                    >
+                      {{ server.name || server.id }}
+                    </n-tag>
+                  </n-space>
+                </div>
+              </n-popover>
             </n-space>
             <n-button
               type="primary"
@@ -389,5 +464,27 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   padding: 8px;
+}
+
+.mcp-server-selector {
+  max-width: 300px;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.mcp-server-header {
+  font-weight: bold;
+  margin-bottom: 8px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--n-border-color);
+}
+
+.mcp-server-tag {
+  cursor: pointer;
+  user-select: none;
+}
+
+.mcp-server-tag:hover {
+  opacity: 0.8;
 }
 </style>

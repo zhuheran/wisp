@@ -1,11 +1,13 @@
 import { INTERFACE_PROMPT } from '../constants/interfacePrompt'
 import { usePromptStore } from '../stores/prompt'
+import { useMcpStore } from '../../stores/mcp'
 
 export const usePromptAssembly = () => {
   const promptStore = usePromptStore()
+  const mcpStore = useMcpStore()
 
   const assembleMessages = (userMessage: string) => {
-	return [
+    const messages: Array<{ role: string; message: string }> = [
       {
         role: 'system',
         message: INTERFACE_PROMPT
@@ -13,12 +15,23 @@ export const usePromptAssembly = () => {
       {
         role: 'system',
         message: promptStore.selectedSystemPrompt
-      },
-      {
-        role: 'user',
-        message: userMessage
       }
     ]
+
+    const toolsPrompt = mcpStore.getToolsPrompt()
+    if (toolsPrompt) {
+      messages.push({
+        role: 'system',
+        message: toolsPrompt
+      })
+    }
+
+    messages.push({
+      role: 'user',
+      message: userMessage
+    })
+
+    return messages
   }
 
   return {

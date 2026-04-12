@@ -16,6 +16,7 @@ import {
   ChatMultiple24Regular,
   Bot24Regular,
   Cube24Regular,
+  PlugConnected24Regular,
 } from "@vicons/fluent";
 import useHighlightjs from "./composables/useHighlightjs";
 const hljs = useHighlightjs();
@@ -27,6 +28,7 @@ import { useVNodeRenderer } from "./composables/useMarkdown";
 import { useChatStore } from "./stores/chat";
 import { useProviderStore } from './stores/provider';
 import { useCharacterStore } from './stores/character';
+import { useMcpStore } from './stores/mcp';
 
 const osThemeRef = useOsTheme();
 const isDark = computed(() => osThemeRef.value === "dark");
@@ -44,6 +46,9 @@ onMounted(() => {
     const characterStore = useCharacterStore();
     provide("CharacterStore", characterStore);
     characterStore.loadCharacters()
+    const mcpStore = useMcpStore();
+    provide("McpStore", mcpStore);
+    mcpStore.loadServers()
   })()
 })
 
@@ -70,6 +75,11 @@ onMounted(() => {
               <router-link to="/providers" active-class="sidebar-item-active">
                 <div class="sidebar-item">
                   <n-icon size="24"><Cube24Regular /></n-icon>
+                </div>
+              </router-link>
+              <router-link to="/mcp" active-class="sidebar-item-active">
+                <div class="sidebar-item">
+                  <n-icon size="24"><PlugConnected24Regular /></n-icon>
                 </div>
               </router-link>
             </div>
