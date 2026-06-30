@@ -21,30 +21,36 @@ impl McpStdioClient {
     pub async fn spawn(server_id: String, cmd: &str, args: &[String]) -> Result<Self> {
         println!("[MCP:{}] Spawning process: {} {:?}", server_id, cmd, args);
         
-        let mut child = if cfg!(target_os = "windows") {
-            // 在 Windows 上，使用 cmd /C 启动程序。第一个参数（cmd 本身）必须用 raw_arg
-            // 传入以避免含空格的路径被错误地用引号包裹后又被 cmd /C 重新分割。
-            // 后续参数通过 .arg() 传入，Tokio 会自动用 CreateProcessW 转义。
-            let mut command = Command::new("cmd");
-            command.arg("/C");
-            command.raw_arg(cmd.to_string());
-            for arg in args {
-                command.arg(arg);
+        // 平台分支必须用编译时 #[cfg] 门控：Windows 分支依赖 std::os::windows::process::CommandExt，
+        // 该 trait 在 Linux 上不存在，若用运行时 cfg!() 宏仍会被类型检查导致编译失败。
+        let mut child = {
+            #[cfg(target_os = "windows")]
+            {
+                // Windows 上用 cmd /C 启动程序。Tokio 底层走 CreateProcessW，会按需给含空格的
+                // 路径加引号，cmd /C 能正确识别带引号的程序路径并执行。
+                let mut command = Command::new("cmd");
+                command.arg("/C");
+                command.arg(cmd.to_string());
+                for arg in args {
+                    command.arg(arg);
+                }
+                command
+                    .stdin(std::process::Stdio::piped())
+                    .stdout(std::process::Stdio::piped())
+                    .stderr(std::process::Stdio::piped())
+                    .spawn()
+                    .context(format!("Failed to start MCP server process: cmd /C {} {:?}", cmd, args))?
             }
-            command
-                .stdin(std::process::Stdio::piped())
-                .stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::piped())
-                .spawn()
-                .context(format!("Failed to start MCP server process: cmd /C {} {:?}", cmd, args))?
-        } else {
-            Command::new(cmd)
-                .args(args)
-                .stdin(std::process::Stdio::piped())
-                .stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::piped())
-                .spawn()
-                .context(format!("Failed to start MCP server process: {} {:?}", cmd, args))?
+            #[cfg(not(target_os = "windows"))]
+            {
+                Command::new(cmd)
+                    .args(args)
+                    .stdin(std::process::Stdio::piped())
+                    .stdout(std::process::Stdio::piped())
+                    .stderr(std::process::Stdio::piped())
+                    .spawn()
+                    .context(format!("Failed to start MCP server process: {} {:?}", cmd, args))?
+            }
         };
 
         let stdin = child.stdin.take().context("Failed to acquire stdin")?;

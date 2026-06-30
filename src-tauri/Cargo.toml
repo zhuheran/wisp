@@ -38,6 +38,7 @@ keyring = { version = "3.6.2", features = [
     "apple-native",
     "windows-native",
     "linux-native-async-persistent",
+    "crypto-rust",
     "tokio",
 ] }
 specta = "=2.0.0-rc.22"
