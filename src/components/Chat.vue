@@ -15,6 +15,7 @@ import {
 import { Chat48Regular, Send20Regular, Toolbox24Regular } from "@vicons/fluent";
 import MessageBubble from "./MessageBubble.vue";
 import AutoScrollWrapper from "./AutoScrollWrapper.vue";
+import ImageInput from "./ImageInput.vue";
 import { ref, inject, watch, onMounted, computed } from "vue";
 import { Message, MessageRole } from "../libs/types";
 import { useProviderStore } from "../stores/provider";
@@ -121,6 +122,7 @@ watch(chosenCharacterId, (newId) => {
 });
 
 const autoScrollWrapper = ref<typeof AutoScrollWrapper | null>(null);
+const imageInputRef = ref<typeof ImageInput | null>(null);
 
 const props = defineProps({
   useBubbleCulling: {
@@ -136,16 +138,22 @@ const props = defineProps({
 console.log(`[Chat] Message bubble culling enabled`);
 
 const sendMessage = () => {
-  if (!chatStore.userInput.trim()) return;
+  if (!chatStore.userInput.trim() && !imageInputRef.value?.hasImages) return;
+
+  const images = imageInputRef.value?.getImagesForMessage?.() || [];
+
   const userMessage: Omit<Message, "id"> = {
     text: chatStore.userInput,
     sender: MessageRole.User,
     timestamp: Math.round(new Date().getTime() / 1000),
+    images: images.length > 0 ? images : undefined,
   };
+
   chatStore
     .sendMessage(userMessage, {
       beforeSend: () => {
         chatStore.clearUserInput();
+        imageInputRef.value?.clearImages();
         autoScrollWrapper.value?.scrollToBottom(false);
       },
       onReceiving: () => {
@@ -283,6 +291,7 @@ onMounted(() => {
               :hasPrevious="message.hasPrevious"
               :hasNext="message.hasNext"
               :culling="useBubbleCulling"
+              :images="message.images"
               @previous="() => navigateToSibling(message.id, -1)"
               @next="() => navigateToSibling(message.id, 1)"
               @edit="() => showEditor(message.id)"
@@ -376,7 +385,7 @@ onMounted(() => {
               type="primary"
               @click="sendMessage"
               circle
-              :disabled="!chatStore.userInput || !chatStore.chosenModel"
+              :disabled="(!chatStore.userInput && !imageInputRef?.hasImages) || !chatStore.chosenModel"
               ><template #icon>
                 <n-icon :size="20">
                   <Send20Regular />
@@ -384,6 +393,7 @@ onMounted(() => {
               </template>
             </n-button>
           </n-space>
+          <image-input ref="imageInputRef" />
           <n-input
             v-model:value="chatStore.userInput"
             placeholder="Type your message..."

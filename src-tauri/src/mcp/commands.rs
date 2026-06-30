@@ -194,11 +194,11 @@ pub async fn mcp_save_session(app_handle: AppHandle, session: SessionState) -> R
     let config_dir = app_handle
         .path()
         .app_data_dir()
-        .expect("Failed to get config directory");
-    
+        .map_err(|e| e.to_string())?;
+
     let sessions_dir = config_dir.join("mcp_sessions");
     fs::create_dir_all(&sessions_dir).map_err(|e| e.to_string())?;
-    
+
     let session_path = sessions_dir.join(format!("{}.json", session.id));
     let content = serde_json::to_string_pretty(&session).map_err(|e| e.to_string())?;
     fs::write(session_path, content).map_err(|e| e.to_string())
@@ -209,14 +209,14 @@ pub async fn mcp_load_session(app_handle: AppHandle, session_id: String) -> Resu
     let config_dir = app_handle
         .path()
         .app_data_dir()
-        .expect("Failed to get config directory");
-    
+        .map_err(|e| e.to_string())?;
+
     let session_path = config_dir.join("mcp_sessions").join(format!("{}.json", session_id));
-    
+
     if !session_path.exists() {
         return Ok(None);
     }
-    
+
     let content = fs::read_to_string(session_path).map_err(|e| e.to_string())?;
     let session = serde_json::from_str(&content).map_err(|e| e.to_string())?;
     Ok(Some(session))
@@ -227,14 +227,14 @@ pub async fn mcp_delete_session(app_handle: AppHandle, session_id: String) -> Re
     let config_dir = app_handle
         .path()
         .app_data_dir()
-        .expect("Failed to get config directory");
-    
+        .map_err(|e| e.to_string())?;
+
     let session_path = config_dir.join("mcp_sessions").join(format!("{}.json", session_id));
-    
+
     if session_path.exists() {
         fs::remove_file(session_path).map_err(|e| e.to_string())?;
     }
-    
+
     Ok(())
 }
 
@@ -243,7 +243,7 @@ pub async fn mcp_list_sessions(app_handle: AppHandle) -> Result<Vec<SessionState
     let config_dir = app_handle
         .path()
         .app_data_dir()
-        .expect("Failed to get config directory");
+        .map_err(|e| e.to_string())?;
     
     let sessions_dir = config_dir.join("mcp_sessions");
     

@@ -64,13 +64,14 @@ impl Chat {
 		reasoning: Option<&str>,
         sender: &str,
         parent_message_id: Option<&str>,
+        images: Option<&str>,
     ) -> Result<(), ChatError> {
         let mut conn = self.pool.get()?;
         let tx = conn.transaction()?;
 
         // Add the message
         self.messages_manager
-            .add(message_id, text, reasoning, sender, None, None)?;
+            .add(message_id, text, reasoning, sender, None, None, images)?;
 
         // Link to parent message
         self.thread_manager.add(message_id, parent_message_id)?;
@@ -140,18 +141,21 @@ impl Chat {
         let mut conn = self.pool.get()?;
         let tx = conn.transaction()?;
 
-        let messages = self.get_all_message_involved(conversation_id);
-        match messages {
+        // 即使获取消息列表失败也尝试删除会话本身，但记录错误以便排查。
+        // 注意：由于子管理器使用独立连接，此处的 tx 仅保护本语句。
+        match self.get_all_message_involved(conversation_id) {
             Ok(messages) => {
                 for message in messages {
                     self.messages_manager.delete(&message.id)?;
-					self.thread_manager.delete_with_parent(&message.id)?;
+                    self.thread_manager.delete_with_parent(&message.id)?;
                 }
             }
-            Err(_) => {}
+            Err(e) => {
+                eprintln!("[Chat] Failed to list messages while deleting conversation {}: {:?}. Proceeding to delete conversation record only; orphan messages may remain.", conversation_id, e);
+            }
         }
 
-		self.conversation_manager.delete(conversation_id)?;
+        self.conversation_manager.delete(conversation_id)?;
 
         tx.commit()?;
         Ok(())
@@ -220,7 +224,7 @@ impl Chat {
             match &parent {
                 Some(p) => {
                     for child in &children {
-                        self.thread_manager.update_parent(child, Some(p));
+                        self.thread_manager.update_parent(child, Some(p))?;
                     }
                 }
                 None => {

@@ -9,8 +9,8 @@ export async function createConversation(name: string, description?: string)  {
 	return invoke<string>('create_conversation', { name, description })
 }
 
-export async function addMessage(conversationId: string, text: string, sender: string, reasoning?: string, parentId?: string) {
-	return invoke<string>('add_message', { conversationId, text, reasoning, sender, parentId })
+export async function addMessage(conversationId: string, text: string, sender: string, reasoning?: string, parentId?: string, images?: string) {
+	return invoke<string>('add_message', { conversationId, text, reasoning, sender, parentId, images })
 }
 
 export async function updateMessage(messageId: string, text: string, reasoning?: string) {
@@ -287,4 +287,42 @@ export async function mcpHttpCallTool(serverId: string, toolName: string, argume
 
 export async function mcpHttpIsConnected(serverId: string) {
     return invoke<boolean>('mcp_http_is_connected', { serverId })
+}
+
+// Image processing commands
+export interface ImageCompressConfig {
+    max_width: number;
+    max_height: number;
+    jpeg_quality: number;
+}
+
+export interface ImageCompressResult {
+    data: string;
+    mime_type: string;
+    original_size: number;
+    compressed_size: number;
+    was_compressed: boolean;
+}
+
+export interface ImageInfo {
+    width: number;
+    height: number;
+    format: string;
+    size_bytes: number;
+}
+
+export async function compressImage(
+    base64Data: string,
+    mimeType: string,
+    config?: ImageCompressConfig
+): Promise<ImageCompressResult> {
+    return invoke<ImageCompressResult>('compress_image', { 
+        base64Data, 
+        mimeType, 
+        config 
+    })
+}
+
+export async function getImageInfo(base64Data: string): Promise<ImageInfo> {
+    return invoke<ImageInfo>('get_image_info', { base64Data })
 }

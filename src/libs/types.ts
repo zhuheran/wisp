@@ -4,6 +4,13 @@ export enum MessageRole {
 	System = "system",
 }
 
+export interface ImageContent {
+	type: 'image_url';
+	image_url: {
+		url: string;
+	};
+}
+
 export type Message = {
 	id: string,
 	text: string,
@@ -12,6 +19,7 @@ export type Message = {
 	timestamp: number,
 	tokens?: number,
 	embedding?: Uint8Array,
+	images?: ImageContent[],
 }
 
 export type Conversation = {

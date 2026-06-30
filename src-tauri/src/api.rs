@@ -9,6 +9,10 @@ use async_openai::{
 		ChatCompletionRequestMessage,
         ChatCompletionRequestUserMessage, ChatCompletionRequestUserMessageContent,
         CreateChatCompletionRequestArgs,
+        ChatCompletionRequestUserMessageContentPart,
+        ChatCompletionRequestMessageContentPartImage,
+        ChatCompletionRequestMessageContentPartText,
+        ImageUrl, ImageDetail,
     },
     Client,
 };
@@ -32,6 +36,7 @@ fn get_openai_client(
 }
 
 /// Converts generic message values to OpenAI-compatible message types
+/// Supports multimodal content (text + images)
 fn convert_messages(
     messages: Vec<Value>,
 ) -> Result<Vec<ChatCompletionRequestMessage>, Box<dyn Error>> {
@@ -39,31 +44,82 @@ fn convert_messages(
         .into_iter()
         .map(|msg| {
             let role = msg["role"].as_str().ok_or("Missing role")?;
-            let content = msg["content"].as_str().ok_or("Missing content")?;
+            let content = &msg["content"];
 
             match role {
-                "user" => Ok(ChatCompletionRequestMessage::User(
-                    ChatCompletionRequestUserMessage {
-                        content: ChatCompletionRequestUserMessageContent::Text(content.to_string()),
-                        ..Default::default()
-                    },
-                )),
-                "assistant" => Ok(ChatCompletionRequestMessage::Assistant(
-                    ChatCompletionRequestAssistantMessage {
-                        content: Some(ChatCompletionRequestAssistantMessageContent::Text(
-                            content.to_string(),
-                        )),
-                        ..Default::default()
-                    },
-                )),
-                "system" => Ok(ChatCompletionRequestMessage::System(
-                    ChatCompletionRequestSystemMessage {
-                        content: ChatCompletionRequestSystemMessageContent::Text(
-                            content.to_string(),
-                        ),
-                        ..Default::default()
-                    },
-                )),
+                "user" => {
+                    // Check if content is an array (multimodal) or string (text only)
+                    if let Some(content_array) = content.as_array() {
+                        // Multimodal content: array of text and image parts
+                        let parts: Result<Vec<ChatCompletionRequestUserMessageContentPart>, Box<dyn Error>> = content_array
+                            .iter()
+                            .map(|part| -> Result<ChatCompletionRequestUserMessageContentPart, Box<dyn Error>> {
+                                let part_type = part["type"].as_str().ok_or("Missing part type")?;
+                                match part_type {
+                                    "text" => {
+                                        let text = part["text"].as_str().ok_or("Missing text content")?;
+                                        Ok(ChatCompletionRequestUserMessageContentPart::Text(
+                                            ChatCompletionRequestMessageContentPartText {
+                                                text: text.to_string(),
+                                            }
+                                        ))
+                                    }
+                                    "image_url" => {
+                                        let image_url = part["image_url"]["url"].as_str().ok_or("Missing image URL")?;
+                                        Ok(ChatCompletionRequestUserMessageContentPart::ImageUrl(
+                                            ChatCompletionRequestMessageContentPartImage {
+                                                image_url: ImageUrl {
+                                                    url: image_url.to_string(),
+                                                    detail: Some(ImageDetail::Auto),
+                                                },
+                                            }
+                                        ))
+                                    }
+                                    _ => Err("Unsupported content part type".into()),
+                                }
+                            })
+                            .collect();
+                        
+                        Ok(ChatCompletionRequestMessage::User(
+                            ChatCompletionRequestUserMessage {
+                                content: ChatCompletionRequestUserMessageContent::Array(parts?),
+                                ..Default::default()
+                            },
+                        ))
+                    } else {
+                        // Simple text content
+                        let text = content.as_str().ok_or("Missing content")?;
+                        Ok(ChatCompletionRequestMessage::User(
+                            ChatCompletionRequestUserMessage {
+                                content: ChatCompletionRequestUserMessageContent::Text(text.to_string()),
+                                ..Default::default()
+                            },
+                        ))
+                    }
+                }
+                "assistant" => {
+                    // OpenAI 规范允许 assistant 消息在带 tool_calls 时 content 为 null
+                    let text = content.as_str().unwrap_or("");
+                    Ok(ChatCompletionRequestMessage::Assistant(
+                        ChatCompletionRequestAssistantMessage {
+                            content: Some(ChatCompletionRequestAssistantMessageContent::Text(
+                                text.to_string(),
+                            )),
+                            ..Default::default()
+                        },
+                    ))
+                }
+                "system" => {
+                    let text = content.as_str().ok_or("Missing content")?;
+                    Ok(ChatCompletionRequestMessage::System(
+                        ChatCompletionRequestSystemMessage {
+                            content: ChatCompletionRequestSystemMessageContent::Text(
+                                text.to_string(),
+                            ),
+                            ..Default::default()
+                        },
+                    ))
+                }
                 // Add other roles (assistant, system) as needed
                 _ => Err("Unsupported role".into()),
             }
@@ -160,5 +216,6 @@ pub async fn ask_openai_stream(
         }
     }
 
+    println!("[API] Stream completed for model: {}", model);
     Ok(())
 }

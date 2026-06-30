@@ -23,49 +23,64 @@ impl Messages {
 					sender TEXT NOT NULL,
 					timestamp INTEGER NOT NULL,
 					tokens INTEGER,
-					embedding BLOB
+					embedding BLOB,
+					images TEXT
 				)",
                 Self::TABLE_NAME
             ),
             [],
         )?;
 
+        // Migration: add images column if it doesn't exist
+        let column_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = 'images'",
+            [Self::TABLE_NAME],
+            |row| row.get(0),
+        ).unwrap_or(0);
+
+        if column_count == 0 {
+            conn.execute(
+                &format!("ALTER TABLE {} ADD COLUMN images TEXT", Self::TABLE_NAME),
+                [],
+            )?;
+        }
+
         Ok(Self { pool })
     }
 
-    pub fn add(&mut self, id: &str, text: &str, reasoning: Option<&str>, sender: &str, tokens: Option<i32>, embedding: Option<Vec<u8>>) -> Result<(), MessageError> {
+    pub fn add(&mut self, id: &str, text: &str, reasoning: Option<&str>, sender: &str, tokens: Option<i32>, embedding: Option<Vec<u8>>, images: Option<&str>) -> Result<(), MessageError> {
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_default()
             .as_secs() as i64;
 
         let conn = self.pool.get()?;
         conn.execute(
             &format!(
-                "INSERT INTO {} (id, text, reasoning, sender, timestamp, tokens, embedding) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                "INSERT INTO {} (id, text, reasoning, sender, timestamp, tokens, embedding, images) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                 Self::TABLE_NAME
             ),
-            params![id, text, reasoning, sender, timestamp, tokens, embedding],
+            params![id, text, reasoning, sender, timestamp, tokens, embedding, images],
         )?;
         Ok(())
     }
 
-    pub fn add_batch(&mut self, messages: &[(&str, &str, Option<&str>, &str, Option<i32>, Option<Vec<u8>>)]) -> Result<(), MessageError> {
+    pub fn add_batch(&mut self, messages: &[(&str, &str, Option<&str>, &str, Option<i32>, Option<Vec<u8>>, Option<&str>)]) -> Result<(), MessageError> {
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_default()
             .as_secs() as i64;
 
         let mut conn = self.pool.get()?;
         let tx = conn.transaction()?;
         {
             let mut stmt = tx.prepare(&format!(
-                "INSERT INTO {} (id, text, reasoning, sender, timestamp, tokens, embedding) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                "INSERT INTO {} (id, text, reasoning, sender, timestamp, tokens, embedding, images) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                 Self::TABLE_NAME
             ))?;
 
-            for (id, text, reasoning, sender, tokens, embedding) in messages {
-                stmt.execute(params![id, text, reasoning, sender, timestamp, tokens, embedding])?;
+            for (id, text, reasoning, sender, tokens, embedding, images) in messages {
+                stmt.execute(params![id, text, reasoning, sender, timestamp, tokens, embedding, images])?;
             }
         }
         tx.commit()?;
@@ -75,7 +90,7 @@ impl Messages {
     pub fn get(&mut self, id: &str) -> Result<Message, MessageError> {
         let conn = self.pool.get()?;
         let mut stmt = conn.prepare(&format!(
-            "SELECT id, text, reasoning, sender, timestamp, tokens, embedding FROM {} WHERE id = ?1",
+            "SELECT id, text, reasoning, sender, timestamp, tokens, embedding, images FROM {} WHERE id = ?1",
             Self::TABLE_NAME
         ))?;
 
@@ -83,6 +98,8 @@ impl Messages {
 			let sender_str: String = row.get(3)?;
             let sender = MessageRole::try_from(sender_str)
                 .map_err(|e| rusqlite::Error::InvalidParameterName(e.to_string()))?;
+            let images_json: Option<String> = row.get(7)?;
+            let images = images_json.and_then(|s| serde_json::from_str(&s).ok());
             Ok(Message {
                 id: row.get(0)?,
                 text: row.get(1)?,
@@ -91,6 +108,7 @@ impl Messages {
                 timestamp: row.get(4)?,
                 tokens: row.get(5)?,
                 embedding: row.get(6)?,
+                images,
             })
         })?;
         Ok(row)
@@ -99,7 +117,7 @@ impl Messages {
     pub fn list(&mut self, limit: i64, offset: i64) -> Result<Vec<Message>, MessageError> {
         let conn = self.pool.get()?;
         let mut stmt = conn.prepare(&format!(
-            "SELECT id, text, reasoning, sender, timestamp, tokens, embedding FROM {} ORDER BY timestamp DESC LIMIT ?1 OFFSET ?2",
+            "SELECT id, text, reasoning, sender, timestamp, tokens, embedding, images FROM {} ORDER BY timestamp DESC LIMIT ?1 OFFSET ?2",
             Self::TABLE_NAME
         ))?;
 
@@ -108,6 +126,8 @@ impl Messages {
 				let sender_str: String = row.get(3)?;
 				let sender = MessageRole::try_from(sender_str)
 					.map_err(|e| rusqlite::Error::InvalidParameterName(e.to_string()))?;
+                let images_json: Option<String> = row.get(7)?;
+                let images = images_json.and_then(|s| serde_json::from_str(&s).ok());
                 Ok(Message {
                     id: row.get(0)?,
                     text: row.get(1)?,
@@ -116,6 +136,7 @@ impl Messages {
                     timestamp: row.get(4)?,
                     tokens: row.get(5)?,
                     embedding: row.get(6)?,
+                    images,
                 })
             })?
             .collect::<Result<Vec<_>, rusqlite::Error>>()

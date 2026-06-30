@@ -7,6 +7,8 @@ import {
   NButtonGroup,
   NCollapse,
   NCollapseItem,
+  NTag,
+  NImage,
   useDialog,
   useThemeVars,
 } from "naive-ui";
@@ -19,10 +21,11 @@ import {
   ArrowClockwise16Regular,
   ChevronLeft16Regular,
   ChevronRight16Regular,
+  Toolbox24Regular,
 } from "@vicons/fluent";
 import MarkdownRenderer from "./MarkdownRenderer.vue";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
-import { MessageRole } from "../libs/types";
+import { MessageRole, type ImageContent } from "../libs/types";
 import { useChatStore } from "../stores/chat";
 import { ref, computed, useTemplateRef, watch } from "vue";
 import { mixColours } from "../utils/colour";
@@ -57,6 +60,7 @@ const props = defineProps<{
   hasNext?: boolean;
   culling?: boolean;
   index?: number;
+  images?: ImageContent[];
 }>();
 
 const emit = defineEmits<{
@@ -164,6 +168,132 @@ const thinkingPanelExpandedNames = ref<string[]>([]);
 if (!(props.over ?? true)) thinkingPanelExpandedNames.value.push("thinking");
 
 const footerVisible = ref(false);
+
+// MCP Tool Call Result Parsing
+// 匹配 [Tool: tool_name]\nResult: {...} 或 [Tool: tool_name]\nError: ... 格式
+// 支持多工具调用、嵌套 JSON、保留工具调用前后的文本
+type ParsedToolCall = {
+  toolName: string;
+  status: 'success' | 'error';
+  result: string;
+  start: number;
+  end: number;
+};
+
+// 清理未配对的 <|tool_call|> 指令标签（仅清理成对标签外的残留）
+const cleanToolCallTags = (text: string): string => {
+  // 先清理成对标签及其内容
+  let cleaned = text.replace(/<\|tool_call\|>[\s\S]*?<\|tool_call\|>/g, '');
+  // 再清理残留的未配对开标签或闭标签
+  cleaned = cleaned.replace(/<\|tool_call\|>/g, '');
+  return cleaned;
+};
+
+// 从指定位置提取一个 JSON 值（支持嵌套），返回结束位置和原始字符串
+const extractBalancedJson = (text: string, startIndex: number): { raw: string; end: number } | null => {
+  if (text[startIndex] !== '{') return null;
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+  for (let i = startIndex; i < text.length; i++) {
+    const ch = text[i];
+    if (escape) { escape = false; continue; }
+    if (ch === '\\' && inString) { escape = true; continue; }
+    if (ch === '"') { inString = !inString; continue; }
+    if (inString) continue;
+    if (ch === '{') depth++;
+    else if (ch === '}') {
+      depth--;
+      if (depth === 0) {
+        return { raw: text.substring(startIndex, i + 1), end: i + 1 };
+      }
+    }
+  }
+  return null;
+};
+
+const parsedToolCalls = computed<ParsedToolCall[]>(() => {
+  const results: ParsedToolCall[] = [];
+  const text = props.text;
+  // 使用标志位匹配 [Tool: name]，避免误匹配 markdown 链接
+  const headerPattern = /\[Tool:\s*([^\]]+)\]\s*\n(Result|Error):\s*/g;
+  let m: RegExpExecArray | null;
+  while ((m = headerPattern.exec(text)) !== null) {
+    const toolName = m[1];
+    const status = m[2] === 'Error' ? 'error' : 'success';
+    const contentStart = headerPattern.lastIndex;
+    let resultRaw: string;
+    let resultEnd: number;
+    if (status === 'success' && text[contentStart] === '{') {
+      // 尝试提取平衡的嵌套 JSON
+      const extracted = extractBalancedJson(text, contentStart);
+      if (extracted) {
+        resultRaw = extracted.raw;
+        resultEnd = extracted.end;
+      } else {
+        // 兜底：取到行尾
+        const lineEnd = text.indexOf('\n', contentStart);
+        resultEnd = lineEnd === -1 ? text.length : lineEnd;
+        resultRaw = text.substring(contentStart, resultEnd);
+      }
+    } else {
+      // Error 文本或非对象 Result：取到下一个 [Tool: 头部或文本末尾
+      const nextHeader = text.indexOf('[Tool:', contentStart);
+      resultEnd = nextHeader === -1 ? text.length : nextHeader;
+      resultRaw = text.substring(contentStart, resultEnd).trim();
+    }
+    results.push({
+      toolName,
+      status,
+      result: resultRaw,
+      start: m.index,
+      end: resultEnd,
+    });
+    // 推进 lastIndex 避免重复匹配
+    headerPattern.lastIndex = resultEnd;
+  }
+  return results;
+});
+
+const hasToolCall = computed(() => parsedToolCalls.value.length > 0);
+
+const toolCallExpandedNames = ref<string[]>([]);
+
+// 清理后的显示文本：移除工具调用块本身和 <|tool_call|> 指令标签，保留工具调用前后的所有文本
+const displayText = computed(() => {
+  if (!hasToolCall.value) {
+    return cleanToolCallTags(props.text);
+  }
+  // 拼接工具调用块之间的文本片段
+  let cleaned = '';
+  let lastEnd = 0;
+  for (const call of parsedToolCalls.value) {
+    cleaned += props.text.substring(lastEnd, call.start);
+    lastEnd = call.end;
+  }
+  cleaned += props.text.substring(lastEnd);
+  // 移除孤立的 --- 分隔符（工具调用块前后留下的）
+  cleaned = cleaned.replace(/^\s*---\s*\n?/gm, '').replace(/\n\s*---\s*$/g, '');
+  return cleanToolCallTags(cleaned).trim();
+});
+
+// 工具调用块之间的文本片段（用于在折叠面板之间插入渲染）
+const textSegmentsBetweenTools = computed<{ beforeFirst: string; between: string[]; afterLast: string }>(() => {
+  const calls = parsedToolCalls.value;
+  if (calls.length === 0) return { beforeFirst: '', between: [], afterLast: '' };
+  const cleanSegment = (raw: string) => {
+    let s = cleanToolCallTags(raw);
+    s = s.replace(/^\s*---\s*\n?/gm, '').replace(/\n\s*---\s*$/g, '');
+    return s.trim();
+  };
+  const beforeFirst = cleanSegment(props.text.substring(0, calls[0].start));
+  const between: string[] = [];
+  for (let i = 0; i < calls.length - 1; i++) {
+    between.push(cleanSegment(props.text.substring(calls[i].end, calls[i + 1].start)));
+  }
+  const afterLast = cleanSegment(props.text.substring(calls[calls.length - 1].end));
+  return { beforeFirst, between, afterLast };
+});
 </script>
 
 <template>
@@ -199,6 +329,18 @@ const footerVisible = ref(false);
             "
           >
             <div class="content">
+              <!-- Images Display -->
+              <div v-if="images && images.length > 0" class="images-container">
+                <n-flex :wrap="true" size="small">
+                  <n-image
+                    v-for="(image, idx) in images"
+                    :key="idx"
+                    :src="image.image_url.url"
+                    class="message-image"
+                    :preview-src="image.image_url.url"
+                  />
+                </n-flex>
+              </div>
               <div v-if="reasoning" class="reasoning-container">
                 <n-collapse
                   arrow-placement="right"
@@ -215,11 +357,64 @@ const footerVisible = ref(false);
                 </n-collapse>
               </div>
               <MarkdownRenderer
-                :text="text"
+                v-if="!hasToolCall"
+                :text="displayText"
                 :over="over"
                 v-model:ready="rendered"
                 @update:ready="onReadyStatusChange"
               />
+              <template v-else>
+                <MarkdownRenderer
+                  v-if="textSegmentsBetweenTools.beforeFirst"
+                  :text="textSegmentsBetweenTools.beforeFirst"
+                  :over="over"
+                  v-model:ready="rendered"
+                  @update:ready="onReadyStatusChange"
+                />
+                <template v-for="(call, idx) in parsedToolCalls" :key="idx">
+                  <div class="tool-call-container" :class="call.status">
+                    <n-collapse
+                      arrow-placement="right"
+                      v-model:expanded-names="toolCallExpandedNames"
+                      display-directive="show"
+                    >
+                      <n-collapse-item :name="`toolcall-${idx}`">
+                        <template #header>
+                          <n-flex align="center" :wrap="false" style="flex: 1;">
+                            <n-icon :component="Toolbox24Regular" />
+                            <n-tag size="small" :type="call.status === 'error' ? 'error' : 'success'">
+                              {{ call.toolName }}
+                            </n-tag>
+                            <n-tag size="tiny" :type="call.status === 'error' ? 'error' : 'info'" round>
+                              {{ call.status === 'error' ? 'Error' : 'OK' }}
+                            </n-tag>
+                            <span class="tool-call-hint">
+                              {{ toolCallExpandedNames.includes(`toolcall-${idx}`) ? '点击收起' : '点击展开查看结果' }}
+                            </span>
+                          </n-flex>
+                        </template>
+                        <div class="tool-call-result">
+                          <pre>{{ call.result }}</pre>
+                        </div>
+                      </n-collapse-item>
+                    </n-collapse>
+                  </div>
+                  <MarkdownRenderer
+                    v-if="idx < parsedToolCalls.length - 1 && textSegmentsBetweenTools.between[idx]"
+                    :text="textSegmentsBetweenTools.between[idx]"
+                    :over="over"
+                    v-model:ready="rendered"
+                    @update:ready="onReadyStatusChange"
+                  />
+                </template>
+                <MarkdownRenderer
+                  v-if="textSegmentsBetweenTools.afterLast"
+                  :text="textSegmentsBetweenTools.afterLast"
+                  :over="over"
+                  v-model:ready="rendered"
+                  @update:ready="onReadyStatusChange"
+                />
+              </template>
             </div>
           </div>
           <div
@@ -403,6 +598,55 @@ const footerVisible = ref(false);
   border-radius: v-bind("theme.borderRadiusSmall");
   border: 1px solid v-bind("theme.borderColor");
   box-shadow: v-bind("theme.boxShadow3");
+}
+
+.images-container {
+  width: 100%;
+  margin-bottom: 8px;
+}
+
+.message-image {
+  max-width: 200px;
+  max-height: 200px;
+  object-fit: cover;
+  border-radius: v-bind("theme.borderRadiusSmall");
+  cursor: pointer;
+}
+
+.tool-call-container {
+  width: 100%;
+  background-color: rgba(64, 160, 64, 0.1);
+  padding: 8px 12px;
+  box-sizing: border-box;
+  border-radius: v-bind("theme.borderRadiusSmall");
+  border: 1px solid rgba(64, 160, 64, 0.3);
+  box-shadow: v-bind("theme.boxShadow3");
+}
+
+.tool-call-container.error {
+  background-color: rgba(200, 60, 60, 0.1);
+  border-color: rgba(200, 60, 60, 0.3);
+}
+
+.tool-call-hint {
+  font-size: 0.85em;
+  color: v-bind("theme.textColor3");
+  margin-left: 8px;
+}
+
+.tool-call-result {
+  background-color: rgba(0, 0, 0, 0.05);
+  padding: 12px;
+  border-radius: v-bind("theme.borderRadiusSmall");
+  overflow-x: auto;
+}
+
+.tool-call-result pre {
+  margin: 0;
+  font-family: monospace;
+  font-size: 0.9em;
+  white-space: pre-wrap;
+  word-break: break-all;
 }
 
 .footer {

@@ -22,17 +22,21 @@ impl McpStdioClient {
         println!("[MCP:{}] Spawning process: {} {:?}", server_id, cmd, args);
         
         let mut child = if cfg!(target_os = "windows") {
-            let full_args = vec![cmd.to_string()];
-            let mut all_args = full_args;
-            all_args.extend(args.iter().cloned());
-            
-            Command::new("cmd")
-                .args(["/C", &all_args.join(" ")])
+            // 在 Windows 上，使用 cmd /C 启动程序。第一个参数（cmd 本身）必须用 raw_arg
+            // 传入以避免含空格的路径被错误地用引号包裹后又被 cmd /C 重新分割。
+            // 后续参数通过 .arg() 传入，Tokio 会自动用 CreateProcessW 转义。
+            let mut command = Command::new("cmd");
+            command.arg("/C");
+            command.raw_arg(cmd.to_string());
+            for arg in args {
+                command.arg(arg);
+            }
+            command
                 .stdin(std::process::Stdio::piped())
                 .stdout(std::process::Stdio::piped())
                 .stderr(std::process::Stdio::piped())
                 .spawn()
-                .context(format!("Failed to start MCP server process: cmd /C {} {}", cmd, args.join(" ")))?
+                .context(format!("Failed to start MCP server process: cmd /C {} {:?}", cmd, args))?
         } else {
             Command::new(cmd)
                 .args(args)
@@ -138,17 +142,34 @@ impl McpStdioClient {
             "params": params
         });
 
-        // 写入 stdio
-        let mut stdin = self.stdin.lock().await;
-        let line = serde_json::to_string(&request).context("Failed to serialize request")? + "\n";
-        stdin.write_all(line.as_bytes()).await.context("Failed to write to MCP stdin")?;
-        stdin.flush().await.context("Failed to flush MCP stdin")?;
+        // 写入 stdio。若任何步骤失败，必须从 pending 中移除条目以避免内存泄漏
+        let write_result: Result<(), anyhow::Error> = async {
+            let mut stdin = self.stdin.lock().await;
+            let line = serde_json::to_string(&request).context("Failed to serialize request")? + "\n";
+            stdin.write_all(line.as_bytes()).await.context("Failed to write to MCP stdin")?;
+            stdin.flush().await.context("Failed to flush MCP stdin")?;
+            Ok(())
+        }
+        .await;
 
-        // 等待响应（带超时）
-        let response = timeout(timeout_duration, rx)
-            .await
-            .context(format!("MCP request timed out after {:?} for method: {}", timeout_duration, method))?
-            .context("MCP response channel closed")?;
+        if let Err(e) = write_result {
+            // 清理 pending 条目，防止 tx 残留在 map 中
+            self.pending.lock().await.remove(&id);
+            return Err(e);
+        }
+
+        // 等待响应（带超时）。超时或通道关闭时同样清理 pending
+        let response = match timeout(timeout_duration, rx).await {
+            Ok(Ok(resp)) => resp,
+            Ok(Err(_)) => {
+                self.pending.lock().await.remove(&id);
+                anyhow::bail!("MCP response channel closed");
+            }
+            Err(_) => {
+                self.pending.lock().await.remove(&id);
+                anyhow::bail!("MCP request timed out after {:?} for method: {}", timeout_duration, method);
+            }
+        };
 
         // 处理 MCP 错误响应
         if let Some(err) = response.get("error") {

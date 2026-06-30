@@ -100,6 +100,18 @@ impl TryFrom<String> for MessageRole {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImageContent {
+    #[serde(rename = "type")]
+    pub content_type: String,
+    pub image_url: ImageUrl,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImageUrl {
+    pub url: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Message {
     pub id: String,
     pub text: String,
@@ -110,4 +122,6 @@ pub struct Message {
     pub tokens: Option<i32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub embedding: Option<Vec<u8>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub images: Option<Vec<ImageContent>>,
 }

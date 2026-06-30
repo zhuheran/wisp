@@ -17,6 +17,41 @@ type MessageDisplay = Omit<Omit<Message, 'text'>, 'reasoning'> & {
 	reasoning: ComputedRef<string>,
 }
 
+// ===== 上下文管理配置 =====
+// 估算 token 数：4 字符约等于 1 token（粗略，对中英文混合场景偏保守）
+const estimateTokens = (text: string): number => Math.ceil((text?.length ?? 0) / 4);
+const estimateMessageTokens = (msg: { text?: string; reasoning?: string; images?: any[] }): number => {
+	let total = estimateTokens(msg.text ?? '') + estimateTokens(msg.reasoning ?? '');
+	// 图片固定按 85 token 估算（与 engine/conversation-loop.ts 默认值一致）
+	if (msg.images && msg.images.length > 0) total += msg.images.length * 85;
+	return total;
+};
+
+// 上下文管理：当历史消息总 token 超过阈值时，从最早的非系统消息开始截断，
+// 保留最近的消息直到总 token 降到目标值以下。系统提示由 useOpenAI 在调用时注入，不在此处处理。
+const CONTEXT_MAX_TOKENS = 120000;       // 触发截断的阈值
+const CONTEXT_TARGET_TOKENS = 84000;     // 截断后保留的目标 token 数（约 70%）
+const CONTEXT_MIN_KEEP_MESSAGES = 4;     // 至少保留最近 4 条消息，避免过度截断
+
+// 对消息列表应用滑动窗口截断，返回截断后的消息
+const applyContextWindow = <T extends { text?: string; reasoning?: string; images?: any[]; sender?: MessageRole }>(
+	messages: T[],
+): T[] => {
+	if (messages.length === 0) return messages;
+	let totalTokens = messages.reduce((sum, m) => sum + estimateMessageTokens(m), 0);
+	if (totalTokens <= CONTEXT_MAX_TOKENS) return messages;
+
+	const result = [...messages];
+	// 从头部开始移除，直到总 token 降到目标值以下或仅剩最小保留数
+	while (result.length > CONTEXT_MIN_KEEP_MESSAGES && totalTokens > CONTEXT_TARGET_TOKENS) {
+		const removed = result.shift();
+		if (!removed) break;
+		totalTokens -= estimateMessageTokens(removed);
+	}
+	console.log(`[ChatStore] Context window applied: ${messages.length} -> ${result.length} messages, ~${totalTokens} tokens`);
+	return result;
+};
+
 export const useChatStore = defineStore('chat', () => {
 	const userInput = ref('')
 	const currentConversationId = ref<string | null>(null)
@@ -43,7 +78,9 @@ export const useChatStore = defineStore('chat', () => {
 		onReceiving: (chunk: string, isReasoning: boolean) => void;
 		onFinish: (text: string, reasoning?: string) => void
 	}
-	const sendMessage = async (message: Omit<Message, 'id'>, { beforeSend, onReceiving, onFinish }: Partial<SendMessageCallbacks> = {}, parentMessageId = lastMessageId.value ?? undefined): Promise<void> => {
+	// 工具调用最大轮数，防止 AI 反复调用工具导致无限递归
+	const MAX_TOOL_ROUNDS = 10;
+	const sendMessage = async (message: Omit<Message, 'id'>, { beforeSend, onReceiving, onFinish }: Partial<SendMessageCallbacks> = {}, parentMessageId = lastMessageId.value ?? undefined, toolRound = 0): Promise<void> => {
 		const userMessageId = await addMessage(message, parentMessageId, true);
 
 		const botMessage: Omit<Message, "id"> = {
@@ -66,11 +103,35 @@ export const useChatStore = defineStore('chat', () => {
 		let responseText = "";
 		let reasoningText = "";
 		try {
-			streamResponse(
-				displayedMessages.value.map((msg) => ({
-					role: msg.sender === "user" ? "user" : "assistant",
-					content: msg.text,
-				})),
+			// Build messages with multimodal support
+		const buildMessages = () => {
+			const built = displayedMessages.value.map((msg) => {
+				const role = msg.sender === "user" ? "user" : "assistant"
+				// If message has images, use array format for content
+				if (msg.images && msg.images.length > 0) {
+					const content: any[] = [
+						{ type: "text", text: msg.text }
+					]
+					// Add each image
+					msg.images.forEach((img: any) => {
+						content.push({
+							type: "image_url",
+							image_url: img.image_url
+						})
+					})
+					return { role, content, images: msg.images, text: msg.text, reasoning: msg.reasoning, sender: msg.sender }
+				}
+				// Simple text message
+				return { role, content: msg.text, text: msg.text, reasoning: msg.reasoning, sender: msg.sender }
+			})
+			// 应用上下文窗口截断，避免长对话超出模型 token 限制
+			const truncated = applyContextWindow(built)
+			// 移除用于 token 估算的辅助字段
+			return truncated.map(({ role, content }) => ({ role, content }))
+		}
+
+		await streamResponse(
+				buildMessages(),
 				chosenModel.value!,
 				chosenProvider.value!,
 				(chunk) => {
@@ -84,46 +145,81 @@ export const useChatStore = defineStore('chat', () => {
 					if (onReceiving) onReceiving(chunk, true)
 				},
 				async () => {
+					console.log('[Chat] onFinish callback started')
 					updateMessage(botMessageId, responseText, reasoningText);
-					
+
 					console.log('[Chat] Stream finished. Response length:', responseText.length)
-					console.log('[Chat] Response text (last 500 chars):', responseText.slice(-500))
-					
+					console.log('[Chat] Full response text:', responseText)
+
 					const mcpStore = useMcpStore()
+					console.log('[Chat] Calling parseToolCallFromResponse...')
 					const toolCall = mcpStore.parseToolCallFromResponse(responseText)
-					
-					console.log('[Chat] Parsed tool call:', toolCall)
-					
+
+					console.log('[Chat] Parsed tool call result:', toolCall)
+					console.log('[Chat] Has tool call?', !!toolCall)
+
 					if (toolCall) {
-						console.log('[Chat] Detected tool call:', toolCall)
-						try {
-							const result = await mcpStore.executeTool(toolCall.name, toolCall.arguments)
-							console.log('[Chat] Tool result:', result)
-							
-							const toolResultText = `[Tool: ${toolCall.name}]\nResult: ${JSON.stringify(result, null, 2)}`
-							responseText += `\n\n---\n${toolResultText}`
-							updateMessage(botMessageId, responseText, reasoningText)
-						} catch (e) {
-							console.error('[Chat] Tool execution failed:', e)
-							responseText += `\n\n---\n[Tool: ${toolCall.name}]\nError: ${e}`
-							updateMessage(botMessageId, responseText, reasoningText)
-						}
+					console.log('[Chat] Detected tool call:', toolCall)
+					// 工具调用轮数检查，防止 AI 反复调用工具导致无限递归
+					if (toolRound >= MAX_TOOL_ROUNDS) {
+						console.warn(`[Chat] Max tool rounds (${MAX_TOOL_ROUNDS}) reached, stopping tool loop`)
+						const stopNote = `\n\n---\n[Tool: ${toolCall.name || toolCall.originalName}]\nError: Reached max tool rounds (${MAX_TOOL_ROUNDS}), tool execution skipped.`
+						responseText += stopNote
+						updateMessage(botMessageId, responseText, reasoningText)
+						if (onFinish) onFinish(responseText, !!reasoningText ? reasoningText : undefined);
+						return
 					}
-					
+					try {
+						const result = await mcpStore.executeTool(toolCall.name, toolCall.arguments)
+						console.log('[Chat] Tool result:', result)
+
+						// 使用 originalName 显示，但用 name 执行
+						const displayName = toolCall.name || toolCall.originalName
+						const toolResultText = `[Tool: ${displayName}]\nResult: ${JSON.stringify(result, null, 2)}`
+						responseText += `\n\n---\n${toolResultText}`
+						updateMessage(botMessageId, responseText, reasoningText)
+
+						// 自动继续对话，让 AI 处理工具结果
+						console.log('[Chat] Auto-continuing conversation after tool execution')
+						await sendMessage({
+							text: toolResultText,
+							sender: MessageRole.User,
+							timestamp: Math.round(new Date().getTime() / 1000),
+						}, { beforeSend, onReceiving, onFinish }, botMessageId, toolRound + 1)
+					} catch (e) {
+						console.error('[Chat] Tool execution failed:', e)
+						const displayName = toolCall.name || toolCall.originalName
+						const errorText = `[Tool: ${displayName}]\nError: ${e}`
+						responseText += `\n\n---\n${errorText}`
+						updateMessage(botMessageId, responseText, reasoningText)
+
+						// 即使出错也继续对话，让 AI 知道错误
+						await sendMessage({
+							text: errorText,
+							sender: MessageRole.User,
+							timestamp: Math.round(new Date().getTime() / 1000),
+						}, { beforeSend, onReceiving, onFinish }, botMessageId, toolRound + 1)
+					}
+					return  // 提前返回，因为 sendMessage 已经处理了 onFinish
+				}
+
 					if (onFinish) onFinish(responseText, !!reasoningText ? reasoningText : undefined);
+					console.log('[Chat] onFinish callback completed')
 				},
 				true,
 				false,
 				currentCharacter.value,
 				enabledMcpTools.value,
 			);
+			console.log('[Chat] streamResponse completed')
 		}
 		catch (e) {
+			console.error('[Chat] streamResponse error:', e)
 			return Promise.reject(e)
 		}
 	}
 
-	const regenerateMessage = async (messageId: string, { beforeSend, onReceiving, onFinish }: Partial<SendMessageCallbacks>, insertGuidance = false): Promise<void> => {
+	const regenerateMessage = async (messageId: string, { beforeSend, onReceiving, onFinish }: Partial<SendMessageCallbacks>, insertGuidance = false, toolRound = 0): Promise<void> => {
 		const parentId = threadTree.getParentId(messageId)
 		if (!parentId) return Promise.reject("Cannot regenerate the root message");
 
@@ -147,12 +243,37 @@ export const useChatStore = defineStore('chat', () => {
 
 		let responseText = "";
 		let reasoningText = "";
+
+		// Build messages with multimodal support
+		const buildMessages = () => {
+			const built = displayedMessages.value.map((msg) => {
+				const role = msg.sender === "user" ? "user" : "assistant"
+				// If message has images, use array format for content
+				if (msg.images && msg.images.length > 0) {
+					const content: any[] = [
+						{ type: "text", text: msg.text }
+					]
+					// Add each image
+					msg.images.forEach((img: any) => {
+						content.push({
+							type: "image_url",
+							image_url: img.image_url
+						})
+					})
+					return { role, content, images: msg.images, text: msg.text, reasoning: msg.reasoning, sender: msg.sender }
+				}
+				// Simple text message
+				return { role, content: msg.text, text: msg.text, reasoning: msg.reasoning, sender: msg.sender }
+			})
+			// 应用上下文窗口截断，避免长对话超出模型 token 限制
+			const truncated = applyContextWindow(built)
+			// 移除用于 token 估算的辅助字段
+			return truncated.map(({ role, content }) => ({ role, content }))
+		}
+
 		try {
-			streamResponse(
-				displayedMessages.value.map((msg) => ({
-					role: msg.sender === "user" ? "user" : "assistant",
-					content: msg.text,
-				})),
+			await streamResponse(
+				buildMessages(),
 				chosenModel.value!,
 				chosenProvider.value!,
 				(chunk) => {
@@ -165,8 +286,54 @@ export const useChatStore = defineStore('chat', () => {
 					updateBubbleText(reasoningText, true);
 					if (onReceiving) onReceiving(chunk, true)
 				},
-				() => {
+				async () => {
 					updateMessage(botMessageId, responseText, reasoningText);
+
+					// Parse and execute MCP tool calls
+					const mcpStore = useMcpStore()
+					const toolCall = mcpStore.parseToolCallFromResponse(responseText)
+
+					if (toolCall) {
+						// 工具调用轮数检查，防止 AI 反复调用工具导致无限递归
+						if (toolRound >= MAX_TOOL_ROUNDS) {
+							console.warn(`[Chat] Max tool rounds (${MAX_TOOL_ROUNDS}) reached, stopping tool loop (regenerate)`)
+							const stopNote = `\n\n---\n[Tool: ${toolCall.name || toolCall.originalName}]\nError: Reached max tool rounds (${MAX_TOOL_ROUNDS}), tool execution skipped.`
+							responseText += stopNote
+							updateMessage(botMessageId, responseText, reasoningText)
+							if (onFinish) onFinish(responseText, !!reasoningText ? reasoningText : undefined);
+							return
+						}
+						try {
+							const result = await mcpStore.executeTool(toolCall.name, toolCall.arguments)
+							const displayName = toolCall.name || toolCall.originalName
+							const toolResultText = `[Tool: ${displayName}]\nResult: ${JSON.stringify(result, null, 2)}`
+							responseText += `\n\n---\n${toolResultText}`
+							updateMessage(botMessageId, responseText, reasoningText)
+
+							// 自动继续对话，让 AI 处理工具结果
+							console.log('[Chat] Auto-continuing conversation after tool execution (regenerate)')
+							await sendMessage({
+								text: toolResultText,
+								sender: MessageRole.User,
+								timestamp: Math.round(new Date().getTime() / 1000),
+							}, { beforeSend, onReceiving, onFinish }, botMessageId, toolRound + 1)
+						} catch (e) {
+							console.error('[Chat] Tool execution failed:', e)
+							const displayName = toolCall.name || toolCall.originalName
+							const errorText = `[Tool: ${displayName}]\nError: ${e}`
+							responseText += `\n\n---\n${errorText}`
+							updateMessage(botMessageId, responseText, reasoningText)
+
+							// 即使出错也继续对话，让 AI 知道错误
+							await sendMessage({
+								text: errorText,
+								sender: MessageRole.User,
+								timestamp: Math.round(new Date().getTime() / 1000),
+							}, { beforeSend, onReceiving, onFinish }, botMessageId, toolRound + 1)
+						}
+						return  // 提前返回，因为 sendMessage 已经处理了 onFinish
+					}
+
 					if (onFinish) onFinish(responseText, !!reasoningText ? reasoningText : undefined);
 				},
 				true,
@@ -176,6 +343,7 @@ export const useChatStore = defineStore('chat', () => {
 			);
 		}
 		catch (e) {
+			console.error('[Chat] regenerate streamResponse error:', e)
 			return Promise.reject(e)
 		}
 	}
@@ -382,7 +550,8 @@ export const useChatStore = defineStore('chat', () => {
 				console.error('[ChatStore] No conversation selected')
 				return
 			}
-			Commands.addMessage(conversationId, message.text, message.sender, message.reasoning, parentId)
+			const imagesJson = message.images ? JSON.stringify(message.images) : undefined
+			Commands.addMessage(conversationId, message.text, message.sender, message.reasoning, parentId, imagesJson)
 				.then(async (id) => {
 					messages.value.set(id, { ...message, id })
 					threadTree.addNode(id, parentId)

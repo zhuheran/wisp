@@ -360,80 +360,82 @@ export const useMcpStore = defineStore('mcp', () => {
 
 You have access to the following tools organized by server.
 
-### CRITICAL: Tool Name Format
-When calling a tool, you MUST use the **full qualified name** in this exact format:
-\`server_id:tool_name\`
+### CRITICAL: Tool Call Format
+When calling a tool, you MUST use this EXACT format:
 
-Examples:
-- CORRECT: \`"chrome-devtools:new_page"\`
-- CORRECT: \`"filesystem:read_file"\`
-- WRONG: \`"new_page"\` (missing server_id)
-- WRONG: \`"call-123:new_page"\` (don't add call-id prefix)
+<|tool_call|>
+{"name": "server_id:tool_name", "arguments": {"arg1": "value1"}}
+<|tool_call|>
+
+**Format Rules:**
+- Start with \`<|tool_call|>\` tag
+- Put the JSON object on ONE line
+- End with \`<|tool_call|>\` tag
+- NO code blocks, NO markdown, NO extra text
+
+### Tool Name Format:
+- Use full qualified name: \`server_id:tool_name\`
+- Example: \`"chrome-devtools:new_page"\`
+- NEVER add UUID/call-id prefixes like \`"call-123:tool_name"\`
 
 ### Tool List by Server:
 
 ${toolSections.join('\n\n')}
 
-### How to Call Tools:
+### Examples:
 
-When you want to use a tool, output EXACTLY this JSON format:
+To open a new page:
+<|tool_call|>
+{"name": "chrome-devtools:new_page", "arguments": {"url": "https://example.com"}}
+<|tool_call|>
 
-\`\`\`json
-{
-  "name": "server_id:tool_name",
-  "arguments": {
-    "arg1": "value1",
-    "arg2": "value2"
-  }
-}
-\`\`\`
+To read a file:
+<|tool_call|>
+{"name": "filesystem:read_file", "arguments": {"path": "/path/to/file.txt"}}
+<|tool_call|>
 
-### Example:
-
-To open a new page in Chrome:
-\`\`\`json
-{
-  "name": "chrome-devtools:new_page",
-  "arguments": {
-    "url": "https://example.com"
-  }
-}
-\`\`\`
-
-**IMPORTANT**:
-- Always use the full \`server_id:tool_name\` format
-- Never add UUID/call-id prefixes
-- Arguments must be a valid JSON object
-- Output ONLY the JSON, no explanations
+**REMEMBER**: Always wrap your tool call JSON in \`<|tool_call|>\` tags, NOT in code blocks!
 `
   }
 
-  const parseToolCallFromResponse = (response: string): { name: string; arguments: Record<string, unknown> } | null => {
+  const parseToolCallFromResponse = (response: string): { name: string; arguments: Record<string, unknown>; originalName: string } | null => {
     console.log('[MCP] Parsing tool call from response, length:', response.length)
+    console.log('[MCP] Response preview:', response.substring(0, 200))
     
-    // 尝试多种格式匹配
-    const patterns = [
-      // Pattern 1: ```json ... ``` 或 ```tool_call ... ```
-      /```(?:json|tool_call)\s*\n?([\s\S]*?)\n?```/,
-      // Pattern 2: <|tool_call|>...<tool_call|>
-      /<\|tool_call\|>([\s\S]*?)<\|tool_call\|>/,
-      // Pattern 3: <tool_call ...>...</tool_call >
-      /<tool_call(?:\s+[^>]*)?>([\s\S]*?)<\/tool_call>/,
-    ]
-
-    for (const pattern of patterns) {
-      const match = response.match(pattern)
-      if (match) {
-        console.log('[MCP] Matched pattern:', pattern.source.substring(0, 30))
-        const content = match[1].trim()
-        
-        // 尝试解析 JSON
-        const result = tryParseToolCallJson(content)
-        if (result) return result
-      }
+    // Pattern 1: 最高优先级 - <|tool_call|>...<|tool_call|>（专用工具调用格式）
+    // 允许标签前后有任意空白
+    let match = response.match(/<\|tool_call\|>\s*([\s\S]*?)\s*<\|tool_call\|>/)
+    if (match) {
+      console.log('[MCP] Matched <|tool_call|> format, content:', match[1].trim().substring(0, 100))
+      const result = tryParseToolCallJson(match[1].trim())
+      if (result) return result
     }
 
-    // Pattern 4: 直接在响应中查找 JSON 对象
+    // Pattern 2: <tool_call ...>...</tool_call >
+    match = response.match(/<tool_call(?:\s+[^>]*)?>\s*([\s\S]*?)\s*<\/tool_call>/)
+    if (match) {
+      console.log('[MCP] Matched <tool_call/> format')
+      const result = tryParseToolCallJson(match[1].trim())
+      if (result) return result
+    }
+
+    // Pattern 3: ```tool_call ... ```（专用工具调用代码块）
+    match = response.match(/```tool_call\s*\n?\s*([\s\S]*?)\s*\n?```/)
+    if (match) {
+      console.log('[MCP] Matched ```tool_call code block')
+      const result = tryParseToolCallJson(match[1].trim())
+      if (result) return result
+    }
+
+    // Pattern 4: ```json ... ```（普通JSON代码块，优先级较低）
+    match = response.match(/```json\s*\n?\s*([\s\S]*?)\s*\n?```/)
+    if (match) {
+      console.log('[MCP] Matched ```json code block')
+      const result = tryParseToolCallJson(match[1].trim())
+      if (result) return result
+    }
+
+    // Pattern 5: 直接在响应中查找 JSON 对象（最低优先级）
     // 使用更健壮的方法：找到所有可能的 JSON 对象
     const jsonStartIndices: number[] = []
     for (let i = 0; i < response.length; i++) {
@@ -460,27 +462,38 @@ To open a new page in Chrome:
     return null
   }
 
-  const tryParseToolCallJson = (jsonStr: string): { name: string; arguments: Record<string, unknown> } | null => {
+  const tryParseToolCallJson = (jsonStr: string): { name: string; arguments: Record<string, unknown>; originalName: string } | null => {
+    console.log('[MCP] Trying to parse JSON:', jsonStr.substring(0, 100))
     try {
       const parsed = JSON.parse(jsonStr)
+      console.log('[MCP] Parsed JSON:', parsed)
       
       // 格式 1: {"tool_call": {"name": "...", "arguments": {...}}}
       if (parsed.tool_call?.name) {
+        console.log('[MCP] Found tool_call format')
         return resolveToolName(parsed.tool_call.name, parsed.tool_call.arguments)
       }
       
       // 格式 2: {"name": "...", "arguments": {...}}
       if (parsed.name) {
+        console.log('[MCP] Found name/arguments format, name:', parsed.name)
         return resolveToolName(parsed.name, parsed.arguments)
       }
+      
+      console.log('[MCP] JSON does not have name or tool_call field')
     } catch (e) {
-      // JSON 解析失败，忽略
+      console.warn('[MCP] JSON parse failed:', e)
     }
     
     return null
   }
 
-  const resolveToolName = (rawName: string, rawArgs?: Record<string, unknown>): { name: string; arguments: Record<string, unknown> } | null => {
+  const resolveToolName = (rawName: string, rawArgs?: Record<string, unknown>): { name: string; arguments: Record<string, unknown>; originalName: string } | null => {
+    console.log('[MCP] Resolving tool name:', rawName, 'available tools:', tools.value.length)
+    
+    // 保存原始名称用于显示
+    const originalName = rawName
+    
     // 清理可能的 UUID 前缀（AI 可能错误添加）
     let cleanedName = rawName
     
@@ -495,12 +508,17 @@ To open a new page in Chrome:
       }
     }
     
+    console.log('[MCP] Cleaned name:', cleanedName)
+    console.log('[MCP] Available tools:', tools.value.map(t => t.qualifiedName))
+    
     // 尝试精确匹配 qualifiedName（server_id:tool_name）
     const exactMatch = tools.value.find(t => t.qualifiedName === cleanedName)
     if (exactMatch) {
+      console.log('[MCP] Exact match found:', exactMatch.qualifiedName)
       return {
         name: exactMatch.qualifiedName,
-        arguments: rawArgs || {}
+        arguments: rawArgs || {},
+        originalName
       }
     }
     
@@ -513,7 +531,8 @@ To open a new page in Chrome:
         console.warn(`[MCP] Tool name missing server_id, auto-resolved: ${cleanedName} → ${matches[0].qualifiedName}`)
         return {
           name: matches[0].qualifiedName,
-          arguments: rawArgs || {}
+          arguments: rawArgs || {},
+          originalName
         }
       } else if (matches.length > 1) {
         // 多义性错误
@@ -525,12 +544,27 @@ To open a new page in Chrome:
         // 返回第一个匹配，但记录警告
         return {
           name: matches[0].qualifiedName,
-          arguments: rawArgs || {}
+          arguments: rawArgs || {},
+          originalName
+        }
+      }
+    } else {
+      // 如果包含 : 但没有精确匹配，尝试只匹配工具名
+      const toolNameOnly = cleanedName.split(':').pop()
+      if (toolNameOnly) {
+        const matches = tools.value.filter(t => t.name === toolNameOnly)
+        if (matches.length === 1) {
+          console.warn(`[MCP] Tool name matched by tool name only: ${toolNameOnly} → ${matches[0].qualifiedName}`)
+          return {
+            name: matches[0].qualifiedName,
+            arguments: rawArgs || {},
+            originalName
+          }
         }
       }
     }
     
-    // 完全未找到
+    // 完全未找到 - 返回原始名称，但使用清理后的名称执行
     const availableTools = tools.value.map(t => t.qualifiedName).join(', ')
     console.error(
       `[MCP] Tool not found: "${cleanedName}". ` +
@@ -538,7 +572,8 @@ To open a new page in Chrome:
     )
     return {
       name: cleanedName,
-      arguments: rawArgs || {}
+      arguments: rawArgs || {},
+      originalName
     }
   }
 

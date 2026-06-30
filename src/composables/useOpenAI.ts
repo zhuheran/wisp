@@ -16,7 +16,7 @@ export function useOpenAI() {
 		provider: Provider,
 		onContentChunk: (chunk: string) => void,
 		onReasoningChunk: (chunk: string) => void,
-		onFinish: () => void,
+		onFinish?: () => void,
 		ignoreLastMessage: boolean = false,
 		insertRegenerateGuidancePrompt: boolean = false,
 		character?: Character | null,
@@ -78,10 +78,19 @@ Current time: ${new Date().toString()}
 			return Promise.reject("Fail to stream response: " + error)
 		}
 		 finally {
+			console.log('[useOpenAI] Cleaning up stream listeners')
 			unlistenContent()
 			unlistenReasoning()
 			isStreaming.value = false
-			if(onFinish) onFinish()
+			console.log('[useOpenAI] Calling onFinish callback')
+			if(onFinish) {
+				try {
+					onFinish()
+					console.log('[useOpenAI] onFinish callback completed')
+				} catch (e) {
+					console.error('[useOpenAI] Error in onFinish callback:', e)
+				}
+			}
 		}
 	}
 

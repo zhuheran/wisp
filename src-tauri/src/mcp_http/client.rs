@@ -83,11 +83,13 @@ impl McpHttpClient {
             }
         });
 
-        let result = self.call_with_timeout("initialize", params, Duration::from_secs(60)).await?;
-
+        // 关键：对于 SSE 传输，必须先启动 SSE 监听器再发起 initialize 请求，
+        // 否则 initialize 的响应（通过 SSE 流返回）无人接收，会导致 60 秒超时失败。
         if matches!(self.transport, HttpTransport::Sse) {
             self.start_sse_listener().await?;
         }
+
+        let result = self.call_with_timeout("initialize", params, Duration::from_secs(60)).await?;
 
         let notification = json!({
             "jsonrpc": "2.0",
@@ -134,8 +136,7 @@ impl McpHttpClient {
                                         buffer.push_str(text);
 
                                         while let Some(pos) = buffer.find('\n') {
-                                            let line = buffer[..pos].to_string();
-                                            buffer = buffer[pos + 1..].to_string();
+                                            let line: String = buffer.drain(..=pos).collect();
 
                                             let trimmed = line.trim();
                                             if trimmed.is_empty() {
