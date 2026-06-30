@@ -1,13 +1,13 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { NCard, NTabs, NTabPane, NSpin } from 'naive-ui'
+import { NSplit, NEmpty, useThemeVars } from 'naive-ui'
 import { useMcpStore } from '../stores/mcp'
 import McpServerList from '../components/McpServerList.vue'
-import McpPipelineConfig from '../components/McpPipelineConfig.vue'
-import McpConversationConfig from '../components/McpConversationConfig.vue'
+import McpServerDetails from '../components/McpServerDetails.vue'
 
+const theme = useThemeVars()
 const mcpStore = useMcpStore()
-const activeTab = ref('servers')
+const selectedServerId = ref<string | null>(null)
 
 onMounted(async () => {
   await Promise.all([
@@ -20,33 +20,46 @@ onMounted(async () => {
 
 <template>
   <div class="mcp-view">
-    <n-card title="MCP Configuration" class="config-card">
-      <n-spin :show="mcpStore.isLoading">
-        <n-tabs v-model:value="activeTab" type="line">
-          <n-tab-pane name="servers" tab="Servers">
-            <McpServerList />
-          </n-tab-pane>
-          <n-tab-pane name="pipeline" tab="Pipeline">
-            <McpPipelineConfig />
-          </n-tab-pane>
-          <n-tab-pane name="conversation" tab="Conversation">
-            <McpConversationConfig />
-          </n-tab-pane>
-        </n-tabs>
-      </n-spin>
-    </n-card>
+    <n-split
+      direction="horizontal"
+      :max="'240px'"
+      :min="'128px'"
+      :default-size="'160px'"
+    >
+      <template #1>
+        <div class="list-panel">
+          <McpServerList v-model:selected="selectedServerId" />
+        </div>
+      </template>
+      <template #2>
+        <div class="config-panel">
+          <McpServerDetails
+            v-if="selectedServerId"
+            :server-id="selectedServerId"
+            @close="selectedServerId = null"
+          />
+          <div v-else style="height: 100%; display: grid; place-items: center;">
+            <n-empty description="Select a MCP server" />
+          </div>
+        </div>
+      </template>
+    </n-split>
   </div>
 </template>
 
 <style scoped>
 .mcp-view {
-  padding: 16px;
+  height: 100%;
+  width: 100%;
+}
+
+.list-panel,
+.config-panel {
   height: 100%;
   overflow: auto;
 }
 
-.config-card {
-  max-width: 900px;
-  margin: 0 auto;
+.config-panel {
+  background-color: v-bind('theme.bodyColor');
 }
 </style>

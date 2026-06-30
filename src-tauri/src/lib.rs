@@ -35,7 +35,7 @@ pub fn run() {
 			#[cfg(target_os = "macos")]
 			apply_vibrancy(&window, NSVisualEffectMaterial::Sidebar, None, None).expect("Unsupported platform! 'apply_vibrancy' is only supported on macOS");
 			#[cfg(target_os = "windows")]
-			apply_acrylic(&window, Some((18, 18, 18, 125))).expect("Unsupported platform! 'apply_acrylic' is only supported on Windows");
+			// apply_acrylic(&window, Some((18, 18, 18, 125))).expect("Unsupported platform! 'apply_acrylic' is only supported on Windows");
 
 			let config_manager = ConfigManager::new(app.handle())?;
 			let mcp_config_manager = McpConfigManager::new(app.handle())?;
