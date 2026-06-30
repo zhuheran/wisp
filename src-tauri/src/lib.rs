@@ -10,6 +10,7 @@ mod mcp;
 mod mcp_stdio;
 mod mcp_http;
 mod image;
+mod conversation;
 use tauri::{Builder, Manager};
 use db::chat::Chat;
 use cache::DiagramCache;
@@ -24,8 +25,6 @@ use types::AppData;
 
 #[cfg(target_os = "macos")]
 use window_vibrancy::{apply_vibrancy, NSVisualEffectMaterial};
-#[cfg(target_os = "windows")]
-use window_vibrancy::apply_acrylic;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -34,8 +33,6 @@ pub fn run() {
 			let window = app.get_webview_window("main").unwrap();
 			#[cfg(target_os = "macos")]
 			apply_vibrancy(&window, NSVisualEffectMaterial::Sidebar, None, None).expect("Unsupported platform! 'apply_vibrancy' is only supported on macOS");
-			#[cfg(target_os = "windows")]
-			// apply_acrylic(&window, Some((18, 18, 18, 125))).expect("Unsupported platform! 'apply_acrylic' is only supported on Windows");
 
 			let config_manager = ConfigManager::new(app.handle())?;
 			let mcp_config_manager = McpConfigManager::new(app.handle())?;

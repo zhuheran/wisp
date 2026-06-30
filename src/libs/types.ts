@@ -2,6 +2,7 @@ export enum MessageRole {
 	User = "user",
 	Assistant = "bot",
 	System = "system",
+	Tool = "tool",
 }
 
 export interface ImageContent {
@@ -9,6 +10,16 @@ export interface ImageContent {
 	image_url: {
 		url: string;
 	};
+}
+
+export type ToolCallItem = {
+	id: string
+	name: string
+	arguments: Record<string, unknown>
+	result?: {
+		content: ToolCallContent[]
+		isError?: boolean
+	}
 }
 
 export type Message = {
@@ -20,6 +31,7 @@ export type Message = {
 	tokens?: number,
 	embedding?: Uint8Array,
 	images?: ImageContent[],
+	toolCalls?: ToolCallItem[],
 }
 
 export type Conversation = {

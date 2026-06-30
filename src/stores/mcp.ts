@@ -7,6 +7,7 @@ import type {
   SessionState,
   ConnectionStatus,
   NormalizedTool,
+  ToolCallItem,
 } from '../libs/types'
 import {
   mcpGetServers,
@@ -35,6 +36,7 @@ import {
   mcpHttpCallTool,
 } from '../libs/commands'
 import { transformPayload, type PayloadItem, DEFAULT_PIPELINE_CONFIG } from '../pipeline'
+import type { ToolCallContent } from '../libs/types'
 
 export const useMcpStore = defineStore('mcp', () => {
   const servers = ref<ServerConfig[]>([])
@@ -209,6 +211,23 @@ export const useMcpStore = defineStore('mcp', () => {
     }
 
     return await processToolResult(result)
+  }
+
+  // Execute tool and return result in structured format suitable for ToolCallItem
+  const executeToolStructured = async (toolCall: ToolCallItem): Promise<ToolCallItem> => {
+    const result = await executeTool(toolCall.name, toolCall.arguments)
+    const resultObj = result as Record<string, unknown>
+    const rawContent = resultObj.content
+    const content: ToolCallContent[] = Array.isArray(rawContent)
+      ? rawContent as ToolCallContent[]
+      : [{ type: 'text' as const, text: JSON.stringify(resultObj) }]
+    return {
+      ...toolCall,
+      result: {
+        content,
+        isError: resultObj.isError === true,
+      }
+    }
   }
 
   const processToolResult = async (result: unknown): Promise<unknown> => {
@@ -398,68 +417,39 @@ To read a file:
 `
   }
 
-  const parseToolCallFromResponse = (response: string): { name: string; arguments: Record<string, unknown>; originalName: string } | null => {
-    console.log('[MCP] Parsing tool call from response, length:', response.length)
-    console.log('[MCP] Response preview:', response.substring(0, 200))
-    
-    // Pattern 1: 最高优先级 - <|tool_call|>...<|tool_call|>（专用工具调用格式）
-    // 允许标签前后有任意空白
-    let match = response.match(/<\|tool_call\|>\s*([\s\S]*?)\s*<\|tool_call\|>/)
-    if (match) {
-      console.log('[MCP] Matched <|tool_call|> format, content:', match[1].trim().substring(0, 100))
-      const result = tryParseToolCallJson(match[1].trim())
-      if (result) return result
-    }
+  // Clean <|tool_call|> tags from text, returning the clean text
+  const cleanToolCallTags = (text: string): string => {
+    return text.replace(/<\|tool_call\|>[\s\S]*?<\|tool_call\|>/g, '').replace(/<\|tool_call\|>/g, '').trim()
+  }
 
-    // Pattern 2: <tool_call ...>...</tool_call >
-    match = response.match(/<tool_call(?:\s+[^>]*)?>\s*([\s\S]*?)\s*<\/tool_call>/)
-    if (match) {
-      console.log('[MCP] Matched <tool_call/> format')
-      const result = tryParseToolCallJson(match[1].trim())
-      if (result) return result
-    }
+  // Parse all tool calls from response text, return both calls and clean text
+  const parseToolCallFromResponse = (response: string): { calls: ToolCallItem[]; cleanText: string } => {
+    const calls: ToolCallItem[] = []
+    const pattern = /<\|tool_call\|>\s*([\s\S]*?)\s*<\|tool_call\|>/g
+    let match: RegExpExecArray | null
+    let callIndex = 0
 
-    // Pattern 3: ```tool_call ... ```（专用工具调用代码块）
-    match = response.match(/```tool_call\s*\n?\s*([\s\S]*?)\s*\n?```/)
-    if (match) {
-      console.log('[MCP] Matched ```tool_call code block')
-      const result = tryParseToolCallJson(match[1].trim())
-      if (result) return result
-    }
-
-    // Pattern 4: ```json ... ```（普通JSON代码块，优先级较低）
-    match = response.match(/```json\s*\n?\s*([\s\S]*?)\s*\n?```/)
-    if (match) {
-      console.log('[MCP] Matched ```json code block')
-      const result = tryParseToolCallJson(match[1].trim())
-      if (result) return result
-    }
-
-    // Pattern 5: 直接在响应中查找 JSON 对象（最低优先级）
-    // 使用更健壮的方法：找到所有可能的 JSON 对象
-    const jsonStartIndices: number[] = []
-    for (let i = 0; i < response.length; i++) {
-      if (response[i] === '{') {
-        jsonStartIndices.push(i)
+    while ((match = pattern.exec(response)) !== null) {
+      const jsonStr = match[1].trim()
+      const parsed = tryParseToolCallJson(jsonStr)
+      if (parsed) {
+        calls.push({
+          id: parsed.originalName || `tc_${callIndex}`,
+          name: parsed.name,
+          arguments: parsed.arguments,
+        })
+        callIndex++
       }
     }
 
-    for (const startIndex of jsonStartIndices) {
-      // 尝试从每个 '{' 开始解析 JSON
-      for (let endIndex = response.length; endIndex > startIndex; endIndex--) {
-        if (response[endIndex - 1] === '}') {
-          const jsonStr = response.slice(startIndex, endIndex)
-          const result = tryParseToolCallJson(jsonStr)
-          if (result) {
-            console.log('[MCP] Found tool call JSON at position:', startIndex)
-            return result
-          }
-        }
-      }
-    }
+    const cleanText = cleanToolCallTags(response)
+    return { calls, cleanText }
+  }
 
-    console.log('[MCP] No tool call pattern matched')
-    return null
+  // Legacy: parse single tool call (backward compat for chat store)
+  const parseSingleToolCallFromResponse = (response: string): ToolCallItem | null => {
+    const { calls } = parseToolCallFromResponse(response)
+    return calls.length > 0 ? calls[0] : null
   }
 
   const tryParseToolCallJson = (jsonStr: string): { name: string; arguments: Record<string, unknown>; originalName: string } | null => {
@@ -733,8 +723,11 @@ To read a file:
     refreshAllStatuses,
     refreshAllTools,
     executeTool,
+    executeToolStructured,
     getToolsPrompt,
+    cleanToolCallTags,
     parseToolCallFromResponse,
+    parseSingleToolCallFromResponse,
     getConnectionStatus,
   }
 })

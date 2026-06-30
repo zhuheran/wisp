@@ -15,6 +15,19 @@ pub struct Chat {
 
 #[allow(unused)]
 impl Chat {
+    pub fn new_with_pool(pool: DbPool) -> Result<Self, ChatError> {
+        let messages_manager = Messages::new(pool.clone())?;
+        let thread_manager = Threads::new(pool.clone(), "messages", "id")?;
+        let conversation_manager = Conversations::new(pool.clone(), "messages")?;
+
+        Ok(Chat {
+            pool,
+            thread_manager,
+            conversation_manager,
+            messages_manager,
+        })
+    }
+
     pub fn new(app_handle: &AppHandle) -> Result<Self, ChatError> {
         let app_dir = app_handle
             .path()
@@ -26,16 +39,7 @@ impl Chat {
         let db_path = db_path.to_str().expect("Failed to reach database path");
 
         let pool = create_pool(db_path);
-        let messages_manager = Messages::new(pool.clone())?;
-        let thread_manager = Threads::new(pool.clone(), "messages", "id")?;
-        let conversation_manager = Conversations::new(pool.clone(), "messages")?;
-
-        Ok(Chat {
-            pool,
-            thread_manager,
-            conversation_manager,
-            messages_manager,
-        })
+        Self::new_with_pool(pool)
     }
 
     /// Creates a new conversation with initial system message
@@ -61,17 +65,18 @@ impl Chat {
         conversation_id: &str,
         message_id: &str,
         text: &str,
-		reasoning: Option<&str>,
+			reasoning: Option<&str>,
         sender: &str,
         parent_message_id: Option<&str>,
         images: Option<&str>,
+        tool_calls: Option<&str>,
     ) -> Result<(), ChatError> {
         let mut conn = self.pool.get()?;
         let tx = conn.transaction()?;
 
         // Add the message
         self.messages_manager
-            .add(message_id, text, reasoning, sender, None, None, images)?;
+            .add(message_id, text, reasoning, sender, None, None, images, tool_calls)?;
 
         // Link to parent message
         self.thread_manager.add(message_id, parent_message_id)?;
@@ -91,6 +96,67 @@ impl Chat {
 
         tx.commit()?;
         Ok(())
+    }
+
+    /// Gets the selected branch path from the conversation root to a leaf message.
+    pub fn get_message_path_to(
+        &mut self,
+        conversation_id: &str,
+        leaf_message_id: &str,
+    ) -> Result<Vec<Message>, ChatError> {
+        let conv = self
+            .conversation_manager
+            .get(conversation_id)?
+            .ok_or(ChatError::Conversation(ConversationError::Database(
+                rusqlite::Error::QueryReturnedNoRows,
+            )))?;
+
+        let Some(entry_id) = conv.entry_message_id else {
+            return Ok(vec![]);
+        };
+
+        let mut ids = Vec::new();
+        let mut current = Some(leaf_message_id.to_string());
+        while let Some(id) = current {
+            ids.push(id.clone());
+            if id == entry_id {
+                break;
+            }
+            current = self.thread_manager.get_parent(&id)?;
+        }
+
+        if ids.last() != Some(&entry_id) {
+            return Err(ChatError::Conversation(ConversationError::InvalidOperation(
+                format!("message {leaf_message_id} is not in conversation {conversation_id}"),
+            )));
+        }
+
+        ids.reverse();
+        ids.into_iter()
+            .map(|id| self.messages_manager.get(&id).map_err(ChatError::from))
+            .collect()
+    }
+
+    /// Gets the default leaf by always selecting the last child at each branch.
+    pub fn get_default_leaf(&mut self, conversation_id: &str) -> Result<Option<String>, ChatError> {
+        let conv = self
+            .conversation_manager
+            .get(conversation_id)?
+            .ok_or(ChatError::Conversation(ConversationError::Database(
+                rusqlite::Error::QueryReturnedNoRows,
+            )))?;
+
+        let Some(mut current) = conv.entry_message_id else {
+            return Ok(None);
+        };
+
+        loop {
+            let children = self.thread_manager.get_children(&current)?;
+            let Some(next) = children.last() else {
+                return Ok(Some(current));
+            };
+            current = next.clone();
+        }
     }
 
     /// Gets full message thread for a conversation
@@ -300,5 +366,75 @@ impl Chat {
         }
 
         Ok(result)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::create_memory_pool;
+
+    fn add(chat: &mut Chat, conversation_id: &str, id: &str, text: &str, sender: &str, parent: Option<&str>) {
+        chat.add_message(conversation_id, id, text, None, sender, parent, None, None)
+            .expect("message inserted");
+    }
+
+    #[test]
+    fn get_message_path_to_returns_only_selected_branch() {
+        let pool = create_memory_pool();
+        let mut chat = Chat::new_with_pool(pool).expect("chat created");
+        chat.create_conversation("c1", "Conversation", "desc")
+            .expect("conversation created");
+
+        add(&mut chat, "c1", "u1", "root user", "user", None);
+        add(&mut chat, "c1", "a1", "assistant branch 1", "bot", Some("u1"));
+        add(&mut chat, "c1", "a2", "assistant branch 2", "bot", Some("u1"));
+        add(&mut chat, "c1", "u2", "follow up", "user", Some("a2"));
+
+        let path = chat
+            .get_message_path_to("c1", "u2")
+            .expect("path selected");
+        let ids: Vec<String> = path.into_iter().map(|message| message.id).collect();
+
+        assert_eq!(ids, vec!["u1", "a2", "u2"]);
+    }
+
+    #[test]
+    fn get_default_leaf_selects_last_child_recursively() {
+        let pool = create_memory_pool();
+        let mut chat = Chat::new_with_pool(pool).expect("chat created");
+        chat.create_conversation("c1", "Conversation", "desc")
+            .expect("conversation created");
+
+        add(&mut chat, "c1", "u1", "root user", "user", None);
+        add(&mut chat, "c1", "a1", "assistant branch 1", "bot", Some("u1"));
+        add(&mut chat, "c1", "a2", "assistant branch 2", "bot", Some("u1"));
+        add(&mut chat, "c1", "u2", "follow up", "user", Some("a2"));
+
+        assert_eq!(
+            chat.get_default_leaf("c1").expect("leaf selected"),
+            Some("u2".to_string())
+        );
+    }
+
+    #[test]
+    fn get_message_path_to_rejects_leaf_outside_conversation() {
+        let pool = create_memory_pool();
+        let mut chat = Chat::new_with_pool(pool).expect("chat created");
+        chat.create_conversation("c1", "Conversation 1", "desc")
+            .expect("conversation created");
+        chat.create_conversation("c2", "Conversation 2", "desc")
+            .expect("conversation created");
+
+        add(&mut chat, "c1", "u1", "root user", "user", None);
+        add(&mut chat, "c2", "u2", "other root", "user", None);
+
+        let err = chat
+            .get_message_path_to("c1", "u2")
+            .expect_err("foreign leaf rejected");
+        assert!(matches!(
+            err,
+            ChatError::Conversation(ConversationError::InvalidOperation(_))
+        ));
     }
 }

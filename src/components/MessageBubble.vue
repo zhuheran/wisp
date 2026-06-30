@@ -25,7 +25,7 @@ import {
 } from "@vicons/fluent";
 import MarkdownRenderer from "./MarkdownRenderer.vue";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
-import { MessageRole, type ImageContent } from "../libs/types";
+import { MessageRole, type ImageContent, type ToolCallItem } from "../libs/types";
 import { useChatStore } from "../stores/chat";
 import { ref, computed, useTemplateRef, watch } from "vue";
 import { mixColours } from "../utils/colour";
@@ -44,7 +44,9 @@ const borderColor = computed(() =>
 const backgroundColor = computed(() =>
   props.sender === MessageRole.User
     ? mixColours(theme.value.primaryColor, theme.value.baseColor, 0.3)
-    : theme.value.cardColor
+    : props.sender === MessageRole.Tool
+      ? theme.value.actionColor
+      : theme.value.cardColor
 );
 
 const border = computed(() => `1px solid ${borderColor.value}`);
@@ -61,6 +63,7 @@ const props = defineProps<{
   culling?: boolean;
   index?: number;
   images?: ImageContent[];
+  toolCalls?: ToolCallItem[];
 }>();
 
 const emit = defineEmits<{
@@ -169,131 +172,22 @@ if (!(props.over ?? true)) thinkingPanelExpandedNames.value.push("thinking");
 
 const footerVisible = ref(false);
 
-// MCP Tool Call Result Parsing
-// 匹配 [Tool: tool_name]\nResult: {...} 或 [Tool: tool_name]\nError: ... 格式
-// 支持多工具调用、嵌套 JSON、保留工具调用前后的文本
-type ParsedToolCall = {
-  toolName: string;
-  status: 'success' | 'error';
-  result: string;
-  start: number;
-  end: number;
-};
-
-// 清理未配对的 <|tool_call|> 指令标签（仅清理成对标签外的残留）
-const cleanToolCallTags = (text: string): string => {
-  // 先清理成对标签及其内容
-  let cleaned = text.replace(/<\|tool_call\|>[\s\S]*?<\|tool_call\|>/g, '');
-  // 再清理残留的未配对开标签或闭标签
-  cleaned = cleaned.replace(/<\|tool_call\|>/g, '');
-  return cleaned;
-};
-
-// 从指定位置提取一个 JSON 值（支持嵌套），返回结束位置和原始字符串
-const extractBalancedJson = (text: string, startIndex: number): { raw: string; end: number } | null => {
-  if (text[startIndex] !== '{') return null;
-  let depth = 0;
-  let inString = false;
-  let escape = false;
-  for (let i = startIndex; i < text.length; i++) {
-    const ch = text[i];
-    if (escape) { escape = false; continue; }
-    if (ch === '\\' && inString) { escape = true; continue; }
-    if (ch === '"') { inString = !inString; continue; }
-    if (inString) continue;
-    if (ch === '{') depth++;
-    else if (ch === '}') {
-      depth--;
-      if (depth === 0) {
-        return { raw: text.substring(startIndex, i + 1), end: i + 1 };
-      }
-    }
-  }
-  return null;
-};
-
-const parsedToolCalls = computed<ParsedToolCall[]>(() => {
-  const results: ParsedToolCall[] = [];
-  const text = props.text;
-  // 使用标志位匹配 [Tool: name]，避免误匹配 markdown 链接
-  const headerPattern = /\[Tool:\s*([^\]]+)\]\s*\n(Result|Error):\s*/g;
-  let m: RegExpExecArray | null;
-  while ((m = headerPattern.exec(text)) !== null) {
-    const toolName = m[1];
-    const status = m[2] === 'Error' ? 'error' : 'success';
-    const contentStart = headerPattern.lastIndex;
-    let resultRaw: string;
-    let resultEnd: number;
-    if (status === 'success' && text[contentStart] === '{') {
-      // 尝试提取平衡的嵌套 JSON
-      const extracted = extractBalancedJson(text, contentStart);
-      if (extracted) {
-        resultRaw = extracted.raw;
-        resultEnd = extracted.end;
-      } else {
-        // 兜底：取到行尾
-        const lineEnd = text.indexOf('\n', contentStart);
-        resultEnd = lineEnd === -1 ? text.length : lineEnd;
-        resultRaw = text.substring(contentStart, resultEnd);
-      }
-    } else {
-      // Error 文本或非对象 Result：取到下一个 [Tool: 头部或文本末尾
-      const nextHeader = text.indexOf('[Tool:', contentStart);
-      resultEnd = nextHeader === -1 ? text.length : nextHeader;
-      resultRaw = text.substring(contentStart, resultEnd).trim();
-    }
-    results.push({
-      toolName,
-      status,
-      result: resultRaw,
-      start: m.index,
-      end: resultEnd,
-    });
-    // 推进 lastIndex 避免重复匹配
-    headerPattern.lastIndex = resultEnd;
-  }
-  return results;
-});
-
-const hasToolCall = computed(() => parsedToolCalls.value.length > 0);
-
+// Tool call display state
 const toolCallExpandedNames = ref<string[]>([]);
 
-// 清理后的显示文本：移除工具调用块本身和 <|tool_call|> 指令标签，保留工具调用前后的所有文本
-const displayText = computed(() => {
-  if (!hasToolCall.value) {
-    return cleanToolCallTags(props.text);
-  }
-  // 拼接工具调用块之间的文本片段
-  let cleaned = '';
-  let lastEnd = 0;
-  for (const call of parsedToolCalls.value) {
-    cleaned += props.text.substring(lastEnd, call.start);
-    lastEnd = call.end;
-  }
-  cleaned += props.text.substring(lastEnd);
-  // 移除孤立的 --- 分隔符（工具调用块前后留下的）
-  cleaned = cleaned.replace(/^\s*---\s*\n?/gm, '').replace(/\n\s*---\s*$/g, '');
-  return cleanToolCallTags(cleaned).trim();
-});
+const hasToolCalls = computed(() => props.toolCalls && props.toolCalls.length > 0);
 
-// 工具调用块之间的文本片段（用于在折叠面板之间插入渲染）
-const textSegmentsBetweenTools = computed<{ beforeFirst: string; between: string[]; afterLast: string }>(() => {
-  const calls = parsedToolCalls.value;
-  if (calls.length === 0) return { beforeFirst: '', between: [], afterLast: '' };
-  const cleanSegment = (raw: string) => {
-    let s = cleanToolCallTags(raw);
-    s = s.replace(/^\s*---\s*\n?/gm, '').replace(/\n\s*---\s*$/g, '');
-    return s.trim();
-  };
-  const beforeFirst = cleanSegment(props.text.substring(0, calls[0].start));
-  const between: string[] = [];
-  for (let i = 0; i < calls.length - 1; i++) {
-    between.push(cleanSegment(props.text.substring(calls[i].end, calls[i + 1].start)));
-  }
-  const afterLast = cleanSegment(props.text.substring(calls[calls.length - 1].end));
-  return { beforeFirst, between, afterLast };
-});
+const formatToolResult = (call: ToolCallItem): string => {
+  if (!call.result) return 'No result';
+  return call.result.content
+    .map(c => {
+      if (c.type === 'text') return c.text;
+      if (c.type === 'image') return '[Image]';
+      if (c.type === 'resource') return `[Resource: ${c.uri || 'unknown'}]`;
+      return JSON.stringify(c);
+    })
+    .join('\n\n');
+};
 </script>
 
 <template>
@@ -306,7 +200,7 @@ const textSegmentsBetweenTools = computed<{ beforeFirst: string; between: string
       <n-flex align="start" :wrap="false" class="item-layout">
         <n-avatar class="avatar">
           <n-icon
-            :component="sender === 'bot' ? Chat24Regular : Person24Regular"
+            :component="sender === 'bot' ? Chat24Regular : sender === 'tool' ? Toolbox24Regular : Person24Regular"
           />
         </n-avatar>
         <div
@@ -357,22 +251,21 @@ const textSegmentsBetweenTools = computed<{ beforeFirst: string; between: string
                 </n-collapse>
               </div>
               <MarkdownRenderer
-                v-if="!hasToolCall"
-                :text="displayText"
+                v-if="!hasToolCalls"
+                :text="props.text"
                 :over="over"
                 v-model:ready="rendered"
                 @update:ready="onReadyStatusChange"
               />
               <template v-else>
                 <MarkdownRenderer
-                  v-if="textSegmentsBetweenTools.beforeFirst"
-                  :text="textSegmentsBetweenTools.beforeFirst"
+                  :text="props.text"
                   :over="over"
                   v-model:ready="rendered"
                   @update:ready="onReadyStatusChange"
                 />
-                <template v-for="(call, idx) in parsedToolCalls" :key="idx">
-                  <div class="tool-call-container" :class="call.status">
+                <template v-for="(call, idx) in props.toolCalls" :key="call.id || idx">
+                  <div class="tool-call-container" :class="call.result?.isError ? 'error' : ''">
                     <n-collapse
                       arrow-placement="right"
                       v-model:expanded-names="toolCallExpandedNames"
@@ -382,11 +275,11 @@ const textSegmentsBetweenTools = computed<{ beforeFirst: string; between: string
                         <template #header>
                           <n-flex align="center" :wrap="false" style="flex: 1;">
                             <n-icon :component="Toolbox24Regular" />
-                            <n-tag size="small" :type="call.status === 'error' ? 'error' : 'success'">
-                              {{ call.toolName }}
+                            <n-tag size="small" :type="call.result?.isError ? 'error' : 'success'">
+                              {{ call.name }}
                             </n-tag>
-                            <n-tag size="tiny" :type="call.status === 'error' ? 'error' : 'info'" round>
-                              {{ call.status === 'error' ? 'Error' : 'OK' }}
+                            <n-tag size="tiny" :type="call.result?.isError ? 'error' : 'info'" round>
+                              {{ call.result?.isError ? 'Error' : 'OK' }}
                             </n-tag>
                             <span class="tool-call-hint">
                               {{ toolCallExpandedNames.includes(`toolcall-${idx}`) ? '点击收起' : '点击展开查看结果' }}
@@ -394,26 +287,12 @@ const textSegmentsBetweenTools = computed<{ beforeFirst: string; between: string
                           </n-flex>
                         </template>
                         <div class="tool-call-result">
-                          <pre>{{ call.result }}</pre>
+                          <pre>{{ formatToolResult(call) }}</pre>
                         </div>
                       </n-collapse-item>
                     </n-collapse>
                   </div>
-                  <MarkdownRenderer
-                    v-if="idx < parsedToolCalls.length - 1 && textSegmentsBetweenTools.between[idx]"
-                    :text="textSegmentsBetweenTools.between[idx]"
-                    :over="over"
-                    v-model:ready="rendered"
-                    @update:ready="onReadyStatusChange"
-                  />
                 </template>
-                <MarkdownRenderer
-                  v-if="textSegmentsBetweenTools.afterLast"
-                  :text="textSegmentsBetweenTools.afterLast"
-                  :over="over"
-                  v-model:ready="rendered"
-                  @update:ready="onReadyStatusChange"
-                />
               </template>
             </div>
           </div>
@@ -511,7 +390,9 @@ const textSegmentsBetweenTools = computed<{ beforeFirst: string; between: string
     'sender === "user" ? "row-reverse" : "row"'
   ) !important;
   align-items: flex-start;
-  margin-bottom: 12px;
+  margin-bottom: v-bind(
+    'sender === "tool" ? "4px" : "12px"'
+  );
 }
 
 .avatar {
@@ -537,6 +418,12 @@ const textSegmentsBetweenTools = computed<{ beforeFirst: string; between: string
 
 .message-bubble.bot {
   margin-right: auto;
+}
+
+.message-bubble.tool {
+  margin-left: 52px;
+  margin-right: auto;
+  max-width: 70%;
 }
 
 .message-bubble.copied {

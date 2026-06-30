@@ -265,6 +265,7 @@ pub async fn add_message(
     sender: String,
     parent_id: Option<String>,
     images: Option<String>,
+    tool_calls: Option<String>,
 ) -> Result<String, String> {
     let state = app_handle.state::<Mutex<AppData>>();
     let mut state = state.lock().unwrap();
@@ -280,6 +281,7 @@ pub async fn add_message(
             &sender,
             parent_id.as_deref(),
             images.as_deref(),
+            tool_calls.as_deref(),
         )
         .map(|_| message_id)
         .map_err(|e| e.to_string())
@@ -291,6 +293,7 @@ pub async fn update_message(
     message_id: String,
     text: String,
     reasoning: Option<String>,
+    tool_calls: Option<String>,
 ) -> Result<(), String> {
     let state = app_handle.state::<Mutex<AppData>>();
     let mut state = state.lock().unwrap();
@@ -303,6 +306,13 @@ pub async fn update_message(
             .chat
             .messages_manager
             .update_reasoning(&message_id, &reasoning)
+            .map_err(|e| e.to_string())?;
+    }
+    if let Some(tool_calls) = tool_calls {
+        state
+            .chat
+            .messages_manager
+            .update_tool_calls(&message_id, &tool_calls)
             .map_err(|e| e.to_string())?;
     }
     Ok(())

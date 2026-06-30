@@ -85,13 +85,6 @@ export class ConversationLoop {
 
         const toolResults = await this.executeToolCalls(assistantContent.toolCalls)
 
-        const assistantMessage: ConversationMessage = {
-          role: 'assistant',
-          content: assistantContent.text || '',
-          toolCalls: assistantContent.toolCalls,
-        }
-        await this.sessionManager.appendMessage(assistantMessage)
-
         for (const result of toolResults) {
           const toolMessage: ConversationMessage = {
             role: 'tool',

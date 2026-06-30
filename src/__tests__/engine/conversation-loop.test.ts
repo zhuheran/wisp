@@ -17,6 +17,24 @@ function createMockLLMProvider(responses: AsyncIterable<LLMStreamChunk>[]): LLMP
   }
 }
 
+function createInspectingMockLLMProvider(
+  responses: AsyncIterable<LLMStreamChunk>[],
+  seenMessages: ConversationMessage[][],
+): LLMProvider {
+  let callIndex = 0
+  return {
+    async *streamChat(messages: ConversationMessage[]): AsyncIterable<LLMStreamChunk> {
+      seenMessages.push(messages.map((message) => ({ ...message })))
+      if (callIndex < responses.length) {
+        yield* responses[callIndex++]
+      } else {
+        yield { type: 'text', text: 'No more responses' }
+        yield { type: 'done' }
+      }
+    },
+  }
+}
+
 describe('ConversationLoop', () => {
   let sessionManager: SessionManager
   let toolRegistry: any
@@ -79,6 +97,51 @@ describe('ConversationLoop', () => {
 
     expect(result).toContain('sunny')
     expect(toolRegistry.executeTool).toHaveBeenCalled()
+  })
+
+  it('should send assistant tool call and tool result history to the next LLM round once', async () => {
+    toolRegistry.getTool.mockReturnValue({ name: 'get_weather', serverId: 'weather' })
+    toolRegistry.executeTool.mockResolvedValue({
+      serverId: 'weather',
+      toolName: 'get_weather',
+      content: [{ type: 'text', text: 'Sunny, 72°F' }],
+      isError: false,
+    })
+
+    const seenMessages: ConversationMessage[][] = []
+    const provider = createInspectingMockLLMProvider([
+      (async function* () {
+        yield { type: 'tool_call_start', toolCall: { id: 'tc1', name: 'get_weather', arguments: {} } }
+        yield { type: 'tool_call_delta', toolCallDelta: { id: 'tc1', argumentsDelta: '{"city":"NYC"}' } }
+        yield { type: 'tool_call_end' }
+        yield { type: 'done' }
+      })(),
+      (async function* () {
+        yield { type: 'text', text: 'The weather in NYC is sunny, 72°F.' }
+        yield { type: 'done' }
+      })(),
+    ], seenMessages)
+
+    const loop = new ConversationLoop(toolRegistry, provider, sessionManager)
+
+    await loop.start("What's the weather?")
+
+    expect(seenMessages).toHaveLength(2)
+    const secondRoundMessages = seenMessages[1]
+    expect(secondRoundMessages.map((message) => message.role)).toEqual([
+      'system',
+      'user',
+      'assistant',
+      'tool',
+    ])
+    expect(secondRoundMessages[2].toolCalls).toEqual([
+      { id: 'tc1', name: 'get_weather', arguments: { city: 'NYC' } },
+    ])
+    expect(secondRoundMessages[3]).toMatchObject({
+      role: 'tool',
+      toolCallId: 'tc1',
+      content: [{ type: 'text', text: 'Sunny, 72°F' }],
+    })
   })
 
   it('should handle tool execution errors with fallback', async () => {

@@ -4,15 +4,15 @@ use std::error::Error;
 use async_openai::{
     config::OpenAIConfig,
     types::{
-        ChatCompletionRequestAssistantMessage, ChatCompletionRequestAssistantMessageContent,
-		ChatCompletionRequestSystemMessage, ChatCompletionRequestSystemMessageContent,
-		ChatCompletionRequestMessage,
-        ChatCompletionRequestUserMessage, ChatCompletionRequestUserMessageContent,
-        CreateChatCompletionRequestArgs,
-        ChatCompletionRequestUserMessageContentPart,
+        ChatCompletionMessageToolCall, ChatCompletionRequestAssistantMessage,
+        ChatCompletionRequestAssistantMessageContent, ChatCompletionRequestMessage,
         ChatCompletionRequestMessageContentPartImage,
-        ChatCompletionRequestMessageContentPartText,
-        ImageUrl, ImageDetail,
+        ChatCompletionRequestMessageContentPartText, ChatCompletionRequestSystemMessage,
+        ChatCompletionRequestSystemMessageContent, ChatCompletionRequestToolMessage,
+        ChatCompletionRequestToolMessageContent, ChatCompletionRequestUserMessage,
+        ChatCompletionRequestUserMessageContent, ChatCompletionRequestUserMessageContentPart,
+        ChatCompletionToolType, CreateChatCompletionRequestArgs, FunctionCall, ImageDetail,
+        ImageUrl,
     },
     Client,
 };
@@ -98,13 +98,35 @@ fn convert_messages(
                     }
                 }
                 "assistant" => {
-                    // OpenAI 规范允许 assistant 消息在带 tool_calls 时 content 为 null
                     let text = content.as_str().unwrap_or("");
+                    let tool_calls = msg["toolCalls"].as_array().map(|calls| {
+                        calls
+                            .iter()
+                            .map(|call| {
+                                let arguments = call["arguments"].clone();
+                                ChatCompletionMessageToolCall {
+                                    id: call["id"].as_str().unwrap_or_default().to_string(),
+                                    r#type: ChatCompletionToolType::Function,
+                                    function: FunctionCall {
+                                        name: call["name"].as_str().unwrap_or_default().to_string(),
+                                        arguments: serde_json::to_string(&arguments)
+                                            .unwrap_or_else(|_| "{}".to_string()),
+                                    },
+                                }
+                            })
+                            .collect::<Vec<_>>()
+                    });
+
                     Ok(ChatCompletionRequestMessage::Assistant(
                         ChatCompletionRequestAssistantMessage {
-                            content: Some(ChatCompletionRequestAssistantMessageContent::Text(
-                                text.to_string(),
-                            )),
+                            content: if text.is_empty() && tool_calls.is_some() {
+                                None
+                            } else {
+                                Some(ChatCompletionRequestAssistantMessageContent::Text(
+                                    text.to_string(),
+                                ))
+                            },
+                            tool_calls,
                             ..Default::default()
                         },
                     ))
@@ -120,95 +142,132 @@ fn convert_messages(
                         },
                     ))
                 }
-                // Add other roles (assistant, system) as needed
+                "tool" => {
+                    let text = if let Some(text) = content.as_str() {
+                        text.to_string()
+                    } else {
+                        serde_json::to_string(content)?
+                    };
+                    let tool_call_id = msg["toolCallId"]
+                        .as_str()
+                        .ok_or("Missing toolCallId")?
+                        .to_string();
+
+                    Ok(ChatCompletionRequestMessage::Tool(
+                        ChatCompletionRequestToolMessage {
+                            content: ChatCompletionRequestToolMessageContent::Text(text),
+                            tool_call_id,
+                        },
+                    ))
+                }
                 _ => Err("Unsupported role".into()),
             }
         })
         .collect()
 }
 
-/// Streams chat completions from OpenAI-compatible API and emits chunks via Tauri
-pub async fn ask_openai_stream(
-    app_handle: AppHandle,
-    messages: Vec<Value>,
-    model: String,
-	provider: Provider,
+#[derive(Debug, Clone)]
+pub struct OpenAiStreamEvents {
+    pub content_chunk: &'static str,
+    pub reasoning_chunk: &'static str,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct OpenAiStreamOutcome {
+    pub text: String,
+    pub reasoning: String,
+}
+
+impl OpenAiStreamEvents {
+    pub const LEGACY: Self = Self {
+        content_chunk: "openai_stream_chunk",
+        reasoning_chunk: "openai_stream_chunk_reasoning",
+    };
+
+    pub const CONVERSATION: Self = Self {
+        content_chunk: "conversation_stream_chunk",
+        reasoning_chunk: "conversation_stream_reasoning",
+    };
+}
+
+fn apply_chat_parameters(
+    request_builder: &mut CreateChatCompletionRequestArgs,
     parameters: Option<HashMap<String, Value>>,
-) -> Result<(), Box<dyn Error>> {
-	let base_url = provider.base_url;
-	let key_manager_local = KeyManager::new("wisp".to_string());
-	let api_key = key_manager_local.get_api_key(&provider.name).or_else(|_| std::env::var("OPENAI_API_KEY"))?;
-	let client = get_openai_client(base_url, api_key)?;
-    let converted_messages = convert_messages(messages)?;
-
-    let mut args = CreateChatCompletionRequestArgs::default();
-    args.model(model.clone())
-        .messages(converted_messages)
-        .stream(true);
-    let request_builder = &mut args;
-
-    // Apply custom parameters if provided
+) {
     if let Some(params) = parameters {
-        // Apply temperature
         if let Some(temp) = params.get("temperature").and_then(|v| v.as_f64()) {
             request_builder.temperature(temp as f32);
         }
-        
-        // Apply top_p
+
         if let Some(top_p) = params.get("top_p").and_then(|v| v.as_f64()) {
             request_builder.top_p(top_p as f32);
         }
-        
-        // Apply max_tokens
+
         if let Some(max_tokens) = params.get("max_tokens").and_then(|v| v.as_i64()) {
             request_builder.max_tokens(max_tokens as u32);
         } else {
-            // Default max_tokens
             request_builder.max_tokens(1024u32);
         }
-        
-        // Apply presence_penalty
+
         if let Some(penalty) = params.get("presence_penalty").and_then(|v| v.as_f64()) {
             request_builder.presence_penalty(penalty as f32);
         }
-        
-        // Apply frequency_penalty
+
         if let Some(penalty) = params.get("frequency_penalty").and_then(|v| v.as_f64()) {
             request_builder.frequency_penalty(penalty as f32);
         }
-        
-        // Apply seed if supported
+
         if let Some(seed) = params.get("seed").and_then(|v| v.as_i64()) {
             request_builder.seed(seed as i32);
         }
     } else {
-        // Default max_tokens
         request_builder.max_tokens(1024u32);
     }
+}
+
+pub async fn stream_openai_messages(
+    app_handle: AppHandle,
+    messages: Vec<ChatCompletionRequestMessage>,
+    model: String,
+    provider: Provider,
+    parameters: Option<HashMap<String, Value>>,
+    events: OpenAiStreamEvents,
+) -> Result<OpenAiStreamOutcome, Box<dyn Error>> {
+    let base_url = provider.base_url;
+    let key_manager_local = KeyManager::new("wisp".to_string());
+    let api_key = key_manager_local
+        .get_api_key(&provider.name)
+        .or_else(|_| std::env::var("OPENAI_API_KEY"))?;
+    let client = get_openai_client(base_url, api_key)?;
+
+    let mut args = CreateChatCompletionRequestArgs::default();
+    args.model(model.clone()).messages(messages).stream(true);
+    apply_chat_parameters(&mut args, parameters);
 
     let request = args.build()?;
-
     let mut stream = client.chat().create_stream(request).await?;
+    let mut outcome = OpenAiStreamOutcome::default();
 
     while let Some(response) = stream.next().await {
-		match response {
+        match response {
             Ok(ccr) => {
                 for choice in ccr.choices {
                     if let Some(content) = choice.delta.content {
+                        outcome.text.push_str(&content);
                         app_handle
-                            .emit("openai_stream_chunk", content)
+                            .emit(events.content_chunk, content)
                             .map_err(|e| e.to_string())?;
                     }
-					if let Some(reasoning_content) = choice.delta.reasoning_content {
+                    if let Some(reasoning_content) = choice.delta.reasoning_content {
+                        outcome.reasoning.push_str(&reasoning_content);
                         app_handle
-                            .emit("openai_stream_chunk_reasoning", reasoning_content)
+                            .emit(events.reasoning_chunk, reasoning_content)
                             .map_err(|e| e.to_string())?;
                     }
                 }
             }
             Err(e) => {
                 eprintln!("Error in stream chunk: {}", e);
-                // Log the raw error message for debugging
                 if let Some(raw_error) = e.source() {
                     eprintln!("Raw error: {}", raw_error);
                 }
@@ -217,5 +276,28 @@ pub async fn ask_openai_stream(
     }
 
     println!("[API] Stream completed for model: {}", model);
-    Ok(())
+    Ok(outcome)
+}
+
+/// Streams chat completions from OpenAI-compatible API and emits chunks via Tauri.
+/// This legacy entry point accepts frontend JSON messages. New Rust-owned
+/// conversation flows should call `stream_openai_messages` with typed messages.
+pub async fn ask_openai_stream(
+    app_handle: AppHandle,
+    messages: Vec<Value>,
+    model: String,
+    provider: Provider,
+    parameters: Option<HashMap<String, Value>>,
+) -> Result<(), Box<dyn Error>> {
+    let converted_messages = convert_messages(messages)?;
+    stream_openai_messages(
+        app_handle,
+        converted_messages,
+        model,
+        provider,
+        parameters,
+        OpenAiStreamEvents::LEGACY,
+    )
+    .await
+    .map(|_| ())
 }

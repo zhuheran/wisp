@@ -281,6 +281,7 @@ onMounted(() => {
               :sender="message.sender"
               :timestamp="new Date(message.timestamp * 1000)"
               :id="message.id"
+              :toolCalls="message.toolCalls"
               :over="
                 !(
                   index === chatStore.displayedMessage.length - 1 &&

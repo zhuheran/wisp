@@ -66,7 +66,7 @@ pub enum MessageError {
     InvalidRole(String),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum MessageRole {
     #[serde(rename = "user")]
     User,
@@ -74,6 +74,8 @@ pub enum MessageRole {
     Assistant,
     #[serde(rename = "system")]
     System,
+    #[serde(rename = "tool")]
+    Tool,
 }
 
 impl std::fmt::Display for MessageRole {
@@ -82,6 +84,7 @@ impl std::fmt::Display for MessageRole {
             MessageRole::User => write!(f, "user"),
             MessageRole::Assistant => write!(f, "bot"),
             MessageRole::System => write!(f, "system"),
+            MessageRole::Tool => write!(f, "tool"),
         }
     }
 }
@@ -94,6 +97,7 @@ impl TryFrom<String> for MessageRole {
             "user" => Ok(MessageRole::User),
             "bot" => Ok(MessageRole::Assistant),
             "system" => Ok(MessageRole::System),
+            "tool" => Ok(MessageRole::Tool),
             s => Err(MessageError::InvalidRole(s.to_string())),
         }
     }
@@ -124,4 +128,6 @@ pub struct Message {
     pub embedding: Option<Vec<u8>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub images: Option<Vec<ImageContent>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_calls: Option<String>,
 }

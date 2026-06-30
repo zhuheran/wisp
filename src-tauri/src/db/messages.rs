@@ -45,10 +45,24 @@ impl Messages {
             )?;
         }
 
+        // Migration: add tool_calls column if it doesn't exist
+        let tc_column_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = 'tool_calls'",
+            [Self::TABLE_NAME],
+            |row| row.get(0),
+        ).unwrap_or(0);
+
+        if tc_column_count == 0 {
+            conn.execute(
+                &format!("ALTER TABLE {} ADD COLUMN tool_calls TEXT", Self::TABLE_NAME),
+                [],
+            )?;
+        }
+
         Ok(Self { pool })
     }
 
-    pub fn add(&mut self, id: &str, text: &str, reasoning: Option<&str>, sender: &str, tokens: Option<i32>, embedding: Option<Vec<u8>>, images: Option<&str>) -> Result<(), MessageError> {
+    pub fn add(&mut self, id: &str, text: &str, reasoning: Option<&str>, sender: &str, tokens: Option<i32>, embedding: Option<Vec<u8>>, images: Option<&str>, tool_calls: Option<&str>) -> Result<(), MessageError> {
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
@@ -57,15 +71,15 @@ impl Messages {
         let conn = self.pool.get()?;
         conn.execute(
             &format!(
-                "INSERT INTO {} (id, text, reasoning, sender, timestamp, tokens, embedding, images) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                "INSERT INTO {} (id, text, reasoning, sender, timestamp, tokens, embedding, images, tool_calls) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
                 Self::TABLE_NAME
             ),
-            params![id, text, reasoning, sender, timestamp, tokens, embedding, images],
+            params![id, text, reasoning, sender, timestamp, tokens, embedding, images, tool_calls],
         )?;
         Ok(())
     }
 
-    pub fn add_batch(&mut self, messages: &[(&str, &str, Option<&str>, &str, Option<i32>, Option<Vec<u8>>, Option<&str>)]) -> Result<(), MessageError> {
+    pub fn add_batch(&mut self, messages: &[(&str, &str, Option<&str>, &str, Option<i32>, Option<Vec<u8>>, Option<&str>, Option<&str>)]) -> Result<(), MessageError> {
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
@@ -75,12 +89,12 @@ impl Messages {
         let tx = conn.transaction()?;
         {
             let mut stmt = tx.prepare(&format!(
-                "INSERT INTO {} (id, text, reasoning, sender, timestamp, tokens, embedding, images) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                "INSERT INTO {} (id, text, reasoning, sender, timestamp, tokens, embedding, images, tool_calls) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
                 Self::TABLE_NAME
             ))?;
 
-            for (id, text, reasoning, sender, tokens, embedding, images) in messages {
-                stmt.execute(params![id, text, reasoning, sender, timestamp, tokens, embedding, images])?;
+            for (id, text, reasoning, sender, tokens, embedding, images, tool_calls) in messages {
+                stmt.execute(params![id, text, reasoning, sender, timestamp, tokens, embedding, images, tool_calls])?;
             }
         }
         tx.commit()?;
@@ -90,7 +104,7 @@ impl Messages {
     pub fn get(&mut self, id: &str) -> Result<Message, MessageError> {
         let conn = self.pool.get()?;
         let mut stmt = conn.prepare(&format!(
-            "SELECT id, text, reasoning, sender, timestamp, tokens, embedding, images FROM {} WHERE id = ?1",
+            "SELECT id, text, reasoning, sender, timestamp, tokens, embedding, images, tool_calls FROM {} WHERE id = ?1",
             Self::TABLE_NAME
         ))?;
 
@@ -109,6 +123,7 @@ impl Messages {
                 tokens: row.get(5)?,
                 embedding: row.get(6)?,
                 images,
+                tool_calls: row.get(8)?,
             })
         })?;
         Ok(row)
@@ -117,7 +132,7 @@ impl Messages {
     pub fn list(&mut self, limit: i64, offset: i64) -> Result<Vec<Message>, MessageError> {
         let conn = self.pool.get()?;
         let mut stmt = conn.prepare(&format!(
-            "SELECT id, text, reasoning, sender, timestamp, tokens, embedding, images FROM {} ORDER BY timestamp DESC LIMIT ?1 OFFSET ?2",
+            "SELECT id, text, reasoning, sender, timestamp, tokens, embedding, images, tool_calls FROM {} ORDER BY timestamp DESC LIMIT ?1 OFFSET ?2",
             Self::TABLE_NAME
         ))?;
 
@@ -137,6 +152,7 @@ impl Messages {
                     tokens: row.get(5)?,
                     embedding: row.get(6)?,
                     images,
+                    tool_calls: row.get(8)?,
                 })
             })?
             .collect::<Result<Vec<_>, rusqlite::Error>>()
@@ -153,6 +169,18 @@ impl Messages {
                 Self::TABLE_NAME
             ),
             params![id, text],
+        )?;
+        Ok(())
+    }
+
+    pub fn update_tool_calls(&mut self, id: &str, tool_calls: &str) -> Result<(), MessageError> {
+        let conn = self.pool.get()?;
+        conn.execute(
+            &format!(
+                "UPDATE {} SET tool_calls = ?2 WHERE id = ?1",
+                Self::TABLE_NAME
+            ),
+            params![id, tool_calls],
         )?;
         Ok(())
     }
