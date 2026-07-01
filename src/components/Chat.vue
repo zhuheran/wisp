@@ -9,6 +9,7 @@ import {
   NPopover,
   NSpace,
   NText,
+  NMention,
   useThemeVars,
   useMessage,
   type SelectOption,
@@ -22,7 +23,6 @@ import { Message, MessageRole } from "../libs/types";
 import { useProviderStore } from "../stores/provider";
 import { useCharacterStore } from "../stores/character";
 import MessageBubbleEditor from "./MessageBubbleEditor.vue";
-import PalAutocomplete from "./PalAutocomplete.vue";
 import ChatPalBar from "./ChatPalBar.vue";
 import { useChatStore } from "../stores/chat";
 import { useMcpStore } from "../stores/mcp";
@@ -183,7 +183,7 @@ console.log(`[Chat] Message bubble culling enabled`);
 
   // Add "pal joined" system messages for first-time mentions
   for (const id of targetPalIds) {
-    if (!chatStore.mentionedPalIds.has(id)) {
+    if (!mentionedPalIds.value.has(id)) {
       const pal = characterStore.characters.find(c => c.id === id);
       if (pal) {
         chatStore.addMessage({
@@ -207,6 +207,10 @@ console.log(`[Chat] Message bubble culling enabled`);
         autoScrollWrapper.value?.scrollToBottom(false);
       },
       onFinish: () => {
+        targetPalIds.forEach(id => {
+          chatStore.addMentionedPal?.(id);
+          mentionedPalIds.value.add(id);
+        });
         setTimeout(() => autoScrollWrapper.value?.scrollToBottom(false), 1000);
       },
     })
@@ -307,8 +311,17 @@ const showEditor = (messageId: string) => {
 
 const mentionedPalIds = ref<Set<string>>(new Set());
 
-function onMention(palId: string, _palName: string) {
-  mentionedPalIds.value.add(palId);
+const mentionOptions = computed(() =>
+  characterStore.characters.map(c => ({
+    label: c.alias ? `${c.name} (${c.alias})` : c.name,
+    value: c.id,
+  }))
+);
+
+function onMention(option: { label: string; value: string }) {
+  mentionedPalIds.value.add(option.value);
+  // Track in chat store for API call
+  chatStore.addMentionedPal?.(option.value);
 }
 
 function getPalName(palId: string): string {
@@ -508,25 +521,16 @@ onMounted(() => {
             </n-button>
           </n-space>
           <image-input ref="imageInputRef" />
-          <pal-autocomplete
-            :model-value="chatStore.userInput"
-            :characters="characterStore.characters"
-            @update:model-value="chatStore.userInput = $event"
-            @mention="onMention"
-          >
-            <template #default="{ handleInput, onKeyDown }">
-              <n-input
-                :value="chatStore.userInput"
-                placeholder="Type your message..."
-                @update:value="handleInput"
-                @keydown="onKeyDown"
-                @keyup.enter="sendMessage"
-                clearable
-                round
-                type="textarea"
-              />
-            </template>
-          </pal-autocomplete>
+          <n-mention
+            v-model:value="chatStore.userInput"
+            :options="mentionOptions"
+            @select="onMention"
+            @keyup.enter="sendMessage"
+            clearable
+            round
+            type="textarea"
+            placeholder="Type your message..."
+          />
         </n-space>
       </div>
     </div>
