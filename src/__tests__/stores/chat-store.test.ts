@@ -42,6 +42,7 @@ describe('useChatStore displayedMessage', () => {
       sender: MessageRole.User,
       text: 'hello',
       timestamp: 1,
+      source: 'user_prompted',
     }
 
     const assistantMessage: Message = {
@@ -49,6 +50,7 @@ describe('useChatStore displayedMessage', () => {
       sender: MessageRole.Assistant,
       text: 'calling tool',
       timestamp: 2,
+      source: 'directed',
       toolCalls: [
         {
           id: 'call-1',
@@ -66,6 +68,7 @@ describe('useChatStore displayedMessage', () => {
       sender: MessageRole.Tool,
       text: 'world',
       timestamp: 3,
+      source: 'directed',
     }
 
     chatStore.messages.set(userMessage.id, userMessage)

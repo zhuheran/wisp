@@ -192,6 +192,7 @@ const sendMessage = () => {
     sender: MessageRole.User,
     timestamp: Math.round(new Date().getTime() / 1000),
     images: images.length > 0 ? images : undefined,
+    source: 'user_prompted',
   };
 
   chatStore

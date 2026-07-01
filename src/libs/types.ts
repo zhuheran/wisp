@@ -32,6 +32,9 @@ export type Message = {
 	embedding?: Uint8Array,
 	images?: ImageContent[],
 	toolCalls?: ToolCallItem[],
+	pal_id?: string,
+	pal_name?: string,
+	source: 'user_prompted' | 'directed',
 }
 
 export type Conversation = {
@@ -39,6 +42,7 @@ export type Conversation = {
 	name: string,
 	description?: string,
 	entry_message_id?: string,
+	default_pal_id?: string,
 }
 
 export enum TextModelCapability {
@@ -88,6 +92,7 @@ export interface Character {
 	model_id: string;
 	created_at: number;
 	updated_at: number;
+	role_bio?: string;
 }
 
 export interface TextGenerationParams {
@@ -346,15 +351,16 @@ export interface SessionState {
 }
 
 export interface ConversationSendRequest {
-	conversation_id: string;
-	parent_message_id?: string | null;
-	text: string;
-	images?: ImageContent[];
-	model: string;
-	provider: Provider;
-	parameters?: Record<string, unknown> | null;
-	character?: Character | null;
-}
+		conversation_id: string;
+		parent_message_id?: string | null;
+		text: string;
+		images?: ImageContent[];
+		model: string;
+		provider: Provider;
+		parameters?: Record<string, unknown> | null;
+		character?: Character | null;
+		target_pal_ids?: string[];
+	}
 
 export interface ConversationRegenerateRequest {
 	conversation_id: string;
