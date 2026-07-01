@@ -21,6 +21,7 @@ import { Message, MessageRole } from "../libs/types";
 import { useProviderStore } from "../stores/provider";
 import { useCharacterStore } from "../stores/character";
 import MessageBubbleEditor from "./MessageBubbleEditor.vue";
+import PalAutocomplete from "./PalAutocomplete.vue";
 import { useChatStore } from "../stores/chat";
 import { useMcpStore } from "../stores/mcp";
 import { errorMessage } from "../utils/error";
@@ -182,10 +183,11 @@ const props = defineProps({
 
 console.log(`[Chat] Message bubble culling enabled`);
 
-const sendMessage = () => {
+	const sendMessage = () => {
   if (!chatStore.userInput.trim() && !imageInputRef.value?.hasImages) return;
 
   const images = imageInputRef.value?.getImagesForMessage?.() || [];
+  const targetPalIds = parseAtMentions(chatStore.userInput);
 
   const userMessage: Omit<Message, "id"> = {
     text: chatStore.userInput,
@@ -193,6 +195,10 @@ const sendMessage = () => {
     timestamp: Math.round(new Date().getTime() / 1000),
     images: images.length > 0 ? images : undefined,
     source: 'user_prompted',
+    pal_id: targetPalIds.length > 0 ? targetPalIds[0] : undefined,
+    pal_name: targetPalIds.length > 0
+      ? characterStore.characters.find(c => c.id === targetPalIds[0])?.name
+      : undefined,
   };
 
   chatStore
@@ -200,6 +206,7 @@ const sendMessage = () => {
       beforeSend: () => {
         chatStore.clearUserInput();
         imageInputRef.value?.clearImages();
+        mentionedPalIds.value = new Set();
         autoScrollWrapper.value?.scrollToBottom(false);
       },
       onReceiving: () => {
@@ -303,6 +310,25 @@ const showEditor = (messageId: string) => {
   messageEditingId.value = messageId;
   showEditorModal.value = true;
 };
+
+const mentionedPalIds = ref<Set<string>>(new Set());
+
+function onMention(palId: string, _palName: string) {
+  mentionedPalIds.value.add(palId);
+}
+
+function parseAtMentions(text: string): string[] {
+  const regex = /@(\w+)/g;
+  const ids: string[] = [];
+  let match;
+  while ((match = regex.exec(text)) !== null) {
+    const pal = characterStore.characters.find(
+      (c) => c.name === match[1] || c.alias === match[1]
+    );
+    if (pal) ids.push(pal.id);
+  }
+  return ids;
+}
 
 onMounted(() => {
   watch(
@@ -469,14 +495,25 @@ onMounted(() => {
             </n-button>
           </n-space>
           <image-input ref="imageInputRef" />
-          <n-input
-            v-model:value="chatStore.userInput"
-            placeholder="Type your message..."
-            @keyup.enter="sendMessage"
-            clearable
-            round
-            type="textarea"
-          />
+          <pal-autocomplete
+            :model-value="chatStore.userInput"
+            :characters="characterStore.characters"
+            @update:model-value="chatStore.userInput = $event"
+            @mention="onMention"
+          >
+            <template #default="{ handleInput, onKeyDown }">
+              <n-input
+                :value="chatStore.userInput"
+                placeholder="Type your message..."
+                @update:value="handleInput"
+                @keydown="onKeyDown"
+                @keyup.enter="sendMessage"
+                clearable
+                round
+                type="textarea"
+              />
+            </template>
+          </pal-autocomplete>
         </n-space>
       </div>
     </div>
