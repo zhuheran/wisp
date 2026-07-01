@@ -46,6 +46,8 @@ export const useChatStore = defineStore('chat', () => {
 	const threadTreeDecisions = ref<number[]>([])
 	const isStreaming = ref(false)
 
+	const mentionedPalIds = ref<Set<string>>(new Set())
+
 	type SendMessageCallbacks = {
 		beforeSend: (botMessageId: string) => void;
 		onReceiving: (chunk: string, isReasoning: boolean) => void;
@@ -73,6 +75,29 @@ export const useChatStore = defineStore('chat', () => {
 				if (failedError) throw failedError
 			}
 		}
+	}
+
+	function parseAtMentions(text: string): string[] {
+		if (!characterStore?.characters) return []
+		const mentions = text.match(/@(\w+)/g)
+		if (!mentions) return []
+		const palIds = new Set<string>()
+		for (const mention of mentions) {
+			const name = mention.slice(1).toLowerCase()
+			const matched = characterStore.characters.find(
+				(ch) => ch.name.toLowerCase() === name || ch.alias?.toLowerCase() === name
+			)
+			if (matched) palIds.add(matched.id)
+		}
+		return Array.from(palIds)
+	}
+
+	function addMentionedPal(palId: string) {
+		mentionedPalIds.value.add(palId)
+	}
+
+	function getMentionedPalsForConversation(): string[] {
+		return Array.from(mentionedPalIds.value)
 	}
 
 	const sendMessage = async (message: Omit<Message, 'id'>, { beforeSend, onReceiving, onFinish }: Partial<SendMessageCallbacks> = {}, parentMessageId = lastMessageId.value ?? undefined, toolRound = 0): Promise<void> => {
@@ -137,6 +162,8 @@ export const useChatStore = defineStore('chat', () => {
 		})
 
 		try {
+			const targetPalIds = parseAtMentions(message.text)
+
 			await Commands.conversationSendMessage({
 				conversation_id: conversationId,
 				parent_message_id: parentMessageId ?? null,
@@ -149,7 +176,12 @@ export const useChatStore = defineStore('chat', () => {
 					return acc
 				}, {} as Record<string, unknown>) ?? null,
 				character: currentCharacter.value,
+				target_pal_ids: targetPalIds.length > 0 ? targetPalIds : undefined,
 			})
+
+			// Track mentioned pals
+			targetPalIds.forEach(id => addMentionedPal(id))
+
 			failureTracker.throwIfFailed()
 			if (onFinish) await onFinish(latestAssistantText, latestAssistantReasoning || undefined)
 		}
@@ -780,6 +812,9 @@ export const useChatStore = defineStore('chat', () => {
 		clearUserInput,
 		lastMessageId,
 		rootMessageId,
+		mentionedPalIds,
+		addMentionedPal,
+		getMentionedPalsForConversation,
 
 		changeThreadTreeDecision,
 		rewriteThreadTreeDecision,
