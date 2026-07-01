@@ -48,7 +48,7 @@ describe('Message pal fields', () => {
 })
 
 describe('Character role_bio field', () => {
-  it('allows optional role_bio', () => {
+  it('includes required role_bio', () => {
     const withBio: Character = {
       id: 'char-1',
       name: 'Test Character',
@@ -60,18 +60,7 @@ describe('Character role_bio field', () => {
       updated_at: 1000,
       role_bio: 'A helpful assistant',
     }
-    const withoutBio: Character = {
-      id: 'char-2',
-      name: 'Minimal Character',
-      description: 'No bio needed',
-      system_prompt: 'Just respond',
-      parameters: [],
-      model_id: 'model-2',
-      created_at: 2000,
-      updated_at: 2000,
-    }
     expect(withBio.role_bio).toBe('A helpful assistant')
-    expect(withoutBio.role_bio).toBeUndefined()
   })
 })
 
