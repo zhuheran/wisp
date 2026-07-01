@@ -22,6 +22,7 @@ import { useProviderStore } from "../stores/provider";
 import { useCharacterStore } from "../stores/character";
 import MessageBubbleEditor from "./MessageBubbleEditor.vue";
 import PalAutocomplete from "./PalAutocomplete.vue";
+import ChatPalBar from "./ChatPalBar.vue";
 import { useChatStore } from "../stores/chat";
 import { useMcpStore } from "../stores/mcp";
 import { errorMessage } from "../utils/error";
@@ -348,6 +349,7 @@ onMounted(() => {
 <template>
   <div style="height: 100%; width: 100%">
     <div v-if="chatStore.currentConversationId" class="chat-container">
+      <ChatPalBar :pal-ids="[...mentionedPalIds]" />
       <div class="messages-container">
         <auto-scroll-wrapper
           v-if="chatStore.displayedMessage.length > 0"
