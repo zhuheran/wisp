@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch, onMounted } from "vue";
+import { ref, computed, watch, onMounted, onUnmounted } from "vue";
 import type { Character } from "../libs/types";
 
 const props = defineProps<{
@@ -51,9 +51,14 @@ function detectAt(value: string) {
   }
 }
 
+let debounceTimer: ReturnType<typeof setTimeout>;
+
 function handleInput(value: string) {
-  detectAt(value);
   emit("update:modelValue", value);
+  clearTimeout(debounceTimer);
+  debounceTimer = setTimeout(() => {
+    detectAt(value);
+  }, 150);
 }
 
 function selectPal(pal: Character) {
@@ -103,6 +108,10 @@ watch(() => props.modelValue, (newVal) => {
 
 onMounted(() => {
   detectAt(props.modelValue);
+});
+
+onUnmounted(() => {
+  clearTimeout(debounceTimer);
 });
 
 defineExpose({

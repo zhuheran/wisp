@@ -1,13 +1,17 @@
 use std::collections::{HashMap, HashSet};
 use std::error::Error;
+use std::sync::Mutex;
 
 use serde_json::Value;
+
+use tauri::Manager;
 
 use crate::configs::character::Character;
 use crate::configs::provider::Provider;
 use crate::conversation::director::{assemble_director_prompt, parse_director_response};
 use crate::conversation::types::MessageSource;
 use crate::db::types::Message;
+use crate::types::AppData;
 
 #[derive(Debug, Clone)]
 pub struct PalReply {
@@ -32,6 +36,18 @@ pub async fn orchestrate_multi_pal_round<R: tauri::Runtime>(
     provider: &Provider,
     parameters: Option<&HashMap<String, Value>>,
 ) -> Result<Vec<PalReply>, String> {
+    // Load conversation history from DB so all pals see prior messages
+    let conversation_history = {
+        let state_mutex = app_handle.state::<Mutex<AppData>>();
+        let mut state = state_mutex
+            .lock()
+            .map_err(|e| format!("Failed to acquire app state: {}", e))?;
+        state
+            .chat
+            .get_message_path_to(conversation_id, user_message_id)
+            .map_err(|e| format!("Failed to get message path: {}", e))?
+    };
+
     let mut replies = Vec::new();
     let mut unlocked_pal_ids: HashSet<String> = HashSet::new();
 
@@ -44,7 +60,7 @@ pub async fn orchestrate_multi_pal_round<R: tauri::Runtime>(
             .ok_or_else(|| format!("Pal not found: {}", pal_id))?;
 
         // Build context: existing conversation + previous pal replies in this round
-        let context = build_context_for_pal(conversation_id, &replies, pal)?;
+        let context = build_context_for_pal(pal, &replies, &conversation_history)?;
 
         // Call LLM with pal's model, prompt, params
         let reply_text =
@@ -81,19 +97,17 @@ pub async fn orchestrate_multi_pal_round<R: tauri::Runtime>(
 }
 
 /// Build the message context for a specific pal, including:
-/// 1. The pal's system prompt as a system message
-/// 2. Previous pal replies in this round as assistant messages
-///
-/// Existing conversation history from DB will be loaded and prepended
-/// in the full implementation (Task 4) when Chat is available.
+/// 1. The conversation history from DB (user messages, assistant replies, etc.)
+/// 2. The pal's system prompt as a system message
+/// 3. Previous pal replies in this round as assistant messages
 pub fn build_context_for_pal(
-    conversation_id: &str,
-    previous_replies: &[PalReply],
     pal: &Character,
+    previous_replies: &[PalReply],
+    conversation_history: &[Message],
 ) -> Result<Vec<Message>, String> {
     let mut context = Vec::new();
 
-    // Prepend pal's system_prompt as a system message
+    // 1. Prepend pal's system_prompt as a system message
     if !pal.system_prompt.is_empty() {
         context.push(Message {
             id: format!("{}-system", pal.id),
@@ -111,7 +125,12 @@ pub fn build_context_for_pal(
         });
     }
 
-    // Append previous pal replies in this round as assistant messages
+    // 2. Append conversation history from DB
+    for msg in conversation_history {
+        context.push(msg.clone());
+    }
+
+    // 3. Append previous pal replies in this round as assistant messages
     for reply in previous_replies {
         context.push(Message {
             id: reply.message_id.clone(),
@@ -128,8 +147,6 @@ pub fn build_context_for_pal(
             pal_name: Some(reply.pal_name.clone()),
         });
     }
-
-    let _ = conversation_id; // suppress unused warning
 
     Ok(context)
 }
@@ -207,8 +224,20 @@ async fn run_director_check<R: tauri::Runtime>(
                 .find(|c| c.id == pal_id)
                 .ok_or_else(|| format!("Director invoked unknown pal: {}", pal_id))?;
 
+            // Load conversation history from DB
+            let conversation_history = {
+                let state_mutex = app_handle.state::<Mutex<AppData>>();
+                let mut state = state_mutex
+                    .lock()
+                    .map_err(|e| format!("Failed to acquire app state: {}", e))?;
+                state
+                    .chat
+                    .get_message_path_to(conversation_id, user_message_id)
+                    .map_err(|e| format!("Failed to get message path: {}", e))?
+            };
+
             // Existing conversation history + previous pal replies as context
-            let context = build_context_for_pal(conversation_id, pal_replies, pal)?;
+            let context = build_context_for_pal(pal, pal_replies, &conversation_history)?;
 
             let reply_text =
                 call_llm_with_pal_config(app_handle, &context, pal, provider, parameters).await?;
@@ -264,8 +293,19 @@ async fn call_llm_with_pal_config<R: tauri::Runtime>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
+
+    use crate::cache::DiagramCache;
+    use crate::configs::ConfigManager;
     use crate::configs::character::Character;
+    use crate::db::create_memory_pool;
+    use crate::db::chat::Chat;
     use crate::db::types::MessageRole;
+    use crate::key_manager::KeyManager;
+    use crate::mcp::commands::McpConfigManager;
+    use crate::mcp_http::McpHttpManager;
+    use crate::mcp_stdio::McpStdioManager;
+    use crate::tool_registry::ToolRegistry;
 
     fn test_character(id: &str, name: &str, system_prompt: &str, role_bio: &str) -> Character {
         Character {
@@ -293,6 +333,44 @@ mod tests {
         }
     }
 
+    fn setup_app() -> (tauri::AppHandle<tauri::test::MockRuntime>, String) {
+        let app = tauri::test::mock_app();
+        let handle = app.handle().clone();
+
+        let conversation_id = "test-conv".to_string();
+        let mut chat = Chat::new_with_pool(create_memory_pool()).expect("chat");
+        chat.create_conversation(&conversation_id, "Test", "desc")
+            .expect("conversation created");
+
+        let diagram_cache = DiagramCache::new().expect("diagram cache");
+        let key_manager = KeyManager::new("test-wisp".to_string());
+        let config_manager =
+            ConfigManager::new(&handle).expect("config manager");
+        let mcp_config_manager =
+            McpConfigManager::new(&handle).expect("mcp config");
+        let stdio_manager = Arc::new(McpStdioManager::new());
+        let http_manager = Arc::new(McpHttpManager::new());
+        let tool_registry = Arc::new(ToolRegistry::new(
+            Arc::clone(&stdio_manager),
+            Arc::clone(&http_manager),
+        ));
+
+        let app_data = AppData {
+            chat,
+            diagram_cache,
+            key_manager,
+            config_manager,
+            mcp_config_manager,
+            mcp_stdio_manager: stdio_manager,
+            mcp_http_manager: http_manager,
+            tool_registry,
+        };
+
+        handle.manage(Mutex::new(app_data));
+
+        (handle, conversation_id)
+    }
+
     // ── build_context_for_pal tests ────────────────────────────
 
     #[test]
@@ -300,7 +378,7 @@ mod tests {
         let pal = test_character("c1", "Code Reviewer", "You are a code reviewer.", "Reviews code");
         let replies = vec![];
 
-        let context = build_context_for_pal("conv1", &replies, &pal).unwrap();
+        let context = build_context_for_pal(&pal, &replies, &[]).unwrap();
 
         assert_eq!(context.len(), 1);
         assert_eq!(context[0].sender, MessageRole::System);
@@ -315,7 +393,7 @@ mod tests {
             test_reply("c3", "Designer", "I can help with UI.", MessageSource::UserPrompted),
         ];
 
-        let context = build_context_for_pal("conv1", &replies, &pal).unwrap();
+        let context = build_context_for_pal(&pal, &replies, &[]).unwrap();
 
         // System message + 2 pal replies = 3 messages
         assert_eq!(context.len(), 3);
@@ -335,7 +413,7 @@ mod tests {
         let pal = test_character("c1", "Bot", "", "A simple bot");
         let replies = vec![];
 
-        let context = build_context_for_pal("conv1", &replies, &pal).unwrap();
+        let context = build_context_for_pal(&pal, &replies, &[]).unwrap();
 
         assert_eq!(context.len(), 0);
     }
@@ -347,10 +425,61 @@ mod tests {
             test_reply("c2", "Other", "hello", MessageSource::Directed),
         ];
 
-        let context = build_context_for_pal("conv1", &replies, &pal).unwrap();
+        let context = build_context_for_pal(&pal, &replies, &[]).unwrap();
 
         assert_eq!(context.len(), 2);
         assert_eq!(context[1].source, MessageSource::Directed);
+    }
+
+    #[test]
+    fn build_context_includes_conversation_history() {
+        let pal = test_character("c1", "Bot", "You are a bot.", "A bot");
+        let replies = vec![test_reply("c2", "Other", "a pal reply", MessageSource::UserPrompted)];
+        let history = vec![
+            Message {
+                id: "user-msg-1".to_string(),
+                text: "Hello everyone!".to_string(),
+                reasoning: None,
+                sender: MessageRole::User,
+                timestamp: 100,
+                tokens: None,
+                embedding: None,
+                images: None,
+                tool_calls: None,
+                source: MessageSource::UserPrompted,
+                pal_id: None,
+                pal_name: None,
+            },
+            Message {
+                id: "assistant-msg-1".to_string(),
+                text: "I can help!".to_string(),
+                reasoning: None,
+                sender: MessageRole::Assistant,
+                timestamp: 200,
+                tokens: None,
+                embedding: None,
+                images: None,
+                tool_calls: None,
+                source: MessageSource::UserPrompted,
+                pal_id: Some("c3".to_string()),
+                pal_name: Some("Helper".to_string()),
+            },
+        ];
+
+        let context = build_context_for_pal(&pal, &replies, &history).unwrap();
+
+        // System prompt + 2 history messages + 1 pal reply = 4 messages
+        assert_eq!(context.len(), 4);
+        assert_eq!(context[0].sender, MessageRole::System);
+        assert_eq!(context[0].text, "You are a bot.");
+        // History messages come next, in order
+        assert_eq!(context[1].sender, MessageRole::User);
+        assert_eq!(context[1].text, "Hello everyone!");
+        assert_eq!(context[2].sender, MessageRole::Assistant);
+        assert_eq!(context[2].text, "I can help!");
+        // Then pal replies
+        assert_eq!(context[3].sender, MessageRole::Assistant);
+        assert_eq!(context[3].text, "a pal reply");
     }
 
     // ── orchestrate_multi_pal_round tests ────────────────────
@@ -358,14 +487,6 @@ mod tests {
     // These tests exercise the orchestrate_multi_pal_round function with
     // mocked dependencies. Tests that require actual LLM calls are marked
     // #[ignore] and serve as documentation stubs.
-
-    /// Test helper: create a mock Tauri AppHandle for testing.
-    /// Uses `MockRuntime` to avoid initializing a real window system.
-    /// Requires the "test" feature on the `tauri` crate.
-    fn test_app_handle() -> tauri::AppHandle<tauri::test::MockRuntime> {
-        let app = tauri::test::mock_app();
-        app.handle().clone()
-    }
 
     /// Test helper: create a minimal Provider.
     fn test_provider() -> Provider {
@@ -399,7 +520,7 @@ mod tests {
     async fn orchestrate_empty_target_pal_ids_returns_empty_replies() {
         // Step 1: Empty target_pal_ids → no pal replies, director has no
         // unlocked pals → returns empty vec (no LLM calls made).
-        let handle = test_app_handle();
+        let (handle, conv_id) = setup_app();
         let provider = test_provider();
         let characters = vec![
             test_character("c1", "Alice", "You are Alice.", "Expert"),
@@ -407,7 +528,7 @@ mod tests {
 
         let result = orchestrate_multi_pal_round(
             &handle,
-            "conv1",
+            &conv_id,
             "msg1",
             vec![],  // empty target_pal_ids
             &characters,
@@ -423,7 +544,7 @@ mod tests {
     #[tokio::test]
     async fn orchestrate_pal_id_not_found_returns_error() {
         // Step 5: Pal ID not found in all_characters → error before any LLM call.
-        let handle = test_app_handle();
+        let (handle, conv_id) = setup_app();
         let provider = test_provider();
         let characters = vec![
             test_character("c1", "Alice", "You are Alice.", "Expert"),
@@ -431,7 +552,7 @@ mod tests {
 
         let result = orchestrate_multi_pal_round(
             &handle,
-            "conv1",
+            &conv_id,
             "msg1",
             vec!["nonexistent".to_string()],
             &characters,
