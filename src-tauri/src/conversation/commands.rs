@@ -7,13 +7,11 @@ use uuid::Uuid;
 use crate::api::{stream_openai_messages, OpenAiStreamEvents};
 use crate::configs::character::Character;
 use crate::configs::provider::Provider;
-use crate::conversation::payload::{build_openai_messages, tool_result_text};
-use crate::conversation::tool_executor::{attach_raw_result, normalize_raw_tool_result, split_qualified_tool_name};
+use crate::conversation::payload::{build_openai_messages, format_tool_result};
 use crate::conversation::tool_parser::parse_tool_calls;
 use crate::conversation::types::ConversationToolCall;
 use crate::db::types::{ImageContent, Message, MessageRole};
-use crate::mcp::types::{NormalizedTool, TransportConfig};
-use async_openai::types::{ChatCompletionTool, ChatCompletionToolType, FunctionObject};
+use crate::tool_registry::{ToolContent, ToolDefinition};
 use crate::types::AppData;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -26,7 +24,6 @@ pub struct ConversationSendRequest {
     pub provider: Provider,
     pub parameters: Option<HashMap<String, serde_json::Value>>,
     pub character: Option<Character>,
-    pub enabled_mcp_tools: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -38,7 +35,6 @@ pub struct ConversationRegenerateRequest {
     pub provider: Provider,
     pub parameters: Option<HashMap<String, serde_json::Value>>,
     pub character: Option<Character>,
-    pub enabled_mcp_tools: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -50,7 +46,6 @@ pub struct ConversationDeriveRequest {
     pub provider: Provider,
     pub parameters: Option<HashMap<String, serde_json::Value>>,
     pub character: Option<Character>,
-    pub enabled_mcp_tools: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -105,75 +100,57 @@ fn insert_message_and_emit(
     )
 }
 
-fn sanitize_tool_name_part(value: &str) -> String {
-    value
-        .chars()
-        .map(|ch| if ch.is_ascii_alphanumeric() { ch.to_ascii_lowercase() } else { '_' })
-        .collect::<String>()
-        .trim_matches('_')
-        .to_string()
-}
-
-fn encode_tool_name_for_model(tool_name: &str, duplicate_index: Option<usize>) -> String {
-    let base = format!("mcp__{}", sanitize_tool_name_part(tool_name));
-    match duplicate_index {
-        Some(index) => format!("{}__{}", base, index),
-        None => base,
-    }
-}
-
 async fn execute_tool_call(
     app_handle: &AppHandle,
     call: ConversationToolCall,
 ) -> Result<ConversationToolCall, String> {
-    let (qualified_name, server, stdio_manager, http_manager) = {
+    let registry = {
         let state = app_handle.state::<Mutex<AppData>>();
         let state = state
             .lock()
             .map_err(|error| format!("Failed to acquire app state for tool {}: {}", call.name, error))?;
-        let qualified_name = call
-            .qualified_name
-            .clone()
-            .or_else(|| state.global_mcp_tool_state.model_name_map.get(&call.name).cloned())
-            .unwrap_or_else(|| call.name.clone());
-        let (server_id, _) = split_qualified_tool_name(&qualified_name)
-            .map_err(|error| format!("Invalid tool name '{}': {}", qualified_name, error))?;
-        let server = state
-            .mcp_config_manager
-            .get_server(server_id)
-            .ok_or_else(|| format!("Server '{}' for tool '{}' was not found", server_id, call.name))?;
-        (
-            qualified_name,
-            server,
-            std::sync::Arc::clone(&state.mcp_stdio_manager),
-            std::sync::Arc::clone(&state.mcp_http_manager),
-        )
-    };
-    let (server_id, tool_name) = split_qualified_tool_name(&qualified_name)
-        .map_err(|error| format!("Invalid tool name '{}': {}", qualified_name, error))?;
-
-    let arguments = match call.arguments.clone() {
-        serde_json::Value::Object(map) => Some(serde_json::Value::Object(map)),
-        serde_json::Value::Null => None,
-        other => Some(other),
+        std::sync::Arc::clone(&state.tool_registry)
     };
 
-    let raw_result = match server.transport {
-        TransportConfig::Stdio { .. } => stdio_manager
-            .call_tool(server_id, tool_name, arguments)
-            .await
-            .map_err(|error| format!("Tool '{}' failed on stdio server '{}': {}", tool_name, server_id, error))?,
-        TransportConfig::Sse { .. } | TransportConfig::Http { .. } => http_manager
-            .call_tool(server_id, tool_name, arguments)
-            .await
-            .map_err(|error| format!("Tool '{}' failed on http server '{}': {}", tool_name, server_id, error))?,
+    let result = registry
+        .execute(&call.name, call.arguments.clone())
+        .await
+        .map_err(|error| format!("Tool '{}' failed: {}", call.name, error))?;
+
+    let tool_result = crate::conversation::types::ConversationToolResult {
+        content: result
+            .content
+            .into_iter()
+            .map(|c| match c {
+                ToolContent::Text { text } => {
+                    crate::conversation::types::ConversationToolContent::Text { text }
+                }
+                ToolContent::Image { data, mime_type } => {
+                    crate::conversation::types::ConversationToolContent::Image {
+                        data,
+                        mime_type,
+                    }
+                }
+                ToolContent::Resource {
+                    uri,
+                    mime_type,
+                    text,
+                    blob,
+                } => crate::conversation::types::ConversationToolContent::Resource {
+                    uri,
+                    mime_type,
+                    text,
+                    blob,
+                },
+            })
+            .collect(),
+        is_error: result.is_error,
     };
 
-    let normalized = normalize_raw_tool_result(raw_result.clone())
-        .map_err(|error| format!("Tool '{}' returned an invalid payload: {}", call.name, error))?;
-    let _ = normalized;
-    attach_raw_result(call.clone(), raw_result)
-        .map_err(|error| format!("Tool '{}' result could not be attached: {}", call.name, error))
+    Ok(ConversationToolCall {
+        result: Some(tool_result),
+        ..call
+    })
 }
 
 fn format_tool_parameter_line(name: &str, property: &serde_json::Value) -> String {
@@ -202,136 +179,75 @@ fn format_tool_parameter_line(name: &str, property: &serde_json::Value) -> Strin
     format!("      - {}: {}", name, detail)
 }
 
-fn build_provider_tools(enabled_tools: &[NormalizedTool]) -> Vec<ChatCompletionTool> {
-    let mut tools_by_name: HashMap<String, Vec<&NormalizedTool>> = HashMap::new();
-    for tool in enabled_tools {
-        tools_by_name.entry(tool.name.clone()).or_default().push(tool);
-    }
-
-    let mut provider_tools = Vec::new();
-    for group in tools_by_name.values() {
-        for (index, tool) in group.iter().enumerate() {
-            let model_name = encode_tool_name_for_model(
-                &tool.name,
-                if group.len() > 1 { Some(index + 1) } else { None },
-            );
-            provider_tools.push(ChatCompletionTool {
-                r#type: ChatCompletionToolType::Function,
-                function: FunctionObject {
-                    name: model_name,
-                    description: tool.description.clone(),
-                    parameters: Some(tool.input_schema.clone()),
-                    strict: None,
-                },
-            });
-        }
-    }
-
-    provider_tools
-}
-
-fn build_enabled_tools_prompt(enabled_tools: &[NormalizedTool]) -> String {
+fn build_enabled_tools_prompt(enabled_tools: &[ToolDefinition]) -> String {
     if enabled_tools.is_empty() {
         return String::new();
     }
 
-    let mut tools_by_server: HashMap<String, Vec<&NormalizedTool>> = HashMap::new();
-    for tool in enabled_tools {
-        tools_by_server
-            .entry(tool.server_id.clone())
-            .or_default()
-            .push(tool);
-    }
+    let mut tool_info: Vec<&ToolDefinition> = enabled_tools.iter().collect();
+    tool_info.sort_by(|a, b| a.name.cmp(&b.name));
 
-    let mut server_ids = tools_by_server.keys().cloned().collect::<Vec<_>>();
-    server_ids.sort();
-
-    let tool_sections = server_ids
+    let tool_lines: Vec<String> = tool_info
         .into_iter()
-        .map(|server_id| {
-            let mut server_tools = tools_by_server.remove(&server_id).unwrap_or_default();
-            server_tools.sort_by(|a, b| a.name.cmp(&b.name));
+        .map(|tool| {
+            let desc = tool
+                .description
+                .as_deref()
+                .unwrap_or("No description");
+            let mut lines = vec![format!("  - **{}**: {desc}", tool.name)];
 
-            let tool_list = server_tools.clone()
-                .into_iter()
-                .map(|tool| {
-                    let params = tool
-                        .input_schema
-                        .get("properties")
-                        .and_then(|value| value.as_object())
-                        .map(|properties| {
-                            let mut names = properties.keys().cloned().collect::<Vec<_>>();
-                            names.sort();
-                            names
-                                .into_iter()
-                                .filter_map(|name| {
-                                    properties
-                                        .get(name.as_str())
-                                        .map(|property| format_tool_parameter_line(&name, property))
-                                })
-                                .collect::<Vec<_>>()
-                                .join("\n")
-                        })
-                        .filter(|text| !text.is_empty())
-                        .unwrap_or_else(|| "      (no parameters)".to_string());
+            if let Some(props) = tool
+                .input_schema
+                .get("properties")
+                .and_then(|v| v.as_object())
+            {
+                let mut prop_names: Vec<&String> = props.keys().collect();
+                prop_names.sort();
+                for prop_name in prop_names {
+                    let prop = &props[prop_name];
+                    let desc = prop
+                        .get("description")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    let type_str = prop
+                        .get("type")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown");
+                    lines.push(format!("    - `{prop_name}` ({type_str}): {desc}"));
+                }
+            }
 
-                    let duplicate_index = if server_tools.iter().filter(|candidate| candidate.name == tool.name).count() > 1 {
-                        Some(
-                            server_tools
-                                .iter()
-                                .filter(|candidate| candidate.name == tool.name)
-                                .position(|candidate| candidate.qualified_name == tool.qualified_name)
-                                .unwrap_or(0)
-                                + 1,
-                        )
-                    } else {
-                        None
-                    };
-                    let safe_name = encode_tool_name_for_model(&tool.name, duplicate_index);
-                    format!(
-                        "    - **{}**: {}\n      - model_name: {}\n      - internal_name: {}\n{}",
-                        tool.name,
-                        tool.description
-                            .clone()
-                            .unwrap_or_else(|| "No description".to_string()),
-                        safe_name,
-                        tool.qualified_name,
-                        params
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join("\n\n");
-
-            format!("### Server: `{}`\n{}", server_id, tool_list)
+            lines.join("\n")
         })
-        .collect::<Vec<_>>()
-        .join("\n\n");
+        .collect();
 
     format!(
-        "## Available Tools\n\nYou have access to the following tools organized by server. Use them via the native tool calling mechanism when appropriate.\n\n### Tool List by Server\n\n{}\n\n### Tool Name Format\n- Use the exact `model_name` shown below when calling a tool via the API\n- `model_name` contains only letters, digits, and underscores\n- Example: `mcp__tavily_search`\n- Do NOT make up tool names or use server prefixes",
-        tool_sections
+        r#"## Available Tools
+
+You have access to the following tools. Use them via <|tool_calls|> when appropriate.
+
+### Tool List
+
+{}
+
+### How to Call
+
+Wrap a JSON array of tool calls in `<|tool_calls|>` tags:
+
+<|tool_calls|>
+[{{"name":"tool_name","arguments":{{"param":"value"}}}}]
+<|/tool_calls|>
+"#,
+        tool_lines.join("\n\n")
     )
 }
 
 async fn resolve_enabled_mcp_tools(
     app_handle: &AppHandle,
-    _enabled_mcp_tools: Option<&[String]>,
-) -> Result<Vec<NormalizedTool>, String> {
+) -> Result<Vec<ToolDefinition>, String> {
     let state = app_handle.state::<Mutex<AppData>>();
     let state = state.lock().map_err(|error| error.to_string())?;
-
-    let enabled = &state.global_mcp_tool_state.enabled_tools;
-    if enabled.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    Ok(state
-        .global_mcp_tool_state
-        .available_tools
-        .iter()
-        .filter(|tool| enabled.contains(&tool.qualified_name))
-        .cloned()
-        .collect())
+    Ok(state.tool_registry.list_enabled_tools())
 }
 
 async fn run_conversation_rounds(
@@ -342,7 +258,6 @@ async fn run_conversation_rounds(
     provider: Provider,
     parameters: Option<HashMap<String, serde_json::Value>>,
     character: Option<Character>,
-    enabled_mcp_tools: Option<Vec<String>>,
 ) -> Result<String, String> {
     for round in 0..10 {
         let path = {
@@ -356,11 +271,9 @@ async fn run_conversation_rounds(
                 .map_err(|error| format!("Failed to build message path for conversation '{}' from leaf '{}': {}", conversation_id, current_leaf_id, error))?
         };
 
-        let mut openai_messages = build_openai_messages(&path)
-            .map_err(|error| format!("Failed to build OpenAI request messages for conversation '{}': {}", conversation_id, error))?;
+        let mut openai_messages = build_openai_messages(&path);
 
-        let enabled_tools = resolve_enabled_mcp_tools(&app_handle, enabled_mcp_tools.as_deref()).await?;
-        let provider_tools = build_provider_tools(&enabled_tools);
+        let enabled_tools = resolve_enabled_mcp_tools(&app_handle).await?;
         let tools_prompt = build_enabled_tools_prompt(&enabled_tools);
 
         let mut system_prompt_sections = Vec::new();
@@ -416,7 +329,6 @@ async fn run_conversation_rounds(
         let outcome = stream_openai_messages(
             app_handle.clone(),
             openai_messages,
-            Some(provider_tools),
             model.clone(),
             provider.clone(),
             parameters.clone(),
@@ -429,12 +341,8 @@ async fn run_conversation_rounds(
         .map_err(|error| format!("Model '{}' failed while streaming conversation '{}': {}", model, conversation_id, error))?;
 
         let parsed = parse_tool_calls(&outcome.text);
-        let calls = if outcome.tool_calls.is_empty() {
-            parsed.calls
-        } else {
-            outcome.tool_calls.clone()
-        };
-        let calls = calls
+        let calls = parsed
+            .calls
             .into_iter()
             .filter(|call| !call.name.trim().is_empty())
             .filter(|call| call.arguments.is_object())
@@ -490,15 +398,6 @@ async fn run_conversation_rounds(
         current_leaf_id = assistant_message_id.clone();
 
         if calls.is_empty() {
-            if outcome.saw_tool_call_delta {
-                emit_event(
-                    &app_handle,
-                    ConversationEventPayload::Failed {
-                        error: "Incomplete tool call from provider".to_string(),
-                    },
-                )?;
-                return Err(format!("Incomplete tool call from provider in conversation '{}'", conversation_id));
-            }
             emit_event(
                 &app_handle,
                 ConversationEventPayload::Completed {
@@ -547,7 +446,7 @@ async fn run_conversation_rounds(
         for call in &completed_calls {
             let tool_message = Message {
                 id: Uuid::new_v4().to_string(),
-                text: tool_result_text(call),
+                text: format_tool_result(call),
                 reasoning: None,
                 sender: MessageRole::Tool,
                 timestamp: std::time::SystemTime::now()
@@ -619,7 +518,6 @@ pub async fn conversation_send_message(
         request.provider,
         request.parameters,
         request.character,
-        request.enabled_mcp_tools,
     )
     .await
 }
@@ -649,7 +547,6 @@ pub async fn conversation_regenerate_message(
         request.provider,
         request.parameters,
         request.character,
-        request.enabled_mcp_tools,
     )
     .await
 }
@@ -681,7 +578,6 @@ pub async fn conversation_derive_message(
             provider: request.provider,
             parameters: request.parameters,
             character: request.character,
-            enabled_mcp_tools: request.enabled_mcp_tools,
         },
     )
     .await
@@ -720,7 +616,6 @@ pub async fn conversation_edit_and_regenerate(
             provider: request.provider,
             parameters: request.parameters,
             character: request.character,
-            enabled_mcp_tools: request.enabled_mcp_tools,
         },
     )
     .await

@@ -11,6 +11,7 @@ mod mcp_stdio;
 mod mcp_http;
 mod image;
 mod conversation;
+mod tool_registry;
 use tauri::{Builder, Manager};
 
 use db::chat::Chat;
@@ -22,6 +23,7 @@ use mcp::types::TransportConfig;
 use mcp_stdio::McpStdioManager;
 use mcp_http::McpHttpManager;
 use std::sync::Mutex;
+use tool_registry::ToolRegistry;
 mod types;
 use types::AppData;
 
@@ -49,16 +51,21 @@ pub fn run() {
 			let stdio_manager = std::sync::Arc::clone(&mcp_stdio_manager);
 			let http_manager = std::sync::Arc::clone(&mcp_http_manager);
 
-			app.manage(Mutex::new(AppData {
-				chat: Chat::new(app.handle())?,
-				diagram_cache: DiagramCache::new()?,
-				key_manager: KeyManager::new("wisp".to_string()),
-				config_manager,
-				mcp_config_manager,
-				mcp_stdio_manager,
-				mcp_http_manager,
-				global_mcp_tool_state: crate::types::GlobalMcpToolState::default(),
-			}));
+			        let tool_registry = std::sync::Arc::new(ToolRegistry::new(
+			            std::sync::Arc::clone(&mcp_stdio_manager),
+			            std::sync::Arc::clone(&mcp_http_manager),
+			        ));
+
+			        app.manage(Mutex::new(AppData {
+			            chat: Chat::new(app.handle())?,
+			            diagram_cache: DiagramCache::new()?,
+			            key_manager: KeyManager::new("wisp".to_string()),
+			            config_manager,
+			            mcp_config_manager,
+			            mcp_stdio_manager,
+			            mcp_http_manager,
+			            tool_registry,
+			        }));
 
 			{
 				let state = app.state::<Mutex<AppData>>();
@@ -133,10 +140,11 @@ pub fn run() {
 			mcp::mcp_load_session,
 			mcp::mcp_delete_session,
 			mcp::mcp_list_sessions,
-			mcp::mcp_refresh_global_tool_state,
-			mcp::mcp_list_global_tools,
-			mcp::mcp_set_global_enabled_tools,
-			mcp::mcp_set_server_enabled,
+			            // Registry commands
+			            tool_registry::registry_list_tools,
+			            tool_registry::registry_execute,
+			            tool_registry::registry_set_enabled,
+			            tool_registry::registry_refresh,
 			// Image commands
 			image::compress_image,
 			image::get_image_info,

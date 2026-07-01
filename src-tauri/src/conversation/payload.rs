@@ -1,54 +1,25 @@
-use std::error::Error;
-use std::fmt;
-
 use async_openai::types::{
-    ChatCompletionMessageToolCall, ChatCompletionRequestAssistantMessage,
+    ChatCompletionRequestAssistantMessage,
     ChatCompletionRequestAssistantMessageContent, ChatCompletionRequestMessage,
     ChatCompletionRequestMessageContentPartImage, ChatCompletionRequestMessageContentPartText,
     ChatCompletionRequestSystemMessage, ChatCompletionRequestSystemMessageContent,
-    ChatCompletionRequestToolMessage, ChatCompletionRequestToolMessageContent,
     ChatCompletionRequestUserMessage, ChatCompletionRequestUserMessageContent,
-    ChatCompletionRequestUserMessageContentPart, ChatCompletionToolType, FunctionCall, ImageDetail,
-    ImageUrl,
+    ChatCompletionRequestUserMessageContentPart, ImageDetail, ImageUrl,
 };
 
 use crate::db::types::{Message, MessageRole};
 use super::types::{ConversationToolCall, ConversationToolContent};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ConversationPayloadError {
-    InvalidToolCalls { message_id: String, reason: String },
-    MissingToolCallId { message_id: String },
-}
-
-impl fmt::Display for ConversationPayloadError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            ConversationPayloadError::InvalidToolCalls { message_id, reason } => {
-                write!(f, "invalid tool calls for message {message_id}: {reason}")
-            }
-            ConversationPayloadError::MissingToolCallId { message_id } => {
-                write!(f, "missing tool_call_id for tool message {message_id}")
-            }
-        }
-    }
-}
-
-impl Error for ConversationPayloadError {}
-
 pub fn build_openai_messages(
     messages: &[Message],
-) -> Result<Vec<ChatCompletionRequestMessage>, ConversationPayloadError> {
+) -> Vec<ChatCompletionRequestMessage> {
     let mut converted = Vec::with_capacity(messages.len());
-    let mut pending_tool_call_ids: Vec<String> = Vec::new();
 
     for message in messages {
         match message.sender {
             MessageRole::User => converted.push(convert_user_message(message)),
             MessageRole::Assistant => {
-                let tool_calls = parse_tool_calls(message)?;
-                pending_tool_call_ids = tool_calls.iter().map(|call| call.id.clone()).collect();
-                converted.push(convert_assistant_message(message, tool_calls));
+                converted.push(convert_assistant_message(message));
             }
             MessageRole::System => converted.push(ChatCompletionRequestMessage::System(
                 ChatCompletionRequestSystemMessage {
@@ -57,23 +28,20 @@ pub fn build_openai_messages(
                 },
             )),
             MessageRole::Tool => {
-                let tool_call_id = pending_tool_call_ids.first().cloned().ok_or_else(|| {
-                    ConversationPayloadError::MissingToolCallId {
-                        message_id: message.id.clone(),
-                    }
-                })?;
-                pending_tool_call_ids.remove(0);
-                converted.push(ChatCompletionRequestMessage::Tool(
-                    ChatCompletionRequestToolMessage {
-                        content: ChatCompletionRequestToolMessageContent::Text(message.text.clone()),
-                        tool_call_id,
+                // 工具结果以 system role 发送，内含 AI 可理解的结构化文本
+                converted.push(ChatCompletionRequestMessage::System(
+                    ChatCompletionRequestSystemMessage {
+                        content: ChatCompletionRequestSystemMessageContent::Text(
+                            message.text.clone(),
+                        ),
+                        ..Default::default()
                     },
                 ));
             }
         }
     }
 
-    Ok(converted)
+    converted
 }
 
 fn convert_user_message(message: &Message) -> ChatCompletionRequestMessage {
@@ -111,73 +79,81 @@ fn convert_user_message(message: &Message) -> ChatCompletionRequestMessage {
 
 fn convert_assistant_message(
     message: &Message,
-    tool_calls: Vec<ConversationToolCall>,
 ) -> ChatCompletionRequestMessage {
-    let openai_tool_calls = if tool_calls.is_empty() {
-        None
-    } else {
-        Some(
-            tool_calls
-                .into_iter()
-                .map(|call| ChatCompletionMessageToolCall {
-                    id: call.id,
-                    r#type: ChatCompletionToolType::Function,
-                    function: FunctionCall {
-                        name: call.name,
-                        arguments: serde_json::to_string(&call.arguments)
-                            .unwrap_or_else(|_| "{}".to_string()),
-                    },
+    // Reconstruct the full assistant text including <|tool_calls|> tags.
+    // This is critical so the model sees what tool calls it made in previous rounds
+    // and doesn't repeat them.
+    let text = if let Some(raw_calls) = &message.tool_calls {
+        // Parse stored tool calls and reconstruct minimal name/arguments format
+        let simplified: Vec<serde_json::Value> = serde_json::from_str::<Vec<serde_json::Value>>(raw_calls)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|call| {
+                serde_json::json!({
+                    "name": call.get("name"),
+                    "arguments": call.get("arguments"),
                 })
-                .collect(),
-        )
-    };
+            })
+            .collect();
 
-    let content = if openai_tool_calls.is_some() {
-        None
-    } else {
-        Some(ChatCompletionRequestAssistantMessageContent::Text(
-            message.text.clone(),
-        ))
-    };
-
-    ChatCompletionRequestMessage::Assistant(ChatCompletionRequestAssistantMessage {
-        content,
-        tool_calls: openai_tool_calls,
-        ..Default::default()
-    })
-}
-
-fn parse_tool_calls(message: &Message) -> Result<Vec<ConversationToolCall>, ConversationPayloadError> {
-    let Some(raw) = &message.tool_calls else {
-        return Ok(Vec::new());
-    };
-
-    serde_json::from_str::<Vec<ConversationToolCall>>(raw).map_err(|error| {
-        ConversationPayloadError::InvalidToolCalls {
-            message_id: message.id.clone(),
-            reason: error.to_string(),
+        let tag = serde_json::to_string(&simplified).unwrap_or_default();
+        if message.text.is_empty() {
+            format!("<|tool_calls|>{tag}<|/tool_calls|>")
+        } else {
+            format!("{}\n<|tool_calls|>{tag}<|/tool_calls|>", message.text)
         }
-    })
-}
-
-pub fn tool_result_text(call: &ConversationToolCall) -> String {
-    let Some(result) = &call.result else {
-        return String::new();
+    } else {
+        message.text.clone()
     };
 
-    result
-        .content
-        .iter()
-        .map(|content| match content {
-            ConversationToolContent::Text { text } => text.clone(),
-            ConversationToolContent::Image { .. } => "[Image]".to_string(),
-            ConversationToolContent::Resource { uri, text, .. } => {
-                text.clone().unwrap_or_else(|| format!("[Resource: {uri}]"))
+    let mut msg = ChatCompletionRequestAssistantMessage {
+        content: Some(ChatCompletionRequestAssistantMessageContent::Text(text)),
+        ..Default::default()
+    };
+
+    ChatCompletionRequestMessage::Assistant(msg)
+}
+
+/// 格式化 tool call 的结果成 AI 可读的结构化文本（存储到 DB + 构建 system message 用）
+pub fn format_tool_result(call: &ConversationToolCall) -> String {
+    let result = match &call.result {
+        Some(r) => r,
+        None => return format!("[Tool: {}]\n[No result]", call.name),
+    };
+
+    let status = if result.is_error { "error" } else { "success" };
+    let args_str = serde_json::to_string(&call.arguments).unwrap_or_default();
+
+    let mut lines = Vec::new();
+    lines.push(format!("[Tool: {}]", call.name));
+    lines.push(format!("Arguments: {}", args_str));
+    lines.push(format!("Status: {}", status));
+
+    let has_content = result.content.iter().any(|c| matches!(c, ConversationToolContent::Text { text } if !text.is_empty()));
+    if has_content {
+        lines.push(String::new());
+        if result.is_error {
+            lines.push("[Error]".to_string());
+        } else {
+            lines.push("[Result]".to_string());
+        }
+        for content in &result.content {
+            match content {
+                ConversationToolContent::Text { text } if !text.is_empty() => {
+                    lines.push(text.clone());
+                }
+                ConversationToolContent::Image { .. } => {
+                    lines.push("[Image]".to_string());
+                }
+                ConversationToolContent::Resource { uri, text, .. } => {
+                    lines.push(text.clone().unwrap_or_else(|| format!("[Resource: {uri}]")));
+                }
+                _ => {}
             }
-        })
-        .filter(|text| !text.is_empty())
-        .collect::<Vec<_>>()
-        .join("\n\n")
+        }
+    }
+
+    lines.join("\n")
 }
 
 #[cfg(test)]
@@ -200,44 +176,47 @@ mod tests {
     }
 
     #[test]
-    fn builds_native_tool_history_for_second_round() {
-        let assistant_tool_calls = serde_json::json!([
-            {
-                "id": "call_1",
-                "name": "mcp__search",
-                "arguments": { "query": "rust tauri" },
-                "result": {
-                    "content": [{ "type": "text", "text": "result text" }],
-                    "isError": false
-                }
-            }
-        ])
-        .to_string();
-
+    fn assistant_message_is_sent_as_plain_text() {
         let messages = vec![
-            message(MessageRole::User, "Search docs", None),
-            message(MessageRole::Assistant, "", Some(assistant_tool_calls)),
-            message(MessageRole::Tool, "result text", None),
+            message(MessageRole::User, "hello", None),
+            message(MessageRole::Assistant, "hi there", None),
         ];
 
-        let converted = build_openai_messages(&messages).expect("payload builds");
-        assert_eq!(converted.len(), 3);
+        let converted = build_openai_messages(&messages);
+        assert_eq!(converted.len(), 2);
         assert!(matches!(converted[0], ChatCompletionRequestMessage::User(_)));
         match &converted[1] {
             ChatCompletionRequestMessage::Assistant(msg) => {
-                assert!(msg.content.is_none());
-                let calls = msg.tool_calls.as_ref().expect("tool calls present");
-                assert_eq!(calls[0].id, "call_1");
-                assert_eq!(calls[0].function.name, "mcp__search");
-                assert_eq!(calls[0].function.arguments, r#"{"query":"rust tauri"}"#);
+                assert!(msg.tool_calls.is_none());
+                assert_eq!(
+                    msg.content,
+                    Some(ChatCompletionRequestAssistantMessageContent::Text(
+                        "hi there".to_string()
+                    ))
+                );
             }
             other => panic!("expected assistant, got {other:?}"),
         }
-        match &converted[2] {
-            ChatCompletionRequestMessage::Tool(msg) => {
-                assert_eq!(msg.tool_call_id, "call_1");
+    }
+
+    #[test]
+    fn tool_message_becomes_system_message() {
+        let messages = vec![
+            message(MessageRole::Tool, "[Tool: search]\n[Result]\nfound", None),
+        ];
+
+        let converted = build_openai_messages(&messages);
+        assert_eq!(converted.len(), 1);
+        match &converted[0] {
+            ChatCompletionRequestMessage::System(msg) => {
+                let text = match &msg.content {
+                    ChatCompletionRequestSystemMessageContent::Text(t) => t.as_str(),
+                    _ => panic!("expected text content"),
+                };
+                assert!(text.contains("[Tool: search]"));
+                assert!(text.contains("found"));
             }
-            other => panic!("expected tool, got {other:?}"),
+            other => panic!("expected system, got {other:?}"),
         }
     }
 
@@ -251,7 +230,7 @@ mod tests {
             },
         }]);
 
-        let converted = build_openai_messages(&[msg]).expect("payload builds");
+        let converted = build_openai_messages(&[msg]);
         match &converted[0] {
             ChatCompletionRequestMessage::User(msg) => match &msg.content {
                 ChatCompletionRequestUserMessageContent::Array(parts) => {
@@ -265,8 +244,7 @@ mod tests {
 
     #[test]
     fn keeps_normal_assistant_text_as_text_content() {
-        let converted = build_openai_messages(&[message(MessageRole::Assistant, "hello", None)])
-            .expect("payload builds");
+        let converted = build_openai_messages(&[message(MessageRole::Assistant, "hello", None)]);
         match &converted[0] {
             ChatCompletionRequestMessage::Assistant(msg) => {
                 assert!(msg.tool_calls.is_none());
@@ -279,12 +257,5 @@ mod tests {
             }
             other => panic!("expected assistant, got {other:?}"),
         }
-    }
-
-    #[test]
-    fn rejects_tool_message_without_prior_assistant_tool_call() {
-        let err = build_openai_messages(&[message(MessageRole::Tool, "orphan result", None)])
-            .expect_err("orphan tool message should fail");
-        assert!(matches!(err, ConversationPayloadError::MissingToolCallId { .. }));
     }
 }

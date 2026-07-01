@@ -245,29 +245,39 @@ export async function mcpListSessions() {
     return invoke<SessionState[]>('mcp_list_sessions', {})
 }
 
-export interface GlobalUiToolEntry {
-    qualified_name: string;
-    model_name: string;
-    server_id: string;
+export interface RegistryToolEntry {
     name: string;
     description?: string;
+    inputSchema: {
+        type: 'object';
+        properties?: Record<string, any>;
+        required?: string[];
+    };
+    annotations?: {
+        title?: string;
+        readOnlyHint?: boolean;
+        destructiveHint?: boolean;
+        idempotentHint?: boolean;
+        openWorldHint?: boolean;
+    };
+    metadata?: Record<string, unknown>;
     enabled: boolean;
 }
 
-export async function mcpRefreshGlobalToolState() {
-    return invoke<void>('mcp_refresh_global_tool_state', {})
+export async function registryRefresh() {
+    return invoke<void>('registry_refresh', {})
 }
 
-export async function mcpListGlobalTools() {
-    return invoke<GlobalUiToolEntry[]>('mcp_list_global_tools', {})
+export async function registryListTools() {
+    return invoke<RegistryToolEntry[]>('registry_list_tools', {})
 }
 
-export async function mcpSetGlobalEnabledTools(qualifiedNames: string[]) {
-    return invoke<void>('mcp_set_global_enabled_tools', { qualifiedNames })
+export async function registryExecute(name: string, arguments_?: Record<string, unknown>) {
+    return invoke<unknown>('registry_execute', { name, arguments: arguments_ })
 }
 
-export async function mcpSetServerEnabled(serverId: string, enabled: boolean) {
-    return invoke<void>('mcp_set_server_enabled', { serverId, enabled })
+export async function registrySetEnabled(names: string[]) {
+    return invoke<void>('registry_set_enabled', { names })
 }
 
 // MCP stdio commands

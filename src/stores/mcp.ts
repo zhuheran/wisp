@@ -6,7 +6,7 @@ import type {
   ConversationLoopConfig,
   SessionState,
   ConnectionStatus,
-  NormalizedTool,
+  RegisteredTool,
   ToolCallItem,
 } from '../libs/types'
 import {
@@ -22,19 +22,15 @@ import {
   mcpLoadSession,
   mcpDeleteSession,
   mcpListSessions,
-  mcpRefreshGlobalToolState,
-  mcpListGlobalTools,
-  mcpSetGlobalEnabledTools,
-  mcpSetServerEnabled,
+  registryRefresh,
+  registryListTools,
+  registryExecute,
+  registrySetEnabled,
   mcpStdioConnect,
   mcpStdioDisconnect,
-  mcpStdioListTools,
-  mcpStdioCallTool,
   mcpStdioGetAllStatuses,
   mcpHttpConnect,
   mcpHttpDisconnect,
-  mcpHttpListTools,
-  mcpHttpCallTool,
   mcpHttpGetAllStatuses,
 } from '../libs/commands'
 import { transformPayload, type PayloadItem, DEFAULT_PIPELINE_CONFIG } from '../pipeline'
@@ -50,7 +46,7 @@ export const useMcpStore = defineStore('mcp', () => {
   const isLoading = ref(false)
 
   const connectionStatuses = ref<Map<string, ConnectionStatus>>(new Map())
-  const tools = ref<NormalizedTool[]>([])
+  const tools = ref<RegisteredTool[]>([])
 
   const connectedServerIds = computed(() => {
     const ids: string[] = []
@@ -91,6 +87,11 @@ export const useMcpStore = defineStore('mcp', () => {
     }
   }
 
+  const getToolServerId = (tool: RegisteredTool): string | undefined => {
+    const value = tool.metadata?.server_id
+    return typeof value === 'string' ? value : tool.serverId
+  }
+
   const disconnectServer = async (serverId: string) => {
     const server = servers.value.find(s => s.id === serverId)
     if (!server) return
@@ -100,7 +101,7 @@ export const useMcpStore = defineStore('mcp', () => {
     } else if (server.transport.kind === 'sse' || server.transport.kind === 'http') {
       await mcpHttpDisconnect(serverId)
     }
-    tools.value = tools.value.filter(t => t.serverId !== serverId)
+    tools.value = tools.value.filter(t => getToolServerId(t) !== serverId)
   }
 
   const connectAll = async () => {
@@ -149,15 +150,20 @@ export const useMcpStore = defineStore('mcp', () => {
       const stdioStatuses = await mcpStdioGetAllStatuses()
       const httpStatuses = await mcpHttpGetAllStatuses()
       for (const raw of [...stdioStatuses, ...httpStatuses]) {
-        const r = raw as Record<string, unknown>
-        const status: ConnectionStatus = {
-          serverId: r.server_id as string,
-          connected: r.connected as boolean,
-          error: r.error as string | undefined,
-          lastPingAt: r.last_ping_at as number | undefined,
-          reconnectAttempts: r.reconnect_attempts as number,
+        const status = raw as unknown as {
+          server_id: string
+          connected: boolean
+          error?: string
+          last_ping_at?: number
+          reconnect_attempts: number
         }
-        connectionStatuses.value.set(status.serverId, status)
+        connectionStatuses.value.set(status.server_id, {
+          serverId: status.server_id,
+          connected: status.connected,
+          error: status.error,
+          lastPingAt: status.last_ping_at,
+          reconnectAttempts: status.reconnect_attempts,
+        })
       }
     } catch (e) {
       console.error('Failed to refresh statuses:', e)
@@ -168,7 +174,7 @@ export const useMcpStore = defineStore('mcp', () => {
     if (unlistenMcpStatus) {
       const dispose = unlistenMcpStatus
       unlistenMcpStatus = null
-      await dispose()
+      dispose()
     }
   })
 
@@ -178,40 +184,25 @@ export const useMcpStore = defineStore('mcp', () => {
 
   const refreshAllTools = async () => {
     try {
-      await mcpRefreshGlobalToolState()
-      const entries = await mcpListGlobalTools()
+      await registryRefresh()
+      const entries = await registryListTools()
       tools.value = entries.map((tool) => ({
         name: tool.name,
-        serverId: tool.server_id,
-        qualifiedName: tool.qualified_name,
         description: tool.description,
-        inputSchema: { type: 'object', properties: {} },
-        annotations: undefined,
+        inputSchema: tool.inputSchema as RegisteredTool['inputSchema'],
+        annotations: tool.annotations,
+        metadata: tool.metadata,
+        serverId: typeof tool.metadata?.server_id === 'string' ? tool.metadata.server_id : undefined,
+        originalName: typeof tool.metadata?.original_name === 'string' ? tool.metadata.original_name : undefined,
         enabled: tool.enabled,
-      } as NormalizedTool & { enabled: boolean }))
+      }))
     } catch (e) {
-      console.error('Failed to refresh global tools:', e)
+      console.error('Failed to refresh registry tools:', e)
     }
   }
 
-  const executeTool = async (qualifiedName: string, args?: Record<string, unknown>) => {
-    const [serverId, toolName] = qualifiedName.split(':')
-    if (!serverId || !toolName) {
-      throw new Error(`Invalid tool name: ${qualifiedName}`)
-    }
-
-    const server = servers.value.find(s => s.id === serverId)
-    if (!server) {
-      throw new Error(`Server ${serverId} not found`)
-    }
-
-    let result: unknown
-    if (server.transport.kind === 'stdio') {
-      result = await mcpStdioCallTool(serverId, toolName, args)
-    } else {
-      result = await mcpHttpCallTool(serverId, toolName, args)
-    }
-
+  const executeTool = async (registeredName: string, args?: Record<string, unknown>) => {
+    const result = await registryExecute(registeredName, args)
     return await processToolResult(result)
   }
 
@@ -351,192 +342,74 @@ export const useMcpStore = defineStore('mcp', () => {
   const getToolsPrompt = (enabledTools?: Set<string>): string => {
     let toolsToUse = tools.value
     if (enabledTools && enabledTools.size > 0) {
-      toolsToUse = tools.value.filter(t => enabledTools.has(t.qualifiedName))
+      toolsToUse = tools.value.filter(t => enabledTools.has(t.name))
     }
 
     if (toolsToUse.length === 0) return ''
 
-    // 按 server 分组显示工具
-    const toolsByServer = toolsToUse.reduce((acc, tool) => {
-      if (!acc[tool.serverId]) acc[tool.serverId] = []
-      acc[tool.serverId].push(tool)
-      return acc
-    }, {} as Record<string, NormalizedTool[]>)
+    const sorted = [...toolsToUse].sort((a, b) => a.name.localeCompare(b.name))
+    const toolList = sorted.map(tool => {
+      const params = tool.inputSchema.properties
+        ? Object.entries(tool.inputSchema.properties)
+            .map(([name, prop]) => `    - \`${name}\` (${(prop as any).type || 'unknown'}): ${(prop as any).description || ''}`)
+            .join('\n')
+        : '    - (no parameters)'
 
-    const toolSections = Object.entries(toolsByServer).map(([serverId, serverTools]) => {
-      const toolList = serverTools.map(tool => {
-        const params = tool.inputSchema.properties
-          ? Object.entries(tool.inputSchema.properties)
-              .map(([name, prop]) => `      - ${name}: ${(prop as any).description || (prop as any).type}`)
-              .join('\n')
-          : '      (no parameters)'
-
-        return `    - **${tool.name}**: ${tool.description || 'No description'}\n${params}`
-      }).join('\n\n')
-
-      return `### Server: \`${serverId}\`\n${toolList}`
-    })
+      return `- **${tool.name}**: ${tool.description || 'No description'}\n${params}`
+    }).join('\n\n')
 
     return `## Available Tools
 
-You have access to the following tools organized by server.
+You have access to the following tools. Use them via <|tool_calls|> when appropriate.
 
-### Tool List by Server:
+### Tool List
 
-${toolSections.join('\n\n')}
+${toolList}
 
-Use the native tool calling mechanism to invoke these tools.
+### How to Call
+
+<|tool_calls|>
+[{"name":"tool_name","arguments":{"param":"value"}}]
+<|/tool_calls|>
 `
   }
 
-  // Clean <|tool_call|> tags from text, returning the clean text
   const cleanToolCallTags = (text: string): string => {
-    return text.replace(/<\|tool_call\|>[\s\S]*?<\|tool_call\|>/g, '').replace(/<\|tool_call\|>/g, '').trim()
+    return text.replace(/<\|tool_calls\|>[\s\S]*?<\|\/tool_calls\|>/g, '').trim()
   }
 
-  // Parse all tool calls from response text, return both calls and clean text
   const parseToolCallFromResponse = (response: string): { calls: ToolCallItem[]; cleanText: string } => {
     const calls: ToolCallItem[] = []
-    const pattern = /<\|tool_call\|>\s*([\s\S]*?)\s*<\|tool_call\|>/g
+    const pattern = /<\|tool_calls\|>\s*([\s\S]*?)\s*<\|\/tool_calls\|>/g
     let match: RegExpExecArray | null
     let callIndex = 0
 
     while ((match = pattern.exec(response)) !== null) {
-      const jsonStr = match[1].trim()
-      const parsed = tryParseToolCallJson(jsonStr)
-      if (parsed) {
-        calls.push({
-          id: parsed.originalName || `tc_${callIndex}`,
-          name: parsed.name,
-          arguments: parsed.arguments,
-        })
-        callIndex++
+      try {
+        const parsed = JSON.parse(match[1].trim())
+        if (Array.isArray(parsed)) {
+          for (const item of parsed) {
+            if (item?.name && item?.arguments && typeof item.arguments === 'object' && !Array.isArray(item.arguments)) {
+              calls.push({
+                id: typeof item.id === 'string' && item.id.length > 0 ? item.id : `tc_${callIndex}`,
+                name: String(item.name),
+                arguments: item.arguments as Record<string, unknown>,
+              })
+              callIndex++
+            }
+          }
+        }
+      } catch (e) {
+        console.warn('[Registry] Failed to parse tool calls block:', e)
       }
     }
 
-    const cleanText = cleanToolCallTags(response)
-    return { calls, cleanText }
+    return { calls, cleanText: cleanToolCallTags(response) }
   }
 
-  // Legacy: parse single tool call (backward compat for chat store)
   const parseSingleToolCallFromResponse = (response: string): ToolCallItem | null => {
     const { calls } = parseToolCallFromResponse(response)
     return calls.length > 0 ? calls[0] : null
-  }
-
-  const tryParseToolCallJson = (jsonStr: string): { name: string; arguments: Record<string, unknown>; originalName: string } | null => {
-    console.log('[MCP] Trying to parse JSON:', jsonStr.substring(0, 100))
-    try {
-      const parsed = JSON.parse(jsonStr)
-      console.log('[MCP] Parsed JSON:', parsed)
-
-      // 格式 1: {"tool_call": {"name": "...", "arguments": {...}}}
-      if (parsed.tool_call?.name) {
-        console.log('[MCP] Found tool_call format')
-        return resolveToolName(parsed.tool_call.name, parsed.tool_call.arguments)
-      }
-
-      // 格式 2: {"name": "...", "arguments": {...}}
-      if (parsed.name) {
-        console.log('[MCP] Found name/arguments format, name:', parsed.name)
-        return resolveToolName(parsed.name, parsed.arguments)
-      }
-
-      console.log('[MCP] JSON does not have name or tool_call field')
-    } catch (e) {
-      console.warn('[MCP] JSON parse failed:', e)
-    }
-
-    return null
-  }
-
-  const resolveToolName = (rawName: string, rawArgs?: Record<string, unknown>): { name: string; arguments: Record<string, unknown>; originalName: string } | null => {
-    console.log('[MCP] Resolving tool name:', rawName, 'available tools:', tools.value.length)
-
-    // 保存原始名称用于显示
-    const originalName = rawName
-
-    // 清理可能的 UUID 前缀（AI 可能错误添加）
-    let cleanedName = rawName
-
-    const parts = rawName.split(':')
-    if (parts.length >= 2) {
-      const firstPart = parts[0]
-      // 检测是否为 UUID（36字符，含连字符）
-      if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(firstPart)) {
-        // UUID 前缀，移除它
-        cleanedName = parts.slice(1).join(':')
-        console.warn(`[MCP] Removed UUID prefix from tool name: ${rawName} → ${cleanedName}`)
-      }
-    }
-
-    console.log('[MCP] Cleaned name:', cleanedName)
-    console.log('[MCP] Available tools:', tools.value.map(t => t.qualifiedName))
-
-    // 尝试精确匹配 qualifiedName（server_id:tool_name）
-    const exactMatch = tools.value.find(t => t.qualifiedName === cleanedName)
-    if (exactMatch) {
-      console.log('[MCP] Exact match found:', exactMatch.qualifiedName)
-      return {
-        name: exactMatch.qualifiedName,
-        arguments: rawArgs || {},
-        originalName
-      }
-    }
-
-    // 降级：如果只提供了 tool_name（无 server_id），尝试模糊匹配
-    if (!cleanedName.includes(':')) {
-      const matches = tools.value.filter(t => t.name === cleanedName)
-
-      if (matches.length === 1) {
-        // 唯一匹配
-        console.warn(`[MCP] Tool name missing server_id, auto-resolved: ${cleanedName} → ${matches[0].qualifiedName}`)
-        return {
-          name: matches[0].qualifiedName,
-          arguments: rawArgs || {},
-          originalName
-        }
-      } else if (matches.length > 1) {
-        // 多义性错误
-        const serverIds = matches.map(m => m.serverId).join(', ')
-        console.error(
-          `[MCP] Ambiguous tool name "${cleanedName}". Multiple servers provide this tool: [${serverIds}]. ` +
-          `Please use the full qualified name (e.g., "server_id:${cleanedName}")`
-        )
-        // 返回第一个匹配，但记录警告
-        return {
-          name: matches[0].qualifiedName,
-          arguments: rawArgs || {},
-          originalName
-        }
-      }
-    } else {
-      // 如果包含 : 但没有精确匹配，尝试只匹配工具名
-      const toolNameOnly = cleanedName.split(':').pop()
-      if (toolNameOnly) {
-        const matches = tools.value.filter(t => t.name === toolNameOnly)
-        if (matches.length === 1) {
-          console.warn(`[MCP] Tool name matched by tool name only: ${toolNameOnly} → ${matches[0].qualifiedName}`)
-          return {
-            name: matches[0].qualifiedName,
-            arguments: rawArgs || {},
-            originalName
-          }
-        }
-      }
-    }
-
-    // 完全未找到 - 返回原始名称，但使用清理后的名称执行
-    const availableTools = tools.value.map(t => t.qualifiedName).join(', ')
-    console.error(
-      `[MCP] Tool not found: "${cleanedName}". ` +
-      `Available tools: [${availableTools}]`
-    )
-    return {
-      name: cleanedName,
-      arguments: rawArgs || {},
-      originalName
-    }
   }
 
   // Server management
@@ -549,7 +422,7 @@ Use the native tool calling mechanism to invoke these tools.
     }
   }
 
-  let unlistenMcpStatus: (() => Promise<void>) | null = null
+  let unlistenMcpStatus: (() => void) | null = null
   const initMcpStatusListener = async () => {
     if (unlistenMcpStatus) return
     unlistenMcpStatus = await listen('mcp_status_updated', (event) => {
@@ -677,21 +550,28 @@ Use the native tool calling mechanism to invoke these tools.
     }
   }
 
+  const setEnabledTools = async (names: string[]) => {
+    await registrySetEnabled(names)
+    await refreshAllTools()
+  }
+
   const setServerEnabled = async (serverId: string, enabled: boolean) => {
-    await mcpSetServerEnabled(serverId, enabled)
-    await refreshAllTools()
+    const currentEnabled = new Set(tools.value.filter(tool => tool.enabled).map(tool => tool.name))
+    const serverToolNames = tools.value
+      .filter(tool => getToolServerId(tool) === serverId)
+      .map(tool => tool.name)
+
+    if (enabled) {
+      serverToolNames.forEach(name => currentEnabled.add(name))
+    } else {
+      serverToolNames.forEach(name => currentEnabled.delete(name))
+    }
+
+    await setEnabledTools(Array.from(currentEnabled))
   }
 
-  const setEnabledTools = async (qualifiedNames: string[]) => {
-    await mcpSetGlobalEnabledTools(qualifiedNames)
-    await refreshAllTools()
-  }
-
-  const getEnabledQualifiedNames = () => {
-    return tools.value.filter(tool => {
-      const entry = tool as NormalizedTool & { enabled?: boolean }
-      return entry.enabled === true
-    }).map(tool => tool.qualifiedName)
+  const getEnabledToolNames = () => {
+    return tools.value.filter(tool => tool.enabled === true).map(tool => tool.name)
   }
 
   const getConnectionStatus = (serverId: string): ConnectionStatus | undefined => {
@@ -729,7 +609,7 @@ Use the native tool calling mechanism to invoke these tools.
     refreshAllTools,
     setServerEnabled,
     setEnabledTools,
-    getEnabledQualifiedNames,
+    getEnabledToolNames,
     executeTool,
     executeToolStructured,
     getToolsPrompt,

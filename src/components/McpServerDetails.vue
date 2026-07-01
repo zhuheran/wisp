@@ -28,7 +28,7 @@ import {
 } from '@vicons/fluent'
 import { cloneDeep } from 'lodash'
 import { useMcpStore } from '../stores/mcp'
-import type { ServerConfig, NormalizedTool } from '../libs/types'
+import type { ServerConfig, RegisteredTool } from '../libs/types'
 
 const props = defineProps<{
   serverId: string
@@ -78,7 +78,7 @@ const isHttp = computed(() => formValue.value?.transport.kind === 'http')
 const status = computed(() => mcpStore.getConnectionStatus(props.serverId))
 const isConnected = computed(() => status.value?.connected ?? false)
 
-const serverTools = computed<NormalizedTool[]>(() =>
+const serverTools = computed<RegisteredTool[]>(() =>
   mcpStore.tools.filter((t) => t.serverId === props.serverId)
 )
 
@@ -95,7 +95,7 @@ const toolColumns = [
     title: 'Actions',
     key: 'actions',
     width: 120,
-    render(row: NormalizedTool) {
+    render(row: RegisteredTool) {
       return h(
         NButton,
         {
@@ -179,9 +179,9 @@ const handleDeleteServer = async () => {
   }
 }
 
-const handleTestTool = async (tool: NormalizedTool) => {
+const handleTestTool = async (tool: RegisteredTool) => {
   try {
-    const result = await mcpStore.executeTool(tool.qualifiedName, {})
+    const result = await mcpStore.executeTool(tool.name, {})
     message.success(`Tool ${tool.name} executed`)
     console.log('[MCP] Tool test result:', result)
   } catch (e) {

@@ -212,10 +212,8 @@ export interface ConnectionStatus {
 }
 
 // Registry Types
-export interface NormalizedTool {
+export interface RegisteredTool {
 	name: string;
-	serverId: string;
-	qualifiedName: string;
 	description?: string;
 	inputSchema: {
 		type: 'object';
@@ -229,6 +227,10 @@ export interface NormalizedTool {
 		idempotentHint?: boolean;
 		openWorldHint?: boolean;
 	};
+	metadata?: Record<string, unknown>;
+	serverId?: string;
+	originalName?: string;
+	enabled: boolean;
 }
 
 export interface NormalizedProperty {
@@ -352,7 +354,6 @@ export interface ConversationSendRequest {
 	provider: Provider;
 	parameters?: Record<string, unknown> | null;
 	character?: Character | null;
-	enabled_mcp_tools?: string[] | null;
 }
 
 export interface ConversationRegenerateRequest {
@@ -363,7 +364,6 @@ export interface ConversationRegenerateRequest {
 	provider: Provider;
 	parameters?: Record<string, unknown> | null;
 	character?: Character | null;
-	enabled_mcp_tools?: string[] | null;
 }
 
 export interface ConversationDeriveRequest {
@@ -374,7 +374,6 @@ export interface ConversationDeriveRequest {
 	provider: Provider;
 	parameters?: Record<string, unknown> | null;
 	character?: Character | null;
-	enabled_mcp_tools?: string[] | null;
 }
 
 export type ConversationEventPayload =

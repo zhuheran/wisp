@@ -4,9 +4,9 @@ use std::fmt;
 use crate::db::chat::Chat;
 use crate::db::types::{ImageContent, Message, MessageRole};
 
-use super::payload::{build_openai_messages, tool_result_text, ConversationPayloadError};
+use super::payload::{build_openai_messages, format_tool_result};
 use super::tool_parser::parse_tool_calls;
-use super::types::ConversationToolCall;
+use super::types::{ConversationToolCall, ConversationToolContent, ConversationToolResult};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct AssistantRound {
@@ -28,7 +28,6 @@ impl Default for ConversationEngineConfig {
 #[derive(Debug)]
 pub enum ConversationEngineError {
     Chat(crate::db::types::ChatError),
-    Payload(ConversationPayloadError),
     Llm(String),
     Tool(String),
     MaxToolRounds,
@@ -38,7 +37,7 @@ impl fmt::Display for ConversationEngineError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             ConversationEngineError::Chat(error) => write!(f, "chat error: {error}"),
-            ConversationEngineError::Payload(error) => write!(f, "payload error: {error}"),
+
             ConversationEngineError::Llm(error) => write!(f, "llm error: {error}"),
             ConversationEngineError::Tool(error) => write!(f, "tool error: {error}"),
             ConversationEngineError::MaxToolRounds => write!(f, "max tool rounds reached"),
@@ -54,11 +53,7 @@ impl From<crate::db::types::ChatError> for ConversationEngineError {
     }
 }
 
-impl From<ConversationPayloadError> for ConversationEngineError {
-    fn from(value: ConversationPayloadError) -> Self {
-        Self::Payload(value)
-    }
-}
+
 
 pub trait ConversationLlm {
     fn next_round(&mut self, messages: &[Message]) -> Result<AssistantRound, ConversationEngineError>;
@@ -130,7 +125,7 @@ where
         let mut current_leaf_id = leaf_message_id.to_string();
         for round in 0..=self.config.max_tool_rounds {
             let path = self.chat.get_message_path_to(conversation_id, &current_leaf_id)?;
-            build_openai_messages(&path)?;
+            build_openai_messages(&path);
 
             let assistant = self.llm.next_round(&path)?;
             let parsed = parse_tool_calls(&assistant.text);
@@ -181,7 +176,7 @@ where
                 .map_err(crate::db::types::ChatError::from)?;
 
             for call in &completed_calls {
-                let tool_result_text = format!("[Tool Result: {}]\n{}", call.name, tool_result_text(call));
+                let tool_result_text = format_tool_result(call);
                 let tool_message_id = format!("tool-{}-{}", assistant_message_id, call.id);
                 self.chat.add_message(
                     conversation_id,
@@ -269,7 +264,7 @@ mod tests {
         chat.create_conversation("c1", "Conversation", "desc").expect("conversation");
         let llm = FakeLlm::new(vec![
             AssistantRound {
-                text: "```json\n{\"tool_call\":{\"id\":\"call_1\",\"name\":\"server:tool\",\"arguments\":{}}}\n```".to_string(),
+                text: "<|tool_calls|>[{\"id\":\"call_1\",\"name\":\"server:tool\",\"arguments\":{}}]<|/tool_calls|>".to_string(),
                 reasoning: None,
             },
             AssistantRound { text: "final answer".to_string(), reasoning: None },
@@ -300,7 +295,7 @@ mod tests {
         chat.create_conversation("c1", "Conversation", "desc").expect("conversation");
         let llm = FakeLlm::new(vec![
             AssistantRound {
-                text: "{\"tool_call\":{\"id\":\"call_1\",\"name\":\"server:tool\",\"arguments\":{}}}".to_string(),
+                text: "<|tool_calls|>[{\"id\":\"call_1\",\"name\":\"server:tool\",\"arguments\":{}}]<|/tool_calls|>".to_string(),
                 reasoning: None,
             },
         ]);

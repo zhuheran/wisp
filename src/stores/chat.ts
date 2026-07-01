@@ -149,7 +149,6 @@ export const useChatStore = defineStore('chat', () => {
 					return acc
 				}, {} as Record<string, unknown>) ?? null,
 				character: currentCharacter.value,
-				enabled_mcp_tools: Array.from(enabledMcpTools.value),
 			})
 			failureTracker.throwIfFailed()
 			if (onFinish) await onFinish(latestAssistantText, latestAssistantReasoning || undefined)
@@ -235,7 +234,6 @@ export const useChatStore = defineStore('chat', () => {
 					return acc
 				}, {} as Record<string, unknown>) ?? null,
 				character: currentCharacter.value,
-				enabled_mcp_tools: Array.from(enabledMcpTools.value),
 			})
 			failureTracker.throwIfFailed()
 			if (onFinish) await onFinish(latestAssistantText, latestAssistantReasoning || undefined)
@@ -318,7 +316,6 @@ export const useChatStore = defineStore('chat', () => {
 					return acc
 				}, {} as Record<string, unknown>) ?? null,
 				character: currentCharacter.value,
-				enabled_mcp_tools: Array.from(enabledMcpTools.value),
 			})
 			failureTracker.throwIfFailed()
 			if (onFinish) await onFinish(latestAssistantText, latestAssistantReasoning || undefined)
@@ -401,7 +398,6 @@ export const useChatStore = defineStore('chat', () => {
 					return acc
 				}, {} as Record<string, unknown>) ?? null,
 				character: currentCharacter.value,
-				enabled_mcp_tools: Array.from(enabledMcpTools.value),
 			})
 			failureTracker.throwIfFailed()
 			if (onFinish) await onFinish(latestAssistantText, latestAssistantReasoning || undefined)
