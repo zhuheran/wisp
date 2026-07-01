@@ -51,6 +51,13 @@ const backgroundColor = computed(() =>
 
 const border = computed(() => `1px solid ${borderColor.value}`);
 
+export interface GroupMessageBlock {
+  text: string;
+  reasoning?: string;
+  toolCalls?: ToolCallItem[];
+  images?: ImageContent[];
+}
+
 const props = defineProps<{
   text: string;
   reasoning?: string;
@@ -64,6 +71,7 @@ const props = defineProps<{
   index?: number;
   images?: ImageContent[];
   toolCalls?: ToolCallItem[];
+  groupMessages?: GroupMessageBlock[];
 }>();
 
 const emit = defineEmits<{
@@ -167,8 +175,17 @@ const onReadyStatusChange = (ready: boolean) => {
   if (ready) emit("ready");
 };
 
-const thinkingPanelExpandedNames = ref<string[]>([]);
-if (!(props.over ?? true)) thinkingPanelExpandedNames.value.push("thinking");
+const thinkingPanelExpandedNames = computed<string[]>(() => {
+  if (!(props.over ?? true)) return ["thinking"]
+  return []
+});
+
+const groupThinkingExpandedNames = computed<string[]>(() => {
+  if (!(props.over ?? true)) {
+    return props.groupMessages?.map((_, i) => `thinking-${i}`) ?? []
+  }
+  return []
+});
 
 const footerVisible = ref(false);
 
@@ -176,6 +193,7 @@ const footerVisible = ref(false);
 const toolCallExpandedNames = ref<string[]>([]);
 
 const hasToolCalls = computed(() => props.toolCalls && props.toolCalls.length > 0);
+const isToolMessage = computed(() => props.sender === MessageRole.Tool);
 
 const formatToolResult = (call: ToolCallItem): string => {
   if (!call.result) return 'No result';
@@ -223,75 +241,148 @@ const formatToolResult = (call: ToolCallItem): string => {
             "
           >
             <div class="content">
-              <!-- Images Display -->
-              <div v-if="images && images.length > 0" class="images-container">
-                <n-flex :wrap="true" size="small">
-                  <n-image
-                    v-for="(image, idx) in images"
-                    :key="idx"
-                    :src="image.image_url.url"
-                    class="message-image"
-                    :preview-src="image.image_url.url"
+              <template v-if="groupMessages && groupMessages.length > 0">
+                <div v-for="(block, blockIdx) in groupMessages" :key="blockIdx" class="group-block" :class="blockIdx < groupMessages.length - 1 ? 'group-block-divider' : ''">
+                  <div v-if="block.images && block.images.length > 0" class="images-container">
+                    <n-flex :wrap="true" size="small">
+                      <n-image
+                        v-for="(image, idx) in block.images"
+                        :key="idx"
+                        :src="image.image_url.url"
+                        class="message-image"
+                        :preview-src="image.image_url.url"
+                      />
+                    </n-flex>
+                  </div>
+                  <div v-if="block.reasoning" class="reasoning-container">
+                    <n-collapse arrow-placement="right" display-directive="show" v-model:expanded-names="groupThinkingExpandedNames">
+                      <n-collapse-item :title="`Thinking`" :name="`thinking-${blockIdx}`">
+                        <MarkdownRenderer :text="block.reasoning" :over="over" />
+                      </n-collapse-item>
+                    </n-collapse>
+                  </div>
+                  <MarkdownRenderer
+                    v-if="!block.toolCalls || block.toolCalls.length === 0"
+                    :text="block.text"
+                    :over="over"
+                    v-model:ready="rendered"
                   />
-                </n-flex>
-              </div>
-              <div v-if="reasoning" class="reasoning-container">
-                <n-collapse
-                  arrow-placement="right"
-                  display-directive="show"
-                  v-model:expanded-names="thinkingPanelExpandedNames"
-                >
-                  <n-collapse-item title="Thinking" name="thinking">
+                  <template v-else>
                     <MarkdownRenderer
-                      :text="reasoning"
+                      :text="block.text"
                       :over="over"
                       v-model:ready="rendered"
                     />
-                  </n-collapse-item>
-                </n-collapse>
-              </div>
-              <MarkdownRenderer
-                v-if="!hasToolCalls"
-                :text="props.text"
-                :over="over"
-                v-model:ready="rendered"
-                @update:ready="onReadyStatusChange"
-              />
+                    <div v-for="(call, idx) in block.toolCalls" :key="call.id || idx" class="tool-call-container" :class="call.result?.isError ? 'error' : ''">
+                      <n-collapse arrow-placement="right" display-directive="show">
+                        <n-collapse-item :name="`toolcall-${blockIdx}-${idx}`">
+                          <template #header>
+                            <n-flex align="center" :wrap="false" style="flex: 1;">
+                              <n-icon :component="Toolbox24Regular" />
+                              <n-tag size="small" :type="call.result?.isError ? 'error' : 'success'">{{ call.name }}</n-tag>
+                              <n-tag size="tiny" :type="call.result?.isError ? 'error' : 'info'" round>{{ call.result?.isError ? 'Error' : 'OK' }}</n-tag>
+                            </n-flex>
+                          </template>
+                          <div class="tool-call-result">
+                            <pre>{{ formatToolResult(call) }}</pre>
+                          </div>
+                        </n-collapse-item>
+                      </n-collapse>
+                    </div>
+                  </template>
+                </div>
+              </template>
               <template v-else>
+                <div v-if="images && images.length > 0" class="images-container">
+                  <n-flex :wrap="true" size="small">
+                    <n-image
+                      v-for="(image, idx) in images"
+                      :key="idx"
+                      :src="image.image_url.url"
+                      class="message-image"
+                      :preview-src="image.image_url.url"
+                    />
+                  </n-flex>
+                </div>
+                <div v-if="reasoning" class="reasoning-container">
+                  <n-collapse
+                    arrow-placement="right"
+                    display-directive="show"
+                    v-model:expanded-names="thinkingPanelExpandedNames"
+                  >
+                    <n-collapse-item title="Thinking" name="thinking">
+                      <MarkdownRenderer
+                        :text="reasoning"
+                        :over="over"
+                        v-model:ready="rendered"
+                      />
+                    </n-collapse-item>
+                  </n-collapse>
+                </div>
                 <MarkdownRenderer
+                  v-if="!hasToolCalls && !isToolMessage"
                   :text="props.text"
                   :over="over"
                   v-model:ready="rendered"
                   @update:ready="onReadyStatusChange"
                 />
-                <template v-for="(call, idx) in props.toolCalls" :key="call.id || idx">
-                  <div class="tool-call-container" :class="call.result?.isError ? 'error' : ''">
-                    <n-collapse
-                      arrow-placement="right"
-                      v-model:expanded-names="toolCallExpandedNames"
-                      display-directive="show"
-                    >
-                      <n-collapse-item :name="`toolcall-${idx}`">
-                        <template #header>
-                          <n-flex align="center" :wrap="false" style="flex: 1;">
-                            <n-icon :component="Toolbox24Regular" />
-                            <n-tag size="small" :type="call.result?.isError ? 'error' : 'success'">
-                              {{ call.name }}
-                            </n-tag>
-                            <n-tag size="tiny" :type="call.result?.isError ? 'error' : 'info'" round>
-                              {{ call.result?.isError ? 'Error' : 'OK' }}
-                            </n-tag>
-                            <span class="tool-call-hint">
-                              {{ toolCallExpandedNames.includes(`toolcall-${idx}`) ? '点击收起' : '点击展开查看结果' }}
-                            </span>
-                          </n-flex>
-                        </template>
-                        <div class="tool-call-result">
-                          <pre>{{ formatToolResult(call) }}</pre>
-                        </div>
-                      </n-collapse-item>
-                    </n-collapse>
-                  </div>
+                <div v-else-if="isToolMessage" class="tool-call-container">
+                  <n-collapse
+                    arrow-placement="right"
+                    :expanded-names="['tool-result']"
+                    display-directive="show"
+                  >
+                    <n-collapse-item name="tool-result">
+                      <template #header>
+                        <n-flex align="center" :wrap="false" style="flex: 1;">
+                          <n-icon :component="Toolbox24Regular" />
+                          <n-tag size="small" type="info">
+                            Tool Result
+                          </n-tag>
+                        </n-flex>
+                      </template>
+                      <div class="tool-call-result">
+                        <pre>{{ props.text }}</pre>
+                      </div>
+                    </n-collapse-item>
+                  </n-collapse>
+                </div>
+                <template v-else>
+                  <MarkdownRenderer
+                    :text="props.text"
+                    :over="over"
+                    v-model:ready="rendered"
+                    @update:ready="onReadyStatusChange"
+                  />
+                  <template v-for="(call, idx) in props.toolCalls" :key="call.id || idx">
+                    <div class="tool-call-container" :class="call.result?.isError ? 'error' : ''">
+                      <n-collapse
+                        arrow-placement="right"
+                        v-model:expanded-names="toolCallExpandedNames"
+                        display-directive="show"
+                      >
+                        <n-collapse-item :name="`toolcall-${idx}`">
+                          <template #header>
+                            <n-flex align="center" :wrap="false" style="flex: 1;">
+                              <n-icon :component="Toolbox24Regular" />
+                              <n-tag size="small" :type="call.result?.isError ? 'error' : 'success'">
+                                {{ call.name }}
+                              </n-tag>
+                              <n-tag size="tiny" :type="call.result?.isError ? 'error' : 'info'" round>
+                                {{ call.result?.isError ? 'Error' : 'OK' }}
+                              </n-tag>
+                              <span class="tool-call-hint">
+                                {{ toolCallExpandedNames.includes(`toolcall-${idx}`) ? '点击收起' : '点击展开查看结果' }}
+                              </span>
+                            </n-flex>
+                          </template>
+                          <div class="tool-call-result">
+                            <pre>{{ formatToolResult(call) }}</pre>
+                          </div>
+                        </n-collapse-item>
+                      </n-collapse>
+                    </div>
+                  </template>
                 </template>
               </template>
             </div>
@@ -562,5 +653,11 @@ const formatToolResult = (call: ToolCallItem): string => {
   width: fit-content;
   font-family: monospace;
   color: v-bind("theme.textColorBase");
+}
+
+.group-block-divider {
+  padding-bottom: 8px;
+  margin-bottom: 8px;
+  border-bottom: 1px solid v-bind("theme.borderColor");
 }
 </style>

@@ -12,16 +12,19 @@ mod mcp_http;
 mod image;
 mod conversation;
 use tauri::{Builder, Manager};
+
 use db::chat::Chat;
 use cache::DiagramCache;
 use key_manager::KeyManager;
 use configs::ConfigManager;
 use mcp::commands::McpConfigManager;
+use mcp::types::TransportConfig;
 use mcp_stdio::McpStdioManager;
 use mcp_http::McpHttpManager;
 use std::sync::Mutex;
 mod types;
 use types::AppData;
+
 
 #[cfg(target_os = "macos")]
 use window_vibrancy::{apply_vibrancy, NSVisualEffectMaterial};
@@ -42,6 +45,10 @@ pub fn run() {
 			// set all fields of AppData to default values if they are None
 			config_manager.save().expect("Failed to save config");
 
+			let servers = mcp_config_manager.get_all_servers();
+			let stdio_manager = std::sync::Arc::clone(&mcp_stdio_manager);
+			let http_manager = std::sync::Arc::clone(&mcp_http_manager);
+
 			app.manage(Mutex::new(AppData {
 				chat: Chat::new(app.handle())?,
 				diagram_cache: DiagramCache::new()?,
@@ -50,13 +57,33 @@ pub fn run() {
 				mcp_config_manager,
 				mcp_stdio_manager,
 				mcp_http_manager,
+				global_mcp_tool_state: crate::types::GlobalMcpToolState::default(),
 			}));
+
+			{
+				let state = app.state::<Mutex<AppData>>();
+				let state = state.lock().unwrap();
+				state.mcp_stdio_manager.set_app_handle(app.handle().clone());
+				state.mcp_http_manager.set_app_handle(app.handle().clone());
+			}
+
+			tauri::async_runtime::spawn(async move {
+				for server in servers {
+					let _ = match &server.transport {
+						TransportConfig::Stdio { .. } => {
+							stdio_manager.connect_server(&server).await
+						}
+						TransportConfig::Sse { .. } | TransportConfig::Http { .. } => {
+							http_manager.connect_server(&server).await
+						}
+					};
+				}
+			});
 			Ok(())
 		})
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
-            commands::ask_openai_stream,
             // commands::get_cached_render,
             commands::hash_content,
             commands::put_cached_diagram,
@@ -106,6 +133,10 @@ pub fn run() {
 			mcp::mcp_load_session,
 			mcp::mcp_delete_session,
 			mcp::mcp_list_sessions,
+			mcp::mcp_refresh_global_tool_state,
+			mcp::mcp_list_global_tools,
+			mcp::mcp_set_global_enabled_tools,
+			mcp::mcp_set_server_enabled,
 			// Image commands
 			image::compress_image,
 			image::get_image_info,
@@ -125,6 +156,10 @@ pub fn run() {
 			mcp_http::mcp_http_list_tools,
 			mcp_http::mcp_http_call_tool,
 			mcp_http::mcp_http_is_connected,
+			conversation::commands::conversation_send_message,
+			conversation::commands::conversation_regenerate_message,
+			conversation::commands::conversation_derive_message,
+			conversation::commands::conversation_edit_and_regenerate,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

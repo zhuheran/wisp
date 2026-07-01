@@ -13,7 +13,6 @@ use async_openai::types::{
 };
 
 use crate::db::types::{Message, MessageRole};
-
 use super::types::{ConversationToolCall, ConversationToolContent};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -133,7 +132,7 @@ fn convert_assistant_message(
         )
     };
 
-    let content = if message.text.is_empty() && openai_tool_calls.is_some() {
+    let content = if openai_tool_calls.is_some() {
         None
     } else {
         Some(ChatCompletionRequestAssistantMessageContent::Text(
@@ -205,7 +204,7 @@ mod tests {
         let assistant_tool_calls = serde_json::json!([
             {
                 "id": "call_1",
-                "name": "server:search",
+                "name": "mcp__search",
                 "arguments": { "query": "rust tauri" },
                 "result": {
                     "content": [{ "type": "text", "text": "result text" }],
@@ -229,7 +228,7 @@ mod tests {
                 assert!(msg.content.is_none());
                 let calls = msg.tool_calls.as_ref().expect("tool calls present");
                 assert_eq!(calls[0].id, "call_1");
-                assert_eq!(calls[0].function.name, "server:search");
+                assert_eq!(calls[0].function.name, "mcp__search");
                 assert_eq!(calls[0].function.arguments, r#"{"query":"rust tauri"}"#);
             }
             other => panic!("expected assistant, got {other:?}"),

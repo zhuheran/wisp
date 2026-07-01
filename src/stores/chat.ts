@@ -1,13 +1,12 @@
 import { defineStore } from 'pinia'
 import { ref, watch, type ComputedRef, computed, reactive, inject } from 'vue'
-import type { Message, Conversation, Provider, ToolCallItem, ImageContent } from '../libs/types'
+import { listen } from '@tauri-apps/api/event'
+import type { Message, Conversation, Provider, ToolCallItem, ImageContent, ConversationStreamChunkEvent } from '../libs/types'
 import * as Commands from '../libs/commands'
 import MessageThreadTree from '../libs/message-thread-tree'
 import { MessageRole } from '../libs/types';
-import debounce from "lodash/debounce";
-import { useOpenAI } from '../composables/useOpenAI'
 import { useCharacterStore } from './character'
-import { useMcpStore } from './mcp'
+import { listenConversationEvents } from '../composables/useConversationEvents'
 
 type MessageDisplay = {
 		id: string
@@ -24,40 +23,9 @@ type MessageDisplay = {
 		toolCalls: ComputedRef<ToolCallItem[]>,
 }
 
-// ===== 上下文管理配置 =====
-// 估算 token 数：4 字符约等于 1 token（粗略，对中英文混合场景偏保守）
-const estimateTokens = (text: string): number => Math.ceil((text?.length ?? 0) / 4);
-const estimateMessageTokens = (msg: { text?: string; reasoning?: string; images?: any[] }): number => {
-	let total = estimateTokens(msg.text ?? '') + estimateTokens(msg.reasoning ?? '');
-	// 图片固定按 85 token 估算（与 engine/conversation-loop.ts 默认值一致）
-	if (msg.images && msg.images.length > 0) total += msg.images.length * 85;
-	return total;
-};
 
-// 上下文管理：当历史消息总 token 超过阈值时，从最早的非系统消息开始截断，
-// 保留最近的消息直到总 token 降到目标值以下。系统提示由 useOpenAI 在调用时注入，不在此处处理。
-const CONTEXT_MAX_TOKENS = 120000;       // 触发截断的阈值
-const CONTEXT_TARGET_TOKENS = 84000;     // 截断后保留的目标 token 数（约 70%）
-const CONTEXT_MIN_KEEP_MESSAGES = 4;     // 至少保留最近 4 条消息，避免过度截断
 
-// 对消息列表应用滑动窗口截断，返回截断后的消息
-const applyContextWindow = <T extends { text?: string; reasoning?: string; images?: any[]; sender?: MessageRole }>(
-	messages: T[],
-): T[] => {
-	if (messages.length === 0) return messages;
-	let totalTokens = messages.reduce((sum, m) => sum + estimateMessageTokens(m), 0);
-	if (totalTokens <= CONTEXT_MAX_TOKENS) return messages;
 
-	const result = [...messages];
-	// 从头部开始移除，直到总 token 降到目标值以下或仅剩最小保留数
-	while (result.length > CONTEXT_MIN_KEEP_MESSAGES && totalTokens > CONTEXT_TARGET_TOKENS) {
-		const removed = result.shift();
-		if (!removed) break;
-		totalTokens -= estimateMessageTokens(removed);
-	}
-	console.log(`[ChatStore] Context window applied: ${messages.length} -> ${result.length} messages, ~${totalTokens} tokens`);
-	return result;
-};
 
 export const useChatStore = defineStore('chat', () => {
 	const userInput = ref('')
@@ -76,349 +44,378 @@ export const useChatStore = defineStore('chat', () => {
 	const messages = ref<Map<string, Message>>(new Map())
 
 	const threadTreeDecisions = ref<number[]>([])
-
-	const { streamResponse, isStreaming } = useOpenAI()
-
+	const isStreaming = ref(false)
 
 	type SendMessageCallbacks = {
 		beforeSend: (botMessageId: string) => void;
 		onReceiving: (chunk: string, isReasoning: boolean) => void;
 		onFinish: (text: string, reasoning?: string) => void | Promise<void>;
 	}
-	// 工具调用最大轮数，防止 AI 反复调用工具导致无限递归
-	const MAX_TOOL_ROUNDS = 10;
-	const sendMessage = async (message: Omit<Message, 'id'>, { beforeSend, onReceiving, onFinish }: Partial<SendMessageCallbacks> = {}, parentMessageId = lastMessageId.value ?? undefined, toolRound = 0): Promise<void> => {
-		// For continuation rounds (toolRound > 0), the tool result is already stored as a tool message.
-		// Skip creating a new user message - just create the bot message and stream.
-		const userMessageId = toolRound > 0
-			? parentMessageId!
-			: await addMessage(message, parentMessageId, true);
 
-		const botMessage: Omit<Message, "id"> = {
-			text: "",
-			sender: MessageRole.Assistant,
-			timestamp: Math.round(new Date().getTime() / 1000),
-			toolCalls: [],
-		};
-		const botMessageId = await addMessage(botMessage, userMessageId, true);
+	const handleIncomingMessageCreated = (message: Message, parentId?: string | null, focus = false) => {
+		messages.value.set(message.id, message)
+		threadTree.addNode(message.id, parentId ?? undefined)
+		if (!parentId) rootMessageId.value = message.id
+		threadTreeDecisions.value = getDefaultThreadTreeDecisions(rootMessageId.value!, threadTreeDecisions.value)
+		if (focus) focusMessage(message.id)
+	}
 
-		const updateMessageLocal = (text: string, isReasoning: boolean, toolCalls?: ToolCallItem[]) => {
-			const msg = messages.value.get(botMessageId);
-			if (msg) {
-				const updates: Partial<Message> = { text };
-				if (isReasoning) updates.reasoning = text;
-				if (toolCalls) updates.toolCalls = toolCalls;
-				messages.value.set(botMessageId, { ...msg, ...updates });
-			}
-		};
-		const updateBubbleText = debounce(updateMessageLocal, 10);
-		if (beforeSend) beforeSend(botMessageId)
-
-		let responseText = "";
-		let reasoningText = "";
-
-		// Build messages: convert tool sender to user role for AI API
-		const buildMessages = () => {
-			const built = displayedMessages.value.map((msg) => {
-				const role = (msg.sender === "user" || msg.sender === "tool") ? "user" : "assistant"
-				if (msg.images && msg.images.length > 0) {
-					const content: any[] = [{ type: "text", text: msg.text }]
-					msg.images.forEach((img: any) => {
-						content.push({ type: "image_url", image_url: img.image_url })
-					})
-					return { role, content, text: msg.text, images: msg.images }
+	const createConversationFailureTracker = () => {
+		let failedError: Error | null = null
+		return {
+			handleEvent: (event: { type: string; error?: string }) => {
+				if (event.type === 'failed') {
+					failedError = new Error(event.error || 'Conversation failed')
+					console.error('[Chat] Rust conversation failed:', failedError.message)
 				}
-				return { role, content: msg.text, text: msg.text }
-			})
-			const truncated = applyContextWindow(built)
-			return truncated.map(({ role, content }) => ({ role, content }))
+			},
+			throwIfFailed: () => {
+				if (failedError) throw failedError
+			}
 		}
+	}
+
+	const sendMessage = async (message: Omit<Message, 'id'>, { beforeSend, onReceiving, onFinish }: Partial<SendMessageCallbacks> = {}, parentMessageId = lastMessageId.value ?? undefined, toolRound = 0): Promise<void> => {
+		if (toolRound > 0) {
+			throw new Error('Rust-backed sendMessage does not support frontend continuation rounds')
+		}
+		const conversationId = currentConversationId.value
+		if (!conversationId) throw new Error('No conversation selected')
+		if (!chosenModel.value || !chosenProvider.value) throw new Error('Model or provider not selected')
+
+		isStreaming.value = true
+		let latestAssistantText = ''
+		let latestAssistantReasoning = ''
+		const failureTracker = createConversationFailureTracker()
+
+		const unlistenConversation = await listenConversationEvents((event) => {
+			if (event.type === 'message_created') {
+				handleIncomingMessageCreated(event.message, event.parent_id, false)
+				if (event.message.sender === MessageRole.Assistant) {
+					if (beforeSend) beforeSend(event.message.id)
+				}
+			}
+			else if (event.type === 'message_updated') {
+				const original = messages.value.get(event.message_id)
+				if (original) {
+					const toolCalls = event.tool_calls ? JSON.parse(event.tool_calls) as ToolCallItem[] : original.toolCalls
+					messages.value.set(event.message_id, {
+						...original,
+						text: event.text,
+						reasoning: event.reasoning ?? original.reasoning,
+						toolCalls,
+					})
+				}
+			}
+			else if (event.type === 'failed') {
+				failureTracker.handleEvent(event)
+			}
+		})
+		const unlistenContent = await listen<ConversationStreamChunkEvent>('conversation_stream_chunk', (event) => {
+			const mid = event.payload.message_id
+			const chunk = event.payload.chunk
+			if (mid) {
+				const original = messages.value.get(mid)
+				if (original) {
+					latestAssistantText += chunk
+					messages.value.set(mid, { ...original, text: latestAssistantText })
+				}
+			}
+			if (onReceiving) onReceiving(chunk, false)
+		})
+		const unlistenReasoning = await listen<ConversationStreamChunkEvent>('conversation_stream_reasoning', (event) => {
+			const mid = event.payload.message_id
+			const chunk = event.payload.chunk
+			if (mid) {
+				const original = messages.value.get(mid)
+				if (original) {
+					latestAssistantReasoning += chunk
+					messages.value.set(mid, { ...original, reasoning: latestAssistantReasoning })
+				}
+			}
+			if (onReceiving) onReceiving(chunk, true)
+		})
 
 		try {
-			await streamResponse(
-				buildMessages(),
-				chosenModel.value!,
-				chosenProvider.value!,
-				(chunk) => {
-					responseText += chunk;
-					updateBubbleText(responseText, false);
-					if (onReceiving) onReceiving(chunk, false)
-				},
-				(chunk) => {
-					reasoningText += chunk;
-					updateBubbleText(reasoningText, true);
-					if (onReceiving) onReceiving(chunk, true)
-				},
-				async () => {
-					const mcpStore = useMcpStore()
-					const { calls, cleanText } = mcpStore.parseToolCallFromResponse(responseText)
-
-					responseText = cleanText
-					updateBubbleText.cancel()
-					updateMessage(botMessageId, responseText, reasoningText)
-
-					if (calls.length > 0) {
-						if (toolRound >= MAX_TOOL_ROUNDS) {
-							console.warn('[Chat] Max tool rounds reached, stopping')
-							if (onFinish) onFinish(responseText, reasoningText || undefined);
-							return
-						}
-
-						try {
-							const completedCalls: ToolCallItem[] = []
-							for (const call of calls) {
-								const completed = await mcpStore.executeToolStructured(call)
-								completedCalls.push(completed)
-							}
-
-							// Store toolCalls on the bot message
-							const toolCallsJson = JSON.stringify(completedCalls)
-							const existingMsg = messages.value.get(botMessageId)
-							if (existingMsg) {
-								messages.value.set(botMessageId, {
-									...existingMsg,
-									text: responseText,
-									toolCalls: completedCalls,
-								})
-							}
-							Commands.updateMessage(botMessageId, responseText, reasoningText, toolCallsJson)
-
-							// Create a tool result message (visible as separate bubble)
-							const resultParts = completedCalls.map(tc => {
-								const content = tc.result?.content
-									?.map(c => c.type === 'text' ? c.text : '[Image]')
-									.filter(Boolean)
-									.join('\n') || ''
-								return `[Tool Result: ${tc.name}]\n${content}`
-							})
-							const toolResultText = resultParts.join('\n\n---\n\n')
-
-							await addMessage({
-								text: toolResultText,
-								sender: MessageRole.Tool,
-								timestamp: Math.round(new Date().getTime() / 1000),
-							}, botMessageId, true)
-
-							// Continue with next round
-							// The tool result is in displayedMessages (as tool role),
-							// buildMessages converts it to role: 'user' for the AI.
-							// Use toolRound+1 to skip user message creation.
-							await sendMessage({
-								text: '',
-								sender: MessageRole.User,
-								timestamp: Math.round(new Date().getTime() / 1000),
-							}, { beforeSend, onReceiving, onFinish }, botMessageId, toolRound + 1)
-						} catch (e) {
-							console.error('[Chat] Tool execution failed:', e)
-							const errorCalls = calls.map(c => ({
-								...c,
-								result: { content: [{ type: 'text' as const, text: String(e) }], isError: true }
-							}))
-							const toolCallsJson = JSON.stringify(errorCalls)
-							const existingMsg = messages.value.get(botMessageId)
-							if (existingMsg) {
-								messages.value.set(botMessageId, {
-									...existingMsg,
-									text: responseText,
-									toolCalls: errorCalls,
-								})
-							}
-							Commands.updateMessage(botMessageId, responseText, reasoningText, toolCallsJson)
-
-							await addMessage({
-								text: `[Tool Result: ${calls[0].name}]\nError: ${e}`,
-								sender: MessageRole.Tool,
-								timestamp: Math.round(new Date().getTime() / 1000),
-							}, botMessageId, true)
-
-							await sendMessage({
-								text: '',
-								sender: MessageRole.User,
-								timestamp: Math.round(new Date().getTime() / 1000),
-							}, { beforeSend, onReceiving, onFinish }, botMessageId, toolRound + 1)
-						}
-						return
-					}
-
-					if (onFinish) onFinish(responseText, reasoningText || undefined);
-				},
-				true,
-				false,
-				currentCharacter.value,
-				enabledMcpTools.value,
-			);
+			await Commands.conversationSendMessage({
+				conversation_id: conversationId,
+				parent_message_id: parentMessageId ?? null,
+				text: message.text,
+				images: message.images,
+				model: chosenModel.value,
+				provider: chosenProvider.value,
+				parameters: currentCharacter.value?.parameters?.reduce((acc, param) => {
+					acc[param.name] = param.value
+					return acc
+				}, {} as Record<string, unknown>) ?? null,
+				character: currentCharacter.value,
+				enabled_mcp_tools: Array.from(enabledMcpTools.value),
+			})
+			failureTracker.throwIfFailed()
+			if (onFinish) await onFinish(latestAssistantText, latestAssistantReasoning || undefined)
 		}
 		catch (e) {
-			console.error('[Chat] streamResponse error:', e)
+			console.error('[Chat] conversationSendMessage error:', e)
 			return Promise.reject(e)
+		}
+		finally {
+			await unlistenConversation()
+			await unlistenContent()
+			await unlistenReasoning()
+			isStreaming.value = false
 		}
 	}
 
 	const regenerateMessage = async (messageId: string, { beforeSend, onReceiving, onFinish }: Partial<SendMessageCallbacks>, insertGuidance = false, toolRound = 0): Promise<void> => {
-		const parentId = threadTree.getParentId(messageId)
-		if (!parentId) return Promise.reject("Cannot regenerate the root message");
+		if (toolRound > 0) {
+			throw new Error('Rust-backed regenerateMessage does not support frontend continuation rounds')
+		}
+		if (!currentConversationId.value) throw new Error('No conversation selected')
+		if (!chosenModel.value || !chosenProvider.value) throw new Error('Model or provider not selected')
 
-		const botMessage: Omit<Message, "id"> = {
-			text: "",
-			reasoning: "",
-			sender: MessageRole.Assistant,
-			timestamp: Math.round(new Date().getTime() / 1000),
-			toolCalls: [],
-		};
-		const botMessageId = await addMessage(botMessage, parentId, true);
+		isStreaming.value = true
+		let latestAssistantText = ''
+		let latestAssistantReasoning = ''
+		const failureTracker = createConversationFailureTracker()
 
-		const updateMessageLocal = (text: string, isReasoning: boolean, toolCalls?: ToolCallItem[]) => {
-			const message = messages.value.get(botMessageId);
-			if (message) {
-				const updates: Partial<Message> = { text };
-				if (isReasoning) updates.reasoning = text;
-				if (toolCalls) updates.toolCalls = toolCalls;
-				messages.value.set(botMessageId, { ...message, ...updates });
+		const unlistenConversation = await listenConversationEvents((event) => {
+			if (event.type === 'message_created') {
+				handleIncomingMessageCreated(event.message, event.parent_id, event.message.sender === MessageRole.Assistant)
+				if (event.message.sender === MessageRole.Assistant) {
+					if (beforeSend) beforeSend(event.message.id)
+				}
 			}
-		};
-		const updateBubbleText = debounce(updateMessageLocal, 10);
-		if (beforeSend) beforeSend(botMessageId)
-
-		let responseText = "";
-		let reasoningText = "";
-
-		const buildMessages = () => displayedMessages.value.map((msg) => {
-			const role = (msg.sender === "user" || msg.sender === "tool") ? "user" : "assistant"
-			if (msg.images && msg.images.length > 0) {
-				const content: any[] = [{ type: "text", text: msg.text }]
-				msg.images.forEach((img: any) => {
-					content.push({ type: "image_url", image_url: img.image_url })
-				})
-				return { role, content, text: msg.text, images: msg.images }
+			else if (event.type === 'message_updated') {
+				const original = messages.value.get(event.message_id)
+				if (original) {
+					const toolCalls = event.tool_calls ? JSON.parse(event.tool_calls) as ToolCallItem[] : original.toolCalls
+					messages.value.set(event.message_id, {
+						...original,
+						text: event.text,
+						reasoning: event.reasoning ?? original.reasoning,
+						toolCalls,
+					})
+				}
 			}
-			return { role, content: msg.text, text: msg.text }
+		})
+		const unlistenContent = await listen<ConversationStreamChunkEvent>('conversation_stream_chunk', (event) => {
+			const mid = event.payload.message_id
+			const chunk = event.payload.chunk
+			if (mid) {
+				const original = messages.value.get(mid)
+				if (original) {
+					latestAssistantText += chunk
+					messages.value.set(mid, { ...original, text: latestAssistantText })
+				}
+			}
+			if (onReceiving) onReceiving(chunk, false)
+		})
+		const unlistenReasoning = await listen<ConversationStreamChunkEvent>('conversation_stream_reasoning', (event) => {
+			const mid = event.payload.message_id
+			const chunk = event.payload.chunk
+			if (mid) {
+				const original = messages.value.get(mid)
+				if (original) {
+					latestAssistantReasoning += chunk
+					messages.value.set(mid, { ...original, reasoning: latestAssistantReasoning })
+				}
+			}
+			if (onReceiving) onReceiving(chunk, true)
 		})
 
 		try {
-			await streamResponse(
-				buildMessages(),
-				chosenModel.value!,
-				chosenProvider.value!,
-				(chunk) => {
-					responseText += chunk;
-					updateBubbleText(responseText, false);
-					if (onReceiving) onReceiving(chunk, false)
-				},
-				(chunk) => {
-					reasoningText += chunk;
-					updateBubbleText(reasoningText, true);
-					if (onReceiving) onReceiving(chunk, true)
-				},
-				async () => {
-					const mcpStore = useMcpStore()
-					const { calls, cleanText } = mcpStore.parseToolCallFromResponse(responseText)
-
-					responseText = cleanText
-					updateBubbleText.cancel()
-					updateMessage(botMessageId, responseText, reasoningText)
-
-					if (calls.length > 0) {
-						if (toolRound >= MAX_TOOL_ROUNDS) {
-							console.warn('[Chat] Max tool rounds reached (regenerate)')
-							if (onFinish) onFinish(responseText, reasoningText || undefined);
-							return
-						}
-
-						try {
-							const completedCalls: ToolCallItem[] = []
-							for (const call of calls) {
-								const completed = await mcpStore.executeToolStructured(call)
-								completedCalls.push(completed)
-							}
-
-							const toolCallsJson = JSON.stringify(completedCalls)
-							const existingMsg = messages.value.get(botMessageId)
-							if (existingMsg) {
-								messages.value.set(botMessageId, {
-									...existingMsg,
-									text: responseText,
-									toolCalls: completedCalls,
-								})
-							}
-							Commands.updateMessage(botMessageId, responseText, reasoningText, toolCallsJson)
-
-							const resultParts = completedCalls.map(tc => {
-								const content = tc.result?.content
-									?.map(c => c.type === 'text' ? c.text : '[Image]')
-									.filter(Boolean)
-									.join('\n') || ''
-								return `[Tool Result: ${tc.name}]\n${content}`
-							})
-							const toolResultText = resultParts.join('\n\n---\n\n')
-
-							await addMessage({
-								text: toolResultText,
-								sender: MessageRole.Tool,
-								timestamp: Math.round(new Date().getTime() / 1000),
-							}, botMessageId, true)
-
-							await sendMessage({
-								text: '',
-								sender: MessageRole.User,
-								timestamp: Math.round(new Date().getTime() / 1000),
-							}, { beforeSend, onReceiving, onFinish }, botMessageId, toolRound + 1)
-						} catch (e) {
-							console.error('[Chat] Tool execution failed (regenerate):', e)
-							const errorCalls = calls.map(c => ({
-								...c,
-								result: { content: [{ type: 'text' as const, text: String(e) }], isError: true }
-							}))
-							const toolCallsJson = JSON.stringify(errorCalls)
-							const existingMsg = messages.value.get(botMessageId)
-							if (existingMsg) {
-								messages.value.set(botMessageId, {
-									...existingMsg,
-									text: responseText,
-									toolCalls: errorCalls,
-								})
-							}
-							Commands.updateMessage(botMessageId, responseText, reasoningText, toolCallsJson)
-
-							await addMessage({
-								text: `[Tool Result: ${calls[0].name}]\nError: ${e}`,
-								sender: MessageRole.Tool,
-								timestamp: Math.round(new Date().getTime() / 1000),
-							}, botMessageId, true)
-
-							await sendMessage({
-								text: '',
-								sender: MessageRole.User,
-								timestamp: Math.round(new Date().getTime() / 1000),
-							}, { beforeSend, onReceiving, onFinish }, botMessageId, toolRound + 1)
-						}
-						return
-					}
-
-					if (onFinish) onFinish(responseText, reasoningText || undefined);
-				},
-				true,
-				insertGuidance,
-				currentCharacter.value,
-				enabledMcpTools.value,
-			);
+			await Commands.conversationRegenerateMessage({
+				conversation_id: currentConversationId.value,
+				message_id: messageId,
+				insert_guidance: insertGuidance,
+				model: chosenModel.value,
+				provider: chosenProvider.value,
+				parameters: currentCharacter.value?.parameters?.reduce((acc, param) => {
+					acc[param.name] = param.value
+					return acc
+				}, {} as Record<string, unknown>) ?? null,
+				character: currentCharacter.value,
+				enabled_mcp_tools: Array.from(enabledMcpTools.value),
+			})
+			failureTracker.throwIfFailed()
+			if (onFinish) await onFinish(latestAssistantText, latestAssistantReasoning || undefined)
 		}
 		catch (e) {
-			console.error('[Chat] regenerate streamResponse error:', e)
+			console.error('[Chat] conversationRegenerateMessage error:', e)
 			return Promise.reject(e)
+		}
+		finally {
+			await unlistenConversation()
+			await unlistenContent()
+			await unlistenReasoning()
+			isStreaming.value = false
 		}
 	}
 
-	const deriveMessage = async (replacedMessageId: string, text: string, { beforeSend, onReceiving }: Partial<SendMessageCallbacks>) => {
-		const message: Omit<Message, 'id'> = {
-			text,
-			sender: MessageRole.User,
-			timestamp: Date.now(),
+	const deriveMessage = async (replacedMessageId: string, text: string, { beforeSend, onReceiving, onFinish }: Partial<SendMessageCallbacks>) => {
+		if (!currentConversationId.value) return Promise.reject('No conversation selected')
+		if (!chosenModel.value || !chosenProvider.value) return Promise.reject('Model or provider not selected')
+
+		isStreaming.value = true
+		let latestAssistantText = ''
+		let latestAssistantReasoning = ''
+		const failureTracker = createConversationFailureTracker()
+
+		const unlistenConversation = await listenConversationEvents((event) => {
+			if (event.type === 'message_created') {
+				handleIncomingMessageCreated(event.message, event.parent_id, true)
+				if (event.message.sender === MessageRole.Assistant) {
+					if (beforeSend) beforeSend(event.message.id)
+				}
+			}
+			else if (event.type === 'message_updated') {
+				const original = messages.value.get(event.message_id)
+				if (original) {
+					const toolCalls = event.tool_calls ? JSON.parse(event.tool_calls) as ToolCallItem[] : original.toolCalls
+					messages.value.set(event.message_id, {
+						...original,
+						text: event.text,
+						reasoning: event.reasoning ?? original.reasoning,
+						toolCalls,
+					})
+				}
+			}
+		})
+		const unlistenContent = await listen<ConversationStreamChunkEvent>('conversation_stream_chunk', (event) => {
+			const mid = event.payload.message_id
+			const chunk = event.payload.chunk
+			if (mid) {
+				const original = messages.value.get(mid)
+				if (original) {
+					latestAssistantText += chunk
+					messages.value.set(mid, { ...original, text: latestAssistantText })
+				}
+			}
+			if (onReceiving) onReceiving(chunk, false)
+		})
+		const unlistenReasoning = await listen<ConversationStreamChunkEvent>('conversation_stream_reasoning', (event) => {
+			const mid = event.payload.message_id
+			const chunk = event.payload.chunk
+			if (mid) {
+				const original = messages.value.get(mid)
+				if (original) {
+					latestAssistantReasoning += chunk
+					messages.value.set(mid, { ...original, reasoning: latestAssistantReasoning })
+				}
+			}
+			if (onReceiving) onReceiving(chunk, true)
+		})
+
+		try {
+			await Commands.conversationDeriveMessage({
+				conversation_id: currentConversationId.value,
+				replaced_message_id: replacedMessageId,
+				text,
+				model: chosenModel.value,
+				provider: chosenProvider.value,
+				parameters: currentCharacter.value?.parameters?.reduce((acc, param) => {
+					acc[param.name] = param.value
+					return acc
+				}, {} as Record<string, unknown>) ?? null,
+				character: currentCharacter.value,
+				enabled_mcp_tools: Array.from(enabledMcpTools.value),
+			})
+			failureTracker.throwIfFailed()
+			if (onFinish) await onFinish(latestAssistantText, latestAssistantReasoning || undefined)
 		}
+		catch (e) {
+			console.error('[Chat] conversationDeriveMessage error:', e)
+			return Promise.reject(e)
+		}
+		finally {
+			await unlistenConversation()
+			await unlistenContent()
+			await unlistenReasoning()
+			isStreaming.value = false
+		}
+	}
 
-		const parent = threadTree.getParentId(replacedMessageId)
-		if (!parent) return Promise.reject("Root message cannot be derived")
+	const editAndRegenerateMessage = async (messageId: string, text: string, { beforeSend, onReceiving, onFinish }: Partial<SendMessageCallbacks>) => {
+		if (!currentConversationId.value) return Promise.reject('No conversation selected')
+		if (!chosenModel.value || !chosenProvider.value) return Promise.reject('Model or provider not selected')
 
-		sendMessage(message, { beforeSend, onReceiving }, parent)
+		isStreaming.value = true
+		let latestAssistantText = ''
+		let latestAssistantReasoning = ''
+		const failureTracker = createConversationFailureTracker()
+
+		const unlistenConversation = await listenConversationEvents((event) => {
+			if (event.type === 'message_created') {
+				handleIncomingMessageCreated(event.message, event.parent_id, event.message.sender === MessageRole.Assistant)
+				if (event.message.sender === MessageRole.Assistant) {
+					if (beforeSend) beforeSend(event.message.id)
+				}
+			}
+			else if (event.type === 'message_updated') {
+				const original = messages.value.get(event.message_id)
+				if (original) {
+					const toolCalls = event.tool_calls ? JSON.parse(event.tool_calls) as ToolCallItem[] : original.toolCalls
+					messages.value.set(event.message_id, {
+						...original,
+						text: event.text,
+						reasoning: event.reasoning ?? original.reasoning,
+						toolCalls,
+					})
+				}
+			}
+		})
+		const unlistenContent = await listen<ConversationStreamChunkEvent>('conversation_stream_chunk', (event) => {
+			const mid = event.payload.message_id
+			const chunk = event.payload.chunk
+			if (mid) {
+				const original = messages.value.get(mid)
+				if (original) {
+					latestAssistantText += chunk
+					messages.value.set(mid, { ...original, text: latestAssistantText })
+				}
+			}
+			if (onReceiving) onReceiving(chunk, false)
+		})
+		const unlistenReasoning = await listen<ConversationStreamChunkEvent>('conversation_stream_reasoning', (event) => {
+			const mid = event.payload.message_id
+			const chunk = event.payload.chunk
+			if (mid) {
+				const original = messages.value.get(mid)
+				if (original) {
+					latestAssistantReasoning += chunk
+					messages.value.set(mid, { ...original, reasoning: latestAssistantReasoning })
+				}
+			}
+			if (onReceiving) onReceiving(chunk, true)
+		})
+
+		try {
+			await Commands.conversationEditAndRegenerate({
+				conversation_id: currentConversationId.value,
+				replaced_message_id: messageId,
+				text,
+				model: chosenModel.value,
+				provider: chosenProvider.value,
+				parameters: currentCharacter.value?.parameters?.reduce((acc, param) => {
+					acc[param.name] = param.value
+					return acc
+				}, {} as Record<string, unknown>) ?? null,
+				character: currentCharacter.value,
+				enabled_mcp_tools: Array.from(enabledMcpTools.value),
+			})
+			failureTracker.throwIfFailed()
+			if (onFinish) await onFinish(latestAssistantText, latestAssistantReasoning || undefined)
+		}
+		catch (e) {
+			console.error('[Chat] conversationEditAndRegenerate error:', e)
+			return Promise.reject(e)
+		}
+		finally {
+			await unlistenConversation()
+			await unlistenContent()
+			await unlistenReasoning()
+			isStreaming.value = false
+		}
 	}
 
 	const getDefaultThreadTreeDecisions = (root: string, prev: number[] = []) => {
@@ -504,6 +501,9 @@ export const useChatStore = defineStore('chat', () => {
 
 		const messagesLocal: MessageDisplay[] = []
 		for (const message of getDisplayedMessageListIds(fullDecisions, rootMessageId.value)) {
+			const sourceMessage = messages.value.get(message.id)
+			if (sourceMessage?.sender === MessageRole.Tool) continue
+
 			const displayMessage = getNode(message.id, message.hasNext, message.hasPrev)
 			if (displayMessage) messagesLocal.push(displayMessage)
 		}
@@ -546,21 +546,26 @@ export const useChatStore = defineStore('chat', () => {
 	}
 
 	const loadMessages = async (conversationId: string) => {
-		return new Promise<void>((resolve, reject) => {
-			Commands.getAllMessageInvolved(conversationId).then((storedMessages) => {
-				if (storedMessages.length > 0) {
-					displayedMessages.value = []
-					messages.value.clear();
-					storedMessages.forEach((m) => messages.value.set(m.id, m))
-				}
-				console.log("[ChatStore] Messages loaded successfully.", { conversationId })
-				resolve()
-			}).catch((err) => {
-				console.error('[ChatStore] Failed to load messages:', err, { conversationId })
-				reject(err)
-			})
-		})
-	}
+				return new Promise<void>((resolve, reject) => {
+					Commands.getAllMessageInvolved(conversationId).then((storedMessages) => {
+						if (storedMessages.length > 0) {
+							displayedMessages.value = []
+							messages.value.clear();
+							storedMessages.forEach((m) => {
+								const msg = m as Record<string, unknown>
+								const toolCallsStr = (msg as any).tool_calls as string | undefined
+								const toolCalls: ToolCallItem[] | undefined = toolCallsStr ? JSON.parse(toolCallsStr) : undefined
+								messages.value.set(m.id, { ...m, toolCalls })
+							})
+						}
+						console.log("[ChatStore] Messages loaded successfully.", { conversationId })
+						resolve()
+					}).catch((err) => {
+						console.error('[ChatStore] Failed to load messages:', err, { conversationId })
+						reject(err)
+					})
+				})
+			}
 
 	const loadConversation = async (conversationId: string) => {
 		try {
@@ -763,6 +768,7 @@ export const useChatStore = defineStore('chat', () => {
 		sendMessage,
 		regenerateMessage,
 		deriveMessage,
+		editAndRegenerateMessage,
 		loadMessages,
 		addMessage,
 		getMessage,

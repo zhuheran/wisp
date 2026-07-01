@@ -184,6 +184,7 @@ mod tests {
             name: "server:tool".to_string(),
             arguments: serde_json::json!({"q":"x"}),
             result: None,
+            qualified_name: None,
         };
 
         let completed = attach_raw_result(

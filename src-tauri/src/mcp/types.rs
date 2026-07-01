@@ -76,7 +76,7 @@ pub struct NormalizedTool {
     pub server_id: String,
     pub qualified_name: String,
     pub description: Option<String>,
-    pub input_schema: InputSchema,
+    pub input_schema: serde_json::Value,
     pub annotations: Option<ToolAnnotations>,
 }
 
@@ -246,7 +246,6 @@ fn default_compression_threshold() -> usize {
 fn default_max_payload() -> usize {
     20 * 1024 * 1024
 }
-
 fn default_jpeg_quality() -> u8 {
     80
 }
@@ -274,7 +273,6 @@ fn default_mime_whitelist() -> Vec<String> {
 fn default_enable_compression() -> bool {
     true
 }
-
 impl Default for PipelineConfig {
     fn default() -> Self {
         Self {

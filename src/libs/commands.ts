@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { Message, Conversation, Provider, Model, Character } from "./types";
+import { Message, Conversation, Provider, Model, Character, ConversationSendRequest, ConversationRegenerateRequest, ConversationDeriveRequest } from "./types";
 
 export async function hashContent(content: string) {
 	return invoke<string>('hash_content', { content })
@@ -52,6 +52,22 @@ export async function deleteConversation(conversationId: string) {
 
 export async function listConversations() {
 	return invoke<Conversation[]>('list_conversations', {})
+}
+
+export async function conversationSendMessage(request: ConversationSendRequest) {
+	return invoke<string>('conversation_send_message', { request })
+}
+
+export async function conversationRegenerateMessage(request: ConversationRegenerateRequest) {
+	return invoke<string>('conversation_regenerate_message', { request })
+}
+
+export async function conversationDeriveMessage(request: ConversationDeriveRequest) {
+	return invoke<string>('conversation_derive_message', { request })
+}
+
+export async function conversationEditAndRegenerate(request: ConversationDeriveRequest) {
+	return invoke<string>('conversation_edit_and_regenerate', { request })
 }
 
 export interface DiagramCacheEntry {
@@ -227,6 +243,31 @@ export async function mcpDeleteSession(sessionId: string) {
 
 export async function mcpListSessions() {
     return invoke<SessionState[]>('mcp_list_sessions', {})
+}
+
+export interface GlobalUiToolEntry {
+    qualified_name: string;
+    model_name: string;
+    server_id: string;
+    name: string;
+    description?: string;
+    enabled: boolean;
+}
+
+export async function mcpRefreshGlobalToolState() {
+    return invoke<void>('mcp_refresh_global_tool_state', {})
+}
+
+export async function mcpListGlobalTools() {
+    return invoke<GlobalUiToolEntry[]>('mcp_list_global_tools', {})
+}
+
+export async function mcpSetGlobalEnabledTools(qualifiedNames: string[]) {
+    return invoke<void>('mcp_set_global_enabled_tools', { qualifiedNames })
+}
+
+export async function mcpSetServerEnabled(serverId: string, enabled: boolean) {
+    return invoke<void>('mcp_set_server_enabled', { serverId, enabled })
 }
 
 // MCP stdio commands

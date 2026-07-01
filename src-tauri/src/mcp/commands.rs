@@ -1,6 +1,6 @@
 use super::types::*;
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -235,6 +235,188 @@ pub async fn mcp_delete_session(app_handle: AppHandle, session_id: String) -> Re
         fs::remove_file(session_path).map_err(|e| e.to_string())?;
     }
 
+    Ok(())
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct UiToolEntry {
+    pub qualified_name: String,
+    pub model_name: String,
+    pub server_id: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub enabled: bool,
+}
+
+fn sanitize_tool_name_part(value: &str) -> String {
+    value
+        .chars()
+        .map(|ch| if ch.is_ascii_alphanumeric() { ch.to_ascii_lowercase() } else { '_' })
+        .collect::<String>()
+        .trim_matches('_')
+        .to_string()
+}
+
+fn encode_tool_name_for_model(tool_name: &str, duplicate_index: Option<usize>) -> String {
+    let base = format!("mcp__{}", sanitize_tool_name_part(tool_name));
+    match duplicate_index {
+        Some(index) => format!("{}__{}", base, index),
+        None => base,
+    }
+}
+
+fn rebuild_global_tool_state(state: &mut AppData, tools: Vec<NormalizedTool>) {
+    let mut model_name_map = HashMap::new();
+    let mut enabled_tools = state.global_mcp_tool_state.enabled_tools.clone();
+    enabled_tools.retain(|qualified_name| tools.iter().any(|tool| &tool.qualified_name == qualified_name));
+
+    let mut grouped: HashMap<String, Vec<&NormalizedTool>> = HashMap::new();
+    for tool in &tools {
+        grouped.entry(tool.name.clone()).or_default().push(tool);
+    }
+
+    for group in grouped.values() {
+        for (index, tool) in group.iter().enumerate() {
+            let model_name = encode_tool_name_for_model(
+                &tool.name,
+                if group.len() > 1 { Some(index + 1) } else { None },
+            );
+            model_name_map.insert(model_name, tool.qualified_name.clone());
+        }
+    }
+
+    state.global_mcp_tool_state.available_tools = tools;
+    state.global_mcp_tool_state.enabled_tools = enabled_tools;
+    state.global_mcp_tool_state.model_name_map = model_name_map;
+}
+
+#[tauri::command]
+pub async fn mcp_refresh_global_tool_state(app_handle: AppHandle) -> Result<(), String> {
+    let (servers, stdio_manager, http_manager) = {
+        let state = app_handle.state::<Mutex<AppData>>();
+        let state = state.lock().map_err(|e| e.to_string())?;
+        (
+            state.mcp_config_manager.get_all_servers(),
+            std::sync::Arc::clone(&state.mcp_stdio_manager),
+            std::sync::Arc::clone(&state.mcp_http_manager),
+        )
+    };
+
+    let stdio_statuses = stdio_manager.get_all_statuses().await;
+    let http_statuses = http_manager.get_all_statuses().await;
+    let mut connected = HashSet::new();
+    for status in stdio_statuses.into_iter().chain(http_statuses.into_iter()) {
+        if status.connected {
+            connected.insert(status.server_id);
+        }
+    }
+
+    let mut normalized_tools = Vec::new();
+    for server in servers.into_iter().filter(|server| connected.contains(&server.id)) {
+        let raw = match server.transport {
+            TransportConfig::Stdio { .. } => stdio_manager
+                .list_tools(&server.id, None)
+                .await
+                .map_err(|e| e.to_string())?,
+            TransportConfig::Sse { .. } | TransportConfig::Http { .. } => http_manager
+                .list_tools(&server.id, None)
+                .await
+                .map_err(|e| e.to_string())?,
+        };
+
+        let tools = raw
+            .get("tools")
+            .and_then(|value| value.as_array())
+            .cloned()
+            .unwrap_or_default();
+
+        for tool in tools {
+            let name = tool.get("name").and_then(|value| value.as_str()).ok_or_else(|| "Tool missing name".to_string())?;
+            normalized_tools.push(NormalizedTool {
+                name: name.to_string(),
+                server_id: server.id.clone(),
+                qualified_name: format!("{}:{}", server.id, name),
+                description: tool.get("description").and_then(|value| value.as_str()).map(ToString::to_string),
+                input_schema: tool.get("inputSchema").cloned().unwrap_or_else(|| serde_json::json!({ "type": "object", "properties": {} })),
+                annotations: tool.get("annotations").cloned().map(serde_json::from_value).transpose().map_err(|e| e.to_string())?,
+            });
+        }
+    }
+
+    let state = app_handle.state::<Mutex<AppData>>();
+    let mut state = state.lock().map_err(|e| e.to_string())?;
+    rebuild_global_tool_state(&mut state, normalized_tools);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn mcp_list_global_tools(app_handle: AppHandle) -> Result<Vec<UiToolEntry>, String> {
+    let state = app_handle.state::<Mutex<AppData>>();
+    let state = state.lock().map_err(|e| e.to_string())?;
+
+    let mut entries = state
+        .global_mcp_tool_state
+        .available_tools
+        .iter()
+        .map(|tool| {
+            let model_name = state
+                .global_mcp_tool_state
+                .model_name_map
+                .iter()
+                .find(|(_, qualified_name)| *qualified_name == &tool.qualified_name)
+                .map(|(model_name, _)| model_name.clone())
+                .unwrap_or_else(|| tool.name.clone());
+            UiToolEntry {
+                qualified_name: tool.qualified_name.clone(),
+                model_name,
+                server_id: tool.server_id.clone(),
+                name: tool.name.clone(),
+                description: tool.description.clone(),
+                enabled: state.global_mcp_tool_state.enabled_tools.contains(&tool.qualified_name),
+            }
+        })
+        .collect::<Vec<_>>();
+    entries.sort_by(|a, b| a.qualified_name.cmp(&b.qualified_name));
+    Ok(entries)
+}
+
+#[tauri::command]
+pub async fn mcp_set_global_enabled_tools(app_handle: AppHandle, qualified_names: Vec<String>) -> Result<(), String> {
+    let state = app_handle.state::<Mutex<AppData>>();
+    let mut state = state.lock().map_err(|e| e.to_string())?;
+    let available = state
+        .global_mcp_tool_state
+        .available_tools
+        .iter()
+        .map(|tool| tool.qualified_name.clone())
+        .collect::<HashSet<_>>();
+    state.global_mcp_tool_state.enabled_tools = qualified_names
+        .into_iter()
+        .filter(|qualified_name| available.contains(qualified_name))
+        .collect();
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn mcp_set_server_enabled(app_handle: AppHandle, server_id: String, enabled: bool) -> Result<(), String> {
+    let state = app_handle.state::<Mutex<AppData>>();
+    let mut state = state.lock().map_err(|e| e.to_string())?;
+    let matching = state
+        .global_mcp_tool_state
+        .available_tools
+        .iter()
+        .filter(|tool| tool.server_id == server_id)
+        .map(|tool| tool.qualified_name.clone())
+        .collect::<Vec<_>>();
+    if enabled {
+        for qualified_name in matching {
+            state.global_mcp_tool_state.enabled_tools.insert(qualified_name);
+        }
+    } else {
+        for qualified_name in matching {
+            state.global_mcp_tool_state.enabled_tools.remove(&qualified_name);
+        }
+    }
     Ok(())
 }
 

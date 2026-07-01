@@ -71,6 +71,7 @@ const transportKindOptions = [
 ]
 
 const isStdio = computed(() => formValue.value?.transport.kind === 'stdio')
+// @ts-expect-error unused but kept for template reference
 const isSse = computed(() => formValue.value?.transport.kind === 'sse')
 const isHttp = computed(() => formValue.value?.transport.kind === 'http')
 
@@ -161,7 +162,7 @@ const handleDeleteServer = async () => {
   const confirmed = await new Promise<boolean>((resolve) => {
     dialog.warning({
       title: 'Delete Server',
-      content: `Delete MCP server "${server.value.name}"? This cannot be undone.`,
+      content: `Delete MCP server "${server.value!.name}"? This cannot be undone.`,
       positiveText: 'Confirm',
       negativeText: 'Cancel',
       onPositiveClick: () => resolve(true),

@@ -3,13 +3,17 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use serde_json::Value;
 use anyhow::Result;
+use tauri::{AppHandle, Emitter};
 
 use super::client::McpStdioClient;
 use super::super::mcp::types::{ServerConfig, ConnectionStatus};
+use super::super::types::McpConnectionStatusEvent;
+
 
 pub struct McpStdioManager {
     clients: Arc<Mutex<HashMap<String, McpStdioClient>>>,
     statuses: Arc<Mutex<HashMap<String, ConnectionStatus>>>,
+    app_handle: Arc<std::sync::Mutex<Option<AppHandle>>>,
 }
 
 impl McpStdioManager {
@@ -17,10 +21,14 @@ impl McpStdioManager {
         Self {
             clients: Arc::new(Mutex::new(HashMap::new())),
             statuses: Arc::new(Mutex::new(HashMap::new())),
+            app_handle: Arc::new(std::sync::Mutex::new(None)),
         }
     }
+pub fn set_app_handle(&self, handle: AppHandle) {
+    *self.app_handle.lock().unwrap() = Some(handle);
+}
 
-    pub async fn connect_server(&self, config: &ServerConfig) -> Result<()> {
+pub async fn connect_server(&self, config: &ServerConfig) -> Result<()> {
         // 检查是否已连接
         {
             let clients = self.clients.lock().await;
@@ -38,18 +46,55 @@ impl McpStdioManager {
             error: None,
         }).await;
 
+        self.emit_status(McpConnectionStatusEvent {
+            server_id: config.id.clone(),
+            connected: false,
+            last_ping_at: None,
+            reconnect_attempts: 0,
+            error: None,
+            transport_kind: "stdio".to_string(),
+            source: "connecting".to_string(),
+        }).await;
+
         // 根据传输类型创建客户端
         match &config.transport {
             super::super::mcp::types::TransportConfig::Stdio { command, args, env: _, cwd: _ } => {
                 let args = args.clone();
-                let mut client = McpStdioClient::spawn(
+                let connect_result = McpStdioClient::spawn(
                     config.id.clone(),
                     command,
                     &args,
-                ).await?;
+                ).await;
+
+                let mut client = match connect_result {
+                    Ok(client) => client,
+                    Err(e) => {
+                        self.emit_status(McpConnectionStatusEvent {
+                            server_id: config.id.clone(),
+                            connected: false,
+                            last_ping_at: None,
+                            reconnect_attempts: 0,
+                            error: Some(e.to_string()),
+                            transport_kind: "stdio".to_string(),
+                            source: "connect_failed".to_string(),
+                        }).await;
+                        return Err(e);
+                    }
+                };
 
                 // 初始化 MCP 连接
-                let _init_result = client.initialize().await?;
+                if let Err(e) = client.initialize().await {
+                    self.emit_status(McpConnectionStatusEvent {
+                        server_id: config.id.clone(),
+                        connected: false,
+                        last_ping_at: None,
+                        reconnect_attempts: 0,
+                        error: Some(e.to_string()),
+                        transport_kind: "stdio".to_string(),
+                        source: "connect_failed".to_string(),
+                    }).await;
+                    return Err(e);
+                }
                 println!("[McpStdioManager] Server {} initialized", config.id);
 
                 // 保存客户端
@@ -68,6 +113,19 @@ impl McpStdioManager {
                         .as_secs()),
                     reconnect_attempts: 0,
                     error: None,
+                }).await;
+
+                self.emit_status(McpConnectionStatusEvent {
+                    server_id: config.id.clone(),
+                    connected: true,
+                    last_ping_at: Some(std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs()),
+                    reconnect_attempts: 0,
+                    error: None,
+                    transport_kind: "stdio".to_string(),
+                    source: "connected".to_string(),
                 }).await;
 
                 Ok(())
@@ -90,6 +148,16 @@ impl McpStdioManager {
             last_ping_at: None,
             reconnect_attempts: 0,
             error: None,
+        }).await;
+
+        self.emit_status(McpConnectionStatusEvent {
+            server_id: server_id.to_string(),
+            connected: false,
+            last_ping_at: None,
+            reconnect_attempts: 0,
+            error: None,
+            transport_kind: "stdio".to_string(),
+            source: "disconnected".to_string(),
         }).await;
 
         Ok(())
@@ -124,6 +192,12 @@ impl McpStdioManager {
     pub async fn get_all_statuses(&self) -> Vec<ConnectionStatus> {
         let statuses = self.statuses.lock().await;
         statuses.values().cloned().collect()
+    }
+
+    async fn emit_status(&self, event: McpConnectionStatusEvent) {
+        if let Some(handle) = self.app_handle.lock().unwrap().as_ref() {
+            let _ = handle.emit("mcp_status_updated", event);
+        }
     }
 
     async fn update_status(&self, server_id: &str, status: ConnectionStatus) {

@@ -155,10 +155,6 @@ const showContextMenu = async (e: MouseEvent, provider: Provider) => {
 .provider-list {
   flex-grow: 1;
   overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-
-  padding: 8px;
   box-sizing: border-box;
 }
 

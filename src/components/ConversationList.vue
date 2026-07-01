@@ -154,12 +154,8 @@ const showContextMenu = async (e: MouseEvent, conversation: any) => {
 .conversation-list {
   flex-grow: 1;
   height: 100%;
-  padding: 8px;
   box-sizing: border-box;
   overflow: auto;
-  display: flex;
-  flex-direction: column;
-  flex-wrap: nowrap;
 
   min-width: 0;
   min-height: 0;

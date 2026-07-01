@@ -23,6 +23,7 @@ import { useCharacterStore } from "../stores/character";
 import MessageBubbleEditor from "./MessageBubbleEditor.vue";
 import { useChatStore } from "../stores/chat";
 import { useMcpStore } from "../stores/mcp";
+import { errorMessage } from "../utils/error";
 
 const theme = useThemeVars();
 const notificationMessage = useMessage();
@@ -35,6 +36,32 @@ const characterStore = inject("CharacterStore") as ReturnType<
   typeof useCharacterStore
 >;
 const mcpStore = useMcpStore();
+
+interface MessageGroup {
+  type: 'single' | 'group'
+  messages: typeof chatStore.displayedMessage
+}
+
+const messageGroups = computed<MessageGroup[]>(() => {
+  const groups: MessageGroup[] = []
+  let currentGroup: typeof chatStore.displayedMessage = []
+
+  for (const msg of chatStore.displayedMessage) {
+    if (msg.sender === MessageRole.User) {
+      if (currentGroup.length > 0) {
+        groups.push({ type: 'group', messages: currentGroup })
+        currentGroup = []
+      }
+      groups.push({ type: 'single', messages: [msg] })
+    } else {
+      currentGroup.push(msg)
+    }
+  }
+  if (currentGroup.length > 0) {
+    groups.push({ type: 'group', messages: currentGroup })
+  }
+  return groups
+})
 
 const providerOptions = computed<SelectOption[]>(() =>
   providerStore.providers.map((p) => ({
@@ -52,7 +79,7 @@ const characterOptions = computed<SelectOption[]>(() =>
   )
 );
 
-// MCP Server Selection (instead of individual tools)
+// MCP Server Selection (global Rust-owned tool state)
 const mcpConnectedServers = computed(() => {
   return mcpStore.servers.filter(server => {
     const status = mcpStore.getConnectionStatus(server.id)
@@ -60,34 +87,17 @@ const mcpConnectedServers = computed(() => {
   })
 })
 
-const mcpEnabledServers = ref<Set<string>>(new Set())
+const mcpEnabledServerCount = computed(() => {
+  return mcpConnectedServers.value.filter(server => isMcpServerEnabled(server.id)).length
+})
 
-const toggleMcpServer = (serverId: string) => {
-  if (mcpEnabledServers.value.has(serverId)) {
-    mcpEnabledServers.value.delete(serverId)
-  } else {
-    mcpEnabledServers.value.add(serverId)
-  }
-  chatStore.enabledMcpServers = new Set(mcpEnabledServers.value)
-  
-  // Update enabled tools based on selected servers
-  const enabledTools = new Set<string>()
-  for (const serverId of mcpEnabledServers.value) {
-    const serverTools = mcpStore.tools.filter(t => t.serverId === serverId)
-    for (const tool of serverTools) {
-      enabledTools.add(tool.qualifiedName)
-    }
-  }
-  chatStore.enabledMcpTools = enabledTools
+const toggleMcpServer = async (serverId: string) => {
+  await mcpStore.setServerEnabled(serverId, !isMcpServerEnabled(serverId))
 }
 
 const isMcpServerEnabled = (serverId: string) => {
-  return mcpEnabledServers.value.has(serverId)
+  return mcpStore.tools.some((tool: any) => tool.serverId === serverId && tool.enabled === true)
 }
-
-watch(() => chatStore.enabledMcpServers, (newServers) => {
-  mcpEnabledServers.value = new Set(newServers)
-}, { deep: true })
 
 const modelOptions = computed<SelectOption[]>(
   () =>
@@ -99,17 +109,52 @@ const modelOptions = computed<SelectOption[]>(
       })) || []
 );
 
-const chosenProviderId = ref<string | null>(null);
+const LAST_PROVIDER_KEY = 'wisp_last_provider_id';
+const LAST_MODEL_KEY = 'wisp_last_model';
+
+const chosenProviderId = ref<string | null>(localStorage.getItem(LAST_PROVIDER_KEY));
+
 watch(chosenProviderId, (newId) => {
   if (newId) {
+    localStorage.setItem(LAST_PROVIDER_KEY, newId);
     chatStore.chosenProvider =
       providerStore.providers.find((p) => p.name === newId) ?? null;
   } else {
+    localStorage.removeItem(LAST_PROVIDER_KEY);
     chatStore.chosenProvider = null;
   }
 });
 
+// Persist model changes to localStorage (character auto-select excluded by intention)
+watch(() => chatStore.chosenModel, (newModel) => {
+  if (newModel) {
+    localStorage.setItem(LAST_MODEL_KEY, newModel);
+  } else {
+    localStorage.removeItem(LAST_MODEL_KEY);
+  }
+});
+
 const chosenCharacterId = ref<string | null>(null);
+
+// Restore saved provider & model once providers finish loading
+watch(() => providerStore.providers.length, () => {
+  if (
+    chosenProviderId.value &&
+    !chatStore.chosenProvider
+  ) {
+    const provider = providerStore.providers.find(
+      (p) => p.name === chosenProviderId.value
+    );
+    if (provider) {
+      chatStore.chosenProvider = provider;
+
+      const savedModel = localStorage.getItem(LAST_MODEL_KEY);
+      if (savedModel) {
+        chatStore.chosenModel = savedModel;
+      }
+    }
+  }
+}, { immediate: true });
 watch(chosenCharacterId, (newId) => {
   characterStore.selectCharacter(newId);
   if (newId) {
@@ -163,7 +208,10 @@ const sendMessage = () => {
         setTimeout(() => autoScrollWrapper.value?.scrollToBottom(false), 1000);
       },
     })
-    .catch((e) => notificationMessage.error(e));
+    .catch((e) => {
+      notificationMessage.error(errorMessage(e))
+      console.error(e)
+    });
 };
 
 const regenerateMessage = (messageId: string, insertGuidance = false) => {
@@ -187,7 +235,7 @@ const regenerateMessage = (messageId: string, insertGuidance = false) => {
       },
       insertGuidance
     )
-    .catch((e) => notificationMessage.error(e));
+    .catch((e) => notificationMessage.error(errorMessage(e)));
 };
 
 const resendMessage = (messageId: string, text: string, derive: boolean) => {
@@ -202,10 +250,18 @@ const resendMessage = (messageId: string, text: string, derive: boolean) => {
       },
     });
   } else {
-    (async () => {
-      await chatStore.updateMessage(messageId, text);
-      regenerateMessage(messageId);
-    })();
+    chatStore.editAndRegenerateMessage(messageId, text, {
+      beforeSend: () => {
+        chatStore.clearUserInput();
+        autoScrollWrapper.value?.scrollToBottom(false);
+      },
+      onReceiving: () => {
+        autoScrollWrapper.value?.scrollToBottom();
+      },
+      onFinish: () => {
+        setTimeout(() => autoScrollWrapper.value?.scrollToBottom(false), 1000);
+      },
+    });
   }
 };
 
@@ -273,32 +329,49 @@ onMounted(() => {
           :smooth="true"
         >
           <div class="bubble-container">
-            <message-bubble
-              v-for="(message, index) in chatStore.displayedMessage"
-              :key="message.id"
-              :text="message.text"
-              :reasoning="message.reasoning"
-              :sender="message.sender"
-              :timestamp="new Date(message.timestamp * 1000)"
-              :id="message.id"
-              :toolCalls="message.toolCalls"
-              :over="
-                !(
-                  index === chatStore.displayedMessage.length - 1 &&
-                  chatStore.isStreaming
-                )
-              "
-              :index="index"
-              :hasPrevious="message.hasPrevious"
-              :hasNext="message.hasNext"
-              :culling="useBubbleCulling"
-              :images="message.images"
-              @previous="() => navigateToSibling(message.id, -1)"
-              @next="() => navigateToSibling(message.id, 1)"
-              @edit="() => showEditor(message.id)"
-              @regenerate="() => regenerateMessage(message.id, true)"
-              @ready="() => (bubbleReadyCount += 1)"
-            />
+            <template v-for="group in messageGroups" :key="group.messages[0].id">
+              <message-bubble
+                v-if="group.type === 'single'"
+                :text="group.messages[0].text"
+                :reasoning="group.messages[0].reasoning"
+                :sender="group.messages[0].sender"
+                :timestamp="new Date(group.messages[0].timestamp * 1000)"
+                :id="group.messages[0].id"
+                :toolCalls="group.messages[0].toolCalls"
+                :over="!(chatStore.displayedMessage.indexOf(group.messages[0]) === chatStore.displayedMessage.length - 1 && chatStore.isStreaming)"
+                :index="chatStore.displayedMessage.indexOf(group.messages[0])"
+                :hasPrevious="group.messages[0].hasPrevious"
+                :hasNext="group.messages[0].hasNext"
+                :culling="useBubbleCulling"
+                :images="group.messages[0].images"
+                @previous="() => navigateToSibling(group.messages[0].id, -1)"
+                @next="() => navigateToSibling(group.messages[0].id, 1)"
+                @edit="() => showEditor(group.messages[0].id)"
+                @regenerate="() => regenerateMessage(group.messages[0].id, true)"
+                @ready="() => (bubbleReadyCount += 1)"
+              />
+              <message-bubble
+                v-else
+                :text="group.messages[0].text"
+                :reasoning="group.messages[0].reasoning"
+                :sender="group.messages[0].sender"
+                :timestamp="new Date(group.messages[0].timestamp * 1000)"
+                :id="group.messages[0].id"
+                :toolCalls="group.messages[0].toolCalls"
+                :over="!(chatStore.displayedMessage.indexOf(group.messages[group.messages.length - 1]) === chatStore.displayedMessage.length - 1 && chatStore.isStreaming)"
+                :index="chatStore.displayedMessage.indexOf(group.messages[0])"
+                :hasPrevious="group.messages[0].hasPrevious"
+                :hasNext="group.messages[0].hasNext"
+                :culling="useBubbleCulling"
+                :images="group.messages[0].images"
+                :groupMessages="group.messages.map(m => ({ text: m.text, reasoning: m.reasoning, toolCalls: m.toolCalls, images: m.images }))"
+                @previous="() => navigateToSibling(group.messages[0].id, -1)"
+                @next="() => navigateToSibling(group.messages[0].id, 1)"
+                @edit="() => showEditor(group.messages[0].id)"
+                @regenerate="() => regenerateMessage(group.messages[0].id, true)"
+                @ready="() => (bubbleReadyCount += 1)"
+              />
+            </template>
           </div>
         </auto-scroll-wrapper>
         <div v-else class="placeholder-container">
@@ -356,12 +429,12 @@ onMounted(() => {
                 <template #trigger>
                   <n-button
                     size="small"
-                    :type="mcpEnabledServers.size > 0 ? 'success' : 'default'"
+                    :type="mcpEnabledServerCount > 0 ? 'success' : 'default'"
                   >
                     <template #icon>
                       <n-icon><Toolbox24Regular /></n-icon>
                     </template>
-                    MCP ({{ mcpEnabledServers.size }}/{{ mcpConnectedServers.length }})
+                    MCP ({{ mcpEnabledServerCount }}/{{ mcpConnectedServers.length }})
                   </n-button>
                 </template>
                 <div class="mcp-server-selector">

@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
+import { ref, computed, onBeforeUnmount } from 'vue'
 import type {
   ServerConfig,
   PipelineConfig,
@@ -22,21 +22,24 @@ import {
   mcpLoadSession,
   mcpDeleteSession,
   mcpListSessions,
+  mcpRefreshGlobalToolState,
+  mcpListGlobalTools,
+  mcpSetGlobalEnabledTools,
+  mcpSetServerEnabled,
   mcpStdioConnect,
   mcpStdioDisconnect,
-  mcpStdioGetStatus,
-  mcpStdioGetAllStatuses,
   mcpStdioListTools,
   mcpStdioCallTool,
+  mcpStdioGetAllStatuses,
   mcpHttpConnect,
   mcpHttpDisconnect,
-  mcpHttpGetStatus,
-  mcpHttpGetAllStatuses,
   mcpHttpListTools,
   mcpHttpCallTool,
+  mcpHttpGetAllStatuses,
 } from '../libs/commands'
 import { transformPayload, type PayloadItem, DEFAULT_PIPELINE_CONFIG } from '../pipeline'
 import type { ToolCallContent } from '../libs/types'
+import { listen } from '@tauri-apps/api/event'
 
 export const useMcpStore = defineStore('mcp', () => {
   const servers = ref<ServerConfig[]>([])
@@ -59,6 +62,17 @@ export const useMcpStore = defineStore('mcp', () => {
 
   const isAnyConnected = computed(() => connectedServerIds.value.length > 0)
 
+  const applyStatusEvent = (event: { server_id: string; connected: boolean; error?: string | null; last_ping_at?: number | null; reconnect_attempts: number }) => {
+    const status: ConnectionStatus = {
+      serverId: event.server_id,
+      connected: event.connected,
+      error: event.error ?? undefined,
+      lastPingAt: event.last_ping_at ?? undefined,
+      reconnectAttempts: event.reconnect_attempts,
+    }
+    connectionStatuses.value.set(event.server_id, status)
+  }
+
   const connectServer = async (serverId: string) => {
     const server = servers.value.find(s => s.id === serverId)
     if (!server) {
@@ -67,25 +81,10 @@ export const useMcpStore = defineStore('mcp', () => {
 
     if (server.transport.kind === 'stdio') {
       await mcpStdioConnect(server)
-      const status = await mcpStdioGetStatus(serverId)
-      if (status) {
-        connectionStatuses.value.set(serverId, status)
-      }
       await refreshToolsFromBackend(serverId, 'stdio')
-    } else if (server.transport.kind === 'sse') {
+    } else if (server.transport.kind === 'sse' || server.transport.kind === 'http') {
       await mcpHttpConnect(server)
-      const status = await mcpHttpGetStatus(serverId)
-      if (status) {
-        connectionStatuses.value.set(serverId, status)
-      }
-      await refreshToolsFromBackend(serverId, 'sse')
-    } else if (server.transport.kind === 'http') {
-      await mcpHttpConnect(server)
-      const status = await mcpHttpGetStatus(serverId)
-      if (status) {
-        connectionStatuses.value.set(serverId, status)
-      }
-      await refreshToolsFromBackend(serverId, 'http')
+      await refreshToolsFromBackend(serverId, server.transport.kind)
     } else {
       const _exhaustiveCheck: never = server.transport
       throw new Error(`Transport type ${(_exhaustiveCheck as { kind: string }).kind} is not yet supported`)
@@ -101,7 +100,6 @@ export const useMcpStore = defineStore('mcp', () => {
     } else if (server.transport.kind === 'sse' || server.transport.kind === 'http') {
       await mcpHttpDisconnect(serverId)
     }
-    connectionStatuses.value.delete(serverId)
     tools.value = tools.value.filter(t => t.serverId !== serverId)
   }
 
@@ -119,7 +117,6 @@ export const useMcpStore = defineStore('mcp', () => {
           console.error(`Failed to connect to ${server.id}:`, e)
         }
       }
-      await refreshAllStatuses()
       await refreshAllTools()
     } finally {
       isLoading.value = false
@@ -151,8 +148,15 @@ export const useMcpStore = defineStore('mcp', () => {
     try {
       const stdioStatuses = await mcpStdioGetAllStatuses()
       const httpStatuses = await mcpHttpGetAllStatuses()
-      connectionStatuses.value.clear()
-      for (const status of [...stdioStatuses, ...httpStatuses]) {
+      for (const raw of [...stdioStatuses, ...httpStatuses]) {
+        const r = raw as Record<string, unknown>
+        const status: ConnectionStatus = {
+          serverId: r.server_id as string,
+          connected: r.connected as boolean,
+          error: r.error as string | undefined,
+          lastPingAt: r.last_ping_at as number | undefined,
+          reconnectAttempts: r.reconnect_attempts as number,
+        }
         connectionStatuses.value.set(status.serverId, status)
       }
     } catch (e) {
@@ -160,35 +164,33 @@ export const useMcpStore = defineStore('mcp', () => {
     }
   }
 
-  const refreshToolsFromBackend = async (serverId: string, transportKind: 'stdio' | 'sse' | 'http') => {
-    try {
-      let result: unknown
-      if (transportKind === 'stdio') {
-        result = await mcpStdioListTools(serverId)
-      } else {
-        result = await mcpHttpListTools(serverId)
-      }
-      const toolsData = (result as any).tools || []
-      const normalizedTools: NormalizedTool[] = toolsData.map((tool: any) => ({
-        name: tool.name,
-        serverId,
-        qualifiedName: `${serverId}:${tool.name}`,
-        description: tool.description,
-        inputSchema: tool.inputSchema || { type: 'object', properties: {} },
-        annotations: tool.annotations,
-      }))
-      tools.value = tools.value.filter(t => t.serverId !== serverId).concat(normalizedTools)
-    } catch (e) {
-      console.error(`Failed to refresh tools for ${serverId}:`, e)
+  onBeforeUnmount(async () => {
+    if (unlistenMcpStatus) {
+      const dispose = unlistenMcpStatus
+      unlistenMcpStatus = null
+      await dispose()
     }
+  })
+
+  const refreshToolsFromBackend = async (_serverId: string, _transportKind: 'stdio' | 'sse' | 'http') => {
+    await refreshAllTools()
   }
 
   const refreshAllTools = async () => {
-    for (const server of servers.value) {
-      if (connectedServerIds.value.includes(server.id)) {
-        const transportKind = server.transport.kind as 'stdio' | 'sse' | 'http'
-        await refreshToolsFromBackend(server.id, transportKind)
-      }
+    try {
+      await mcpRefreshGlobalToolState()
+      const entries = await mcpListGlobalTools()
+      tools.value = entries.map((tool) => ({
+        name: tool.name,
+        serverId: tool.server_id,
+        qualifiedName: tool.qualified_name,
+        description: tool.description,
+        inputSchema: { type: 'object', properties: {} },
+        annotations: undefined,
+        enabled: tool.enabled,
+      } as NormalizedTool & { enabled: boolean }))
+    } catch (e) {
+      console.error('Failed to refresh global tools:', e)
     }
   }
 
@@ -197,7 +199,7 @@ export const useMcpStore = defineStore('mcp', () => {
     if (!serverId || !toolName) {
       throw new Error(`Invalid tool name: ${qualifiedName}`)
     }
-    
+
     const server = servers.value.find(s => s.id === serverId)
     if (!server) {
       throw new Error(`Server ${serverId} not found`)
@@ -258,23 +260,23 @@ export const useMcpStore = defineStore('mcp', () => {
       if (!item || typeof item !== 'object') continue
 
       const itemObj = item as Record<string, unknown>
-      
+
       if (itemObj.type === 'text') {
         const text = String(itemObj.text || '')
         const base64Match = text.match(/data:([^;]+);base64,([A-Za-z0-9+/=]+)/)
-        
+
         if (base64Match) {
           const mimeType = base64Match[1]
           const base64Data = base64Match[2]
           const sizeBytes = Math.ceil(base64Data.length * 3 / 4)
-          
+
           if (sizeBytes > 100 * 1024) {
             const payloadItem: PayloadItem = {
               type: 'image',
               data: base64Data,
               mimeType,
             }
-            
+
             try {
               const transformed = await transformPayload(payloadItem, config)
               if (transformed.type === 'image_url' && transformed.imageUrl) {
@@ -289,7 +291,7 @@ export const useMcpStore = defineStore('mcp', () => {
             }
           }
         }
-        
+
         processedContent.push({ type: 'text', text })
       } else if (itemObj.type === 'image') {
         const payloadItem: PayloadItem = {
@@ -297,7 +299,7 @@ export const useMcpStore = defineStore('mcp', () => {
           data: String(itemObj.data || ''),
           mimeType: itemObj.mime_type ? String(itemObj.mime_type) : undefined,
         }
-        
+
         try {
           const transformed = await transformPayload(payloadItem, config)
           if (transformed.type === 'image_url' && transformed.imageUrl) {
@@ -320,7 +322,7 @@ export const useMcpStore = defineStore('mcp', () => {
           text: itemObj.text ? String(itemObj.text) : undefined,
           blob: itemObj.blob ? String(itemObj.blob) : undefined,
         }
-        
+
         try {
           const transformed = await transformPayload(payloadItem, config)
           if (transformed.type === 'image_url' && transformed.imageUrl) {
@@ -351,7 +353,7 @@ export const useMcpStore = defineStore('mcp', () => {
     if (enabledTools && enabledTools.size > 0) {
       toolsToUse = tools.value.filter(t => enabledTools.has(t.qualifiedName))
     }
-    
+
     if (toolsToUse.length === 0) return ''
 
     // 按 server 分组显示工具
@@ -379,41 +381,11 @@ export const useMcpStore = defineStore('mcp', () => {
 
 You have access to the following tools organized by server.
 
-### CRITICAL: Tool Call Format
-When calling a tool, you MUST use this EXACT format:
-
-<|tool_call|>
-{"name": "server_id:tool_name", "arguments": {"arg1": "value1"}}
-<|tool_call|>
-
-**Format Rules:**
-- Start with \`<|tool_call|>\` tag
-- Put the JSON object on ONE line
-- End with \`<|tool_call|>\` tag
-- NO code blocks, NO markdown, NO extra text
-
-### Tool Name Format:
-- Use full qualified name: \`server_id:tool_name\`
-- Example: \`"chrome-devtools:new_page"\`
-- NEVER add UUID/call-id prefixes like \`"call-123:tool_name"\`
-
 ### Tool List by Server:
 
 ${toolSections.join('\n\n')}
 
-### Examples:
-
-To open a new page:
-<|tool_call|>
-{"name": "chrome-devtools:new_page", "arguments": {"url": "https://example.com"}}
-<|tool_call|>
-
-To read a file:
-<|tool_call|>
-{"name": "filesystem:read_file", "arguments": {"path": "/path/to/file.txt"}}
-<|tool_call|>
-
-**REMEMBER**: Always wrap your tool call JSON in \`<|tool_call|>\` tags, NOT in code blocks!
+Use the native tool calling mechanism to invoke these tools.
 `
   }
 
@@ -457,36 +429,36 @@ To read a file:
     try {
       const parsed = JSON.parse(jsonStr)
       console.log('[MCP] Parsed JSON:', parsed)
-      
+
       // 格式 1: {"tool_call": {"name": "...", "arguments": {...}}}
       if (parsed.tool_call?.name) {
         console.log('[MCP] Found tool_call format')
         return resolveToolName(parsed.tool_call.name, parsed.tool_call.arguments)
       }
-      
+
       // 格式 2: {"name": "...", "arguments": {...}}
       if (parsed.name) {
         console.log('[MCP] Found name/arguments format, name:', parsed.name)
         return resolveToolName(parsed.name, parsed.arguments)
       }
-      
+
       console.log('[MCP] JSON does not have name or tool_call field')
     } catch (e) {
       console.warn('[MCP] JSON parse failed:', e)
     }
-    
+
     return null
   }
 
   const resolveToolName = (rawName: string, rawArgs?: Record<string, unknown>): { name: string; arguments: Record<string, unknown>; originalName: string } | null => {
     console.log('[MCP] Resolving tool name:', rawName, 'available tools:', tools.value.length)
-    
+
     // 保存原始名称用于显示
     const originalName = rawName
-    
+
     // 清理可能的 UUID 前缀（AI 可能错误添加）
     let cleanedName = rawName
-    
+
     const parts = rawName.split(':')
     if (parts.length >= 2) {
       const firstPart = parts[0]
@@ -497,10 +469,10 @@ To read a file:
         console.warn(`[MCP] Removed UUID prefix from tool name: ${rawName} → ${cleanedName}`)
       }
     }
-    
+
     console.log('[MCP] Cleaned name:', cleanedName)
     console.log('[MCP] Available tools:', tools.value.map(t => t.qualifiedName))
-    
+
     // 尝试精确匹配 qualifiedName（server_id:tool_name）
     const exactMatch = tools.value.find(t => t.qualifiedName === cleanedName)
     if (exactMatch) {
@@ -511,11 +483,11 @@ To read a file:
         originalName
       }
     }
-    
+
     // 降级：如果只提供了 tool_name（无 server_id），尝试模糊匹配
     if (!cleanedName.includes(':')) {
       const matches = tools.value.filter(t => t.name === cleanedName)
-      
+
       if (matches.length === 1) {
         // 唯一匹配
         console.warn(`[MCP] Tool name missing server_id, auto-resolved: ${cleanedName} → ${matches[0].qualifiedName}`)
@@ -553,7 +525,7 @@ To read a file:
         }
       }
     }
-    
+
     // 完全未找到 - 返回原始名称，但使用清理后的名称执行
     const availableTools = tools.value.map(t => t.qualifiedName).join(', ')
     console.error(
@@ -576,6 +548,22 @@ To read a file:
       isLoading.value = false
     }
   }
+
+  let unlistenMcpStatus: (() => Promise<void>) | null = null
+  const initMcpStatusListener = async () => {
+    if (unlistenMcpStatus) return
+    unlistenMcpStatus = await listen('mcp_status_updated', (event) => {
+      applyStatusEvent(event.payload as { server_id: string; connected: boolean; error?: string | null; last_ping_at?: number | null; reconnect_attempts: number })
+    })
+  }
+
+  const init = async () => {
+    await loadServers()
+    await initMcpStatusListener()
+    await Promise.all([refreshAllStatuses(), refreshAllTools()])
+  }
+
+  init()
 
   const addServer = async (server: ServerConfig) => {
     isLoading.value = true
@@ -689,6 +677,23 @@ To read a file:
     }
   }
 
+  const setServerEnabled = async (serverId: string, enabled: boolean) => {
+    await mcpSetServerEnabled(serverId, enabled)
+    await refreshAllTools()
+  }
+
+  const setEnabledTools = async (qualifiedNames: string[]) => {
+    await mcpSetGlobalEnabledTools(qualifiedNames)
+    await refreshAllTools()
+  }
+
+  const getEnabledQualifiedNames = () => {
+    return tools.value.filter(tool => {
+      const entry = tool as NormalizedTool & { enabled?: boolean }
+      return entry.enabled === true
+    }).map(tool => tool.qualifiedName)
+  }
+
   const getConnectionStatus = (serverId: string): ConnectionStatus | undefined => {
     return connectionStatuses.value.get(serverId)
   }
@@ -722,6 +727,9 @@ To read a file:
     disconnectAll,
     refreshAllStatuses,
     refreshAllTools,
+    setServerEnabled,
+    setEnabledTools,
+    getEnabledQualifiedNames,
     executeTool,
     executeToolStructured,
     getToolsPrompt,

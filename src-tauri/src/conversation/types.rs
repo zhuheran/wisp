@@ -8,6 +8,8 @@ pub struct ConversationToolCall {
     pub arguments: serde_json::Value,
     #[serde(default)]
     pub result: Option<ConversationToolResult>,
+    #[serde(default)]
+    pub qualified_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

@@ -342,3 +342,48 @@ export interface SessionState {
 	updatedAt: number;
 	metadata: Record<string, unknown>;
 }
+
+export interface ConversationSendRequest {
+	conversation_id: string;
+	parent_message_id?: string | null;
+	text: string;
+	images?: ImageContent[];
+	model: string;
+	provider: Provider;
+	parameters?: Record<string, unknown> | null;
+	character?: Character | null;
+	enabled_mcp_tools?: string[] | null;
+}
+
+export interface ConversationRegenerateRequest {
+	conversation_id: string;
+	message_id: string;
+	insert_guidance: boolean;
+	model: string;
+	provider: Provider;
+	parameters?: Record<string, unknown> | null;
+	character?: Character | null;
+	enabled_mcp_tools?: string[] | null;
+}
+
+export interface ConversationDeriveRequest {
+	conversation_id: string;
+	replaced_message_id: string;
+	text: string;
+	model: string;
+	provider: Provider;
+	parameters?: Record<string, unknown> | null;
+	character?: Character | null;
+	enabled_mcp_tools?: string[] | null;
+}
+
+export type ConversationEventPayload =
+	| { type: 'message_created'; message: Message; parent_id?: string | null }
+	| { type: 'message_updated'; message_id: string; text: string; reasoning?: string | null; tool_calls?: string | null }
+	| { type: 'completed'; leaf_message_id: string }
+	| { type: 'failed'; error: string };
+
+export interface ConversationStreamChunkEvent {
+	message_id?: string | null;
+	chunk: string;
+}

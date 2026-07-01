@@ -224,9 +224,6 @@ const handleDeleteServer = async (server: ServerConfig) => {
 .server-list {
   flex-grow: 1;
   overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  padding: 8px;
   box-sizing: border-box;
 }
 

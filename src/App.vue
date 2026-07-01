@@ -21,8 +21,6 @@ import {
 import useHighlightjs from "./composables/useHighlightjs";
 const hljs = useHighlightjs();
 
-import { useOpenAI } from "./composables/useOpenAI";
-
 import { useMermaid } from "./composables/useMermaid";
 import { useVNodeRenderer } from "./composables/useMarkdown";
 import { useChatStore } from "./stores/chat";
@@ -36,7 +34,6 @@ const theme = computed(() => (isDark.value ? darkTheme : lightTheme));
 
 onMounted(() => {
   (async () => {
-    provide("OpenAI", useOpenAI());
     provide("MermaidRenderer", useMermaid());
     provide("MarkdownRenderer", useVNodeRenderer());
     provide("ChatStore", useChatStore());
@@ -48,7 +45,6 @@ onMounted(() => {
     characterStore.loadCharacters()
     const mcpStore = useMcpStore();
     provide("McpStore", mcpStore);
-    mcpStore.loadServers()
   })()
 })
 
@@ -120,7 +116,7 @@ body {
   width: 100%;
   height: 100%;
   overflow: hidden;
-  /* background-color: transparent !important; */
+   background-color: transparent !important;
 }
 </style>
 
@@ -145,6 +141,17 @@ body {
   display: grid;
   grid-template-rows: 1fr;
   grid-template-columns: 64px auto;
+
+  animation: fadeIn 0.2s ease-in-out forwards;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1; /* End fully visible */
+  }
 }
 
 .sidebar {

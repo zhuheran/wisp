@@ -180,23 +180,21 @@ where
                 .update_tool_calls(&assistant_message_id, &completed_json)
                 .map_err(crate::db::types::ChatError::from)?;
 
-            let tool_result_text = completed_calls
-                .iter()
-                .map(|call| format!("[Tool Result: {}]\n{}", call.name, tool_result_text(call)))
-                .collect::<Vec<_>>()
-                .join("\n\n---\n\n");
-            let tool_message_id = format!("tool-{assistant_message_id}");
-            self.chat.add_message(
-                conversation_id,
-                &tool_message_id,
-                &tool_result_text,
-                None,
-                &MessageRole::Tool.to_string(),
-                Some(&assistant_message_id),
-                None,
-                None,
-            )?;
-            current_leaf_id = tool_message_id;
+            for call in &completed_calls {
+                let tool_result_text = format!("[Tool Result: {}]\n{}", call.name, tool_result_text(call));
+                let tool_message_id = format!("tool-{}-{}", assistant_message_id, call.id);
+                self.chat.add_message(
+                    conversation_id,
+                    &tool_message_id,
+                    &tool_result_text,
+                    None,
+                    &MessageRole::Tool.to_string(),
+                    Some(&assistant_message_id),
+                    None,
+                    None,
+                )?;
+                current_leaf_id = tool_message_id;
+            }
         }
 
         Err(ConversationEngineError::MaxToolRounds)
@@ -283,7 +281,7 @@ mod tests {
             .send_user_message("c1", None, "u1", "use tool", None)
             .expect("send succeeds");
 
-        assert_eq!(leaf, "assistant-tool-assistant-u1-0-1");
+        assert_eq!(leaf, "assistant-tool-assistant-u1-0-call_1-1");
         let path = engine.chat.get_message_path_to("c1", &leaf).expect("path");
         assert_eq!(path.iter().map(|message| message.sender.clone()).collect::<Vec<_>>(), vec![
             MessageRole::User,
