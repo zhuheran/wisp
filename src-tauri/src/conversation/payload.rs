@@ -172,6 +172,9 @@ mod tests {
             embedding: None,
             images: None,
             tool_calls,
+            source: Default::default(),
+            pal_id: None,
+            pal_name: None,
         }
     }
 

@@ -9,7 +9,7 @@ use crate::configs::character::Character;
 use crate::configs::provider::Provider;
 use crate::conversation::payload::{build_openai_messages, format_tool_result};
 use crate::conversation::tool_parser::parse_tool_calls;
-use crate::conversation::types::ConversationToolCall;
+use crate::conversation::types::{ConversationToolCall, MessageSource};
 use crate::db::types::{ImageContent, Message, MessageRole};
 use crate::tool_registry::{ToolContent, ToolDefinition};
 use crate::types::AppData;
@@ -24,6 +24,8 @@ pub struct ConversationSendRequest {
     pub provider: Provider,
     pub parameters: Option<HashMap<String, serde_json::Value>>,
     pub character: Option<Character>,
+    #[serde(default)]
+    pub target_pal_ids: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -46,6 +48,8 @@ pub struct ConversationDeriveRequest {
     pub provider: Provider,
     pub parameters: Option<HashMap<String, serde_json::Value>>,
     pub character: Option<Character>,
+    #[serde(default)]
+    pub target_pal_ids: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -314,6 +318,9 @@ async fn run_conversation_rounds(
                 embedding: None,
                 images: None,
                 tool_calls: None,
+                source: Default::default(),
+                pal_id: None,
+                pal_name: None,
             };
             let state_mutex = app_handle.state::<Mutex<AppData>>();
             let mut state = state_mutex.lock().map_err(|error| error.to_string())?;
@@ -368,6 +375,9 @@ async fn run_conversation_rounds(
             } else {
                 Some(serde_json::to_string(&calls).map_err(|error| error.to_string())?)
             },
+            source: Default::default(),
+            pal_id: None,
+            pal_name: None,
         };
 
         {
@@ -457,6 +467,9 @@ async fn run_conversation_rounds(
                 embedding: None,
                 images: None,
                 tool_calls: None,
+                source: Default::default(),
+                pal_id: None,
+                pal_name: None,
             };
 
             {
@@ -496,6 +509,9 @@ pub async fn conversation_send_message(
         embedding: None,
         images: request.images.clone(),
         tool_calls: None,
+        source: MessageSource::UserPrompted,
+        pal_id: None,
+        pal_name: None,
     };
 
     {
@@ -578,6 +594,7 @@ pub async fn conversation_derive_message(
             provider: request.provider,
             parameters: request.parameters,
             character: request.character,
+            target_pal_ids: request.target_pal_ids,
         },
     )
     .await

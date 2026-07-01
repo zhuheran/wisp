@@ -1,5 +1,13 @@
 use serde::{Deserialize, Serialize};
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum MessageSource {
+    #[default]
+    UserPrompted,
+    Directed,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ConversationToolCall {
     pub id: String,
@@ -41,4 +49,21 @@ pub enum ConversationToolContent {
         #[serde(default)]
         blob: Option<String>,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::types::Message;
+
+    #[test]
+    fn message_source_defaults_to_user_prompted() {
+        let m = Message {
+            id: "id".into(),
+            text: "hello".into(),
+            source: MessageSource::UserPrompted,
+            ..Default::default()
+        };
+        assert_eq!(m.source, MessageSource::UserPrompted);
+    }
 }

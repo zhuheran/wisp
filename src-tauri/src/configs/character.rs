@@ -26,6 +26,8 @@ pub struct Character {
     pub model_id: String,
     pub created_at: u64,
     pub updated_at: u64,
+    #[serde(default)]
+    pub role_bio: String,
 }
 
 impl Character {
@@ -52,6 +54,7 @@ impl Character {
             model_id,
             created_at: now,
             updated_at: now,
+            role_bio: String::new(),
         }
     }
 
@@ -102,4 +105,31 @@ impl Character {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct CharacterList {
     pub characters: Vec<Character>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn default_character() -> Character {
+        Character::new("id".into(), "name".into(), "desc".into(), "prompt".into(), "model".into())
+    }
+
+    #[test]
+    fn character_new_sets_role_bio_default() {
+        let c = Character::new("test-id".into(), "Test".into(), "desc".into(), "prompt".into(), "model".into());
+        assert_eq!(c.role_bio, "");
+    }
+
+    #[test]
+    fn character_serialization_includes_role_bio() {
+        let c = Character {
+            id: "id".into(),
+            name: "n".into(),
+            role_bio: "An expert code reviewer".into(),
+            ..default_character()
+        };
+        let json = serde_json::to_value(&c).unwrap();
+        assert_eq!(json["role_bio"], "An expert code reviewer");
+    }
 }

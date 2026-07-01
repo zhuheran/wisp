@@ -124,6 +124,9 @@ impl Messages {
                 embedding: row.get(6)?,
                 images,
                 tool_calls: row.get(8)?,
+                source: Default::default(),
+                pal_id: None,
+                pal_name: None,
             })
         })?;
         Ok(row)
@@ -153,6 +156,9 @@ impl Messages {
                     embedding: row.get(6)?,
                     images,
                     tool_calls: row.get(8)?,
+                    source: Default::default(),
+                    pal_id: None,
+                    pal_name: None,
                 })
             })?
             .collect::<Result<Vec<_>, rusqlite::Error>>()

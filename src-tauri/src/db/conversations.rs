@@ -66,6 +66,7 @@ impl Conversations {
 				name: row.get(1)?,
 				description: row.get(2)?,
 				entry_message_id: row.get(3)?,
+				default_pal_id: None,
 			})
 		});
 
@@ -89,6 +90,7 @@ impl Conversations {
 				name: row.get(1)?,
 				description: row.get(2)?,
 				entry_message_id: row.get(3)?,
+				default_pal_id: None,
 			})
 		});
 
@@ -155,17 +157,18 @@ impl Conversations {
 		))?;
 
 		let conversations = stmt
-			.query_map(params![], |row| {
-				Ok(Conversation {
-					id: row.get(0)?,
-					name: row.get(1)?,
-					description: row.get(2)?,
-					entry_message_id: row.get(3)?,
-				})
-			})?
-			.collect::<Result<Vec<_>, rusqlite::Error>>()?;
+				.query_map(params![], |row| {
+					Ok(Conversation {
+						id: row.get(0)?,
+						name: row.get(1)?,
+						description: row.get(2)?,
+						entry_message_id: row.get(3)?,
+						default_pal_id: None,
+					})
+				})?
+				.collect::<Result<Vec<_>, rusqlite::Error>>()?;
 
-		Ok(conversations)
-	}
+			Ok(conversations)
+		}
 
 }

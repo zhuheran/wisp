@@ -40,6 +40,8 @@ pub struct Conversation {
     pub name: String,
     pub description: Option<String>,
     pub entry_message_id: Option<String>,
+    #[serde(default)]
+    pub default_pal_id: Option<String>,
 }
 
 
@@ -66,8 +68,9 @@ pub enum MessageError {
     InvalidRole(String),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub enum MessageRole {
+    #[default]
     #[serde(rename = "user")]
     User,
     #[serde(rename = "bot")]
@@ -115,7 +118,7 @@ pub struct ImageUrl {
     pub url: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Message {
     pub id: String,
     pub text: String,
@@ -130,4 +133,10 @@ pub struct Message {
     pub images: Option<Vec<ImageContent>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_calls: Option<String>,
+    #[serde(default)]
+    pub source: crate::conversation::types::MessageSource,
+    #[serde(default)]
+    pub pal_id: Option<String>,
+    #[serde(default)]
+    pub pal_name: Option<String>,
 }
