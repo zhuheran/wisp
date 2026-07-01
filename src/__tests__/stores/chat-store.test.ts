@@ -204,6 +204,70 @@ describe('chatStore pal integration', () => {
     expect(Array.from(store.mentionedPalIds)).toEqual([])
   })
 
+  it('skips non-existent pal names', async () => {
+    const app = createApp({})
+    const pinia = createPinia()
+    app.use(pinia)
+    app.provide('CharacterStore', {
+      characters: mockCharacters,
+      currentCharacter: null,
+    })
+    setActivePinia(pinia)
+
+    const { useChatStore } = await import('../../stores/chat')
+    const store = useChatStore()
+
+    store.currentConversationId = 'test-conversation'
+    store.chosenModel = 'test-model'
+    store.chosenProvider = { id: 'test-provider', name: 'Test Provider', base_url: 'http://localhost' }
+
+    await store.sendMessage({
+      sender: MessageRole.User,
+      text: '@Unknown check this out',
+      timestamp: Date.now(),
+      source: 'user_prompted',
+    })
+
+    // No valid pal IDs found
+    expect(mockConversationSendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        target_pal_ids: undefined,
+      })
+    )
+  })
+
+  it('handles mix of known and unknown mentions', async () => {
+    const app = createApp({})
+    const pinia = createPinia()
+    app.use(pinia)
+    app.provide('CharacterStore', {
+      characters: mockCharacters,
+      currentCharacter: null,
+    })
+    setActivePinia(pinia)
+
+    const { useChatStore } = await import('../../stores/chat')
+    const store = useChatStore()
+
+    store.currentConversationId = 'test-conversation'
+    store.chosenModel = 'test-model'
+    store.chosenProvider = { id: 'test-provider', name: 'Test Provider', base_url: 'http://localhost' }
+
+    await store.sendMessage({
+      sender: MessageRole.User,
+      text: '@Alice @Unknown @Bob please help',
+      timestamp: Date.now(),
+      source: 'user_prompted',
+    })
+
+    // Only known pals are included
+    expect(mockConversationSendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        target_pal_ids: ['pal-1', 'pal-2'],
+      })
+    )
+  })
+
   it('sendMessage resolves @ mentions by alias', async () => {
     const app = createApp({})
     const pinia = createPinia()

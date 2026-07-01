@@ -8,6 +8,7 @@ import {
   NTag,
   NPopover,
   NSpace,
+  NText,
   useThemeVars,
   useMessage,
   type SelectOption,
@@ -72,15 +73,6 @@ const providerOptions = computed<SelectOption[]>(() =>
   }))
 );
 
-const characterOptions = computed<SelectOption[]>(() =>
-  [{ label: "Default (No Character)", value: "" }].concat(
-    characterStore.characters.map((c) => ({
-      label: c.name,
-      value: c.id,
-    }))
-  )
-);
-
 // MCP Server Selection (global Rust-owned tool state)
 const mcpConnectedServers = computed(() => {
   return mcpStore.servers.filter(server => {
@@ -136,8 +128,6 @@ watch(() => chatStore.chosenModel, (newModel) => {
   }
 });
 
-const chosenCharacterId = ref<string | null>(null);
-
 // Restore saved provider & model once providers finish loading
 watch(() => providerStore.providers.length, () => {
   if (
@@ -157,17 +147,6 @@ watch(() => providerStore.providers.length, () => {
     }
   }
 }, { immediate: true });
-watch(chosenCharacterId, (newId) => {
-  characterStore.selectCharacter(newId);
-  if (newId) {
-    const character = characterStore.characters.find((c) => c.id === newId);
-    if (character) {
-      // Auto-select the model from the character
-      chatStore.chosenModel = character.model_id;
-    }
-  }
-});
-
 const autoScrollWrapper = ref<typeof AutoScrollWrapper | null>(null);
 const imageInputRef = ref<typeof ImageInput | null>(null);
 
@@ -202,12 +181,26 @@ console.log(`[Chat] Message bubble culling enabled`);
       : undefined,
   };
 
+  // Add "pal joined" system messages for first-time mentions
+  for (const id of targetPalIds) {
+    if (!chatStore.mentionedPalIds.has(id)) {
+      const pal = characterStore.characters.find(c => c.id === id);
+      if (pal) {
+        chatStore.addMessage({
+          text: `\uD83C\uDFAD ${pal.name} 加入了对话`,
+          sender: MessageRole.System,
+          timestamp: Math.round(Date.now() / 1000),
+          source: 'user_prompted',
+        }).catch(() => {});
+      }
+    }
+  }
+
   chatStore
     .sendMessage(userMessage, {
       beforeSend: () => {
         chatStore.clearUserInput();
         imageInputRef.value?.clearImages();
-        mentionedPalIds.value = new Set();
         autoScrollWrapper.value?.scrollToBottom(false);
       },
       onReceiving: () => {
@@ -316,6 +309,14 @@ const mentionedPalIds = ref<Set<string>>(new Set());
 
 function onMention(palId: string, _palName: string) {
   mentionedPalIds.value.add(palId);
+}
+
+function getPalName(palId: string): string {
+  return characterStore.characters.find(c => c.id === palId)?.name ?? palId;
+}
+
+function removePal(palId: string) {
+  mentionedPalIds.value.delete(palId);
 }
 
 function parseAtMentions(text: string): string[] {
@@ -446,16 +447,20 @@ onMounted(() => {
                 :disabled="!chatStore.chosenProvider"
                 style="min-width: 12em;"
               />
-              <span style="font-size: 1.5em;">@</span>
-              <n-select
-                v-model:value="chosenCharacterId"
-                :options="characterOptions"
-                placeholder="Select character"
-                :consistent-menu-width="false"
-                clearable
-                filterable
-                style="width: 10em;"
-              />
+              <template v-if="mentionedPalIds.size > 0">
+                <n-tag
+                  v-for="palId in mentionedPalIds"
+                  :key="palId"
+                  :bordered="false"
+                  closable
+                  @close="removePal(palId)"
+                >
+                  {{ getPalName(palId) }}
+                </n-tag>
+              </template>
+              <n-text v-else depth="3" style="font-size: 12px">
+                Type @ to invite a pal
+              </n-text>
               <n-popover
                 v-if="mcpConnectedServers.length > 0"
                 trigger="click"
