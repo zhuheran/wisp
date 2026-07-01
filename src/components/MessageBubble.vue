@@ -2,6 +2,7 @@
 import {
   NAvatar,
   NIcon,
+  NText,
   NButton,
   NFlex,
   NButtonGroup,
@@ -22,6 +23,7 @@ import {
   ChevronLeft16Regular,
   ChevronRight16Regular,
   Toolbox24Regular,
+  Bot20Regular,
 } from "@vicons/fluent";
 import MarkdownRenderer from "./MarkdownRenderer.vue";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
@@ -72,6 +74,9 @@ const props = defineProps<{
   images?: ImageContent[];
   toolCalls?: ToolCallItem[];
   groupMessages?: GroupMessageBlock[];
+  pal_id?: string;
+  pal_name?: string;
+  source?: 'user_prompted' | 'directed';
 }>();
 
 const emit = defineEmits<{
@@ -231,6 +236,18 @@ const formatToolResult = (call: ToolCallItem): string => {
           @focusin="() => (footerVisible = true)"
           @focusout="() => (footerVisible = false)"
         >
+          <div v-if="pal_id" class="message-pal-header">
+            <n-icon size="16"><Bot20Regular /></n-icon>
+            <n-text depth="2" style="font-size: 12px; font-weight: 600;">
+              {{ pal_name }}
+            </n-text>
+            <n-tag v-if="source === 'directed'" size="tiny" :bordered="false">
+              🎬 directed
+            </n-tag>
+            <n-tag v-else-if="source === 'user_prompted'" size="tiny" :bordered="false">
+              📍 mentioned
+            </n-tag>
+          </div>
           <div
             class="content-container"
             @contextmenu="
@@ -537,6 +554,15 @@ const formatToolResult = (call: ToolCallItem): string => {
     opacity: 1;
     transform: scale(1);
   }
+}
+
+.message-pal-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px 0;
+  margin-left: 12px;
+  margin-right: 12px;
 }
 
 .content-container {
