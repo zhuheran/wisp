@@ -14,6 +14,8 @@ use toml;
 struct Config {
     providers: Vec<provider::Provider>,
     characters: Vec<character::Character>,
+    #[serde(default)]
+    default_responder_id: Option<String>,
 }
 
 #[derive(Debug, Error)]
@@ -198,5 +200,21 @@ impl ConfigManager {
         } else {
             Err(ConfigError::CharacterNotFoundError(id.to_string()))
         }
+    }
+
+    // ========== Default Responder ==========
+
+    /// Get the default responder ID
+    pub fn get_default_responder(&self) -> Option<String> {
+        self.configs.lock().unwrap().default_responder_id.clone()
+    }
+
+    /// Set the default responder ID
+    pub fn set_default_responder(&self, character_id: Option<String>) -> Result<(), ConfigError> {
+        let mut configs = self.configs.lock().unwrap();
+        configs.default_responder_id = character_id;
+        std::mem::drop(configs);
+        self.save()?;
+        Ok(())
     }
 }

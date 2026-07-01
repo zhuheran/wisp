@@ -25,6 +25,8 @@ import {
   Edit16Regular,
   Delete16Regular,
   Bot20Regular,
+  Star24Regular,
+  Star24Filled,
 } from "@vicons/fluent";
 import CharacterForm from "../components/CharacterForm.vue";
 import { useCharacterStore } from "../stores/character";
@@ -45,6 +47,7 @@ const selectedCharacter = computed(() => characterStore.currentCharacter);
 
 onMounted(() => {
   characterStore.loadCharacters();
+  characterStore.loadDefaultResponder();
   providerStore.loadProviders();
 });
 
@@ -118,6 +121,16 @@ const handleDropdownSelect = (key: string, character: Character) => {
     handleDelete(character);
   }
 };
+
+const handleSetDefaultResponder = async (characterId: string) => {
+  try {
+    const newId = characterStore.defaultResponderId === characterId ? null : characterId;
+    await characterStore.setDefaultResponder(newId);
+    message.success(newId ? "Set as default responder" : "Removed default responder");
+  } catch (e) {
+    message.error(`Failed to set default responder: ${e}`);
+  }
+};
 </script>
 
 <template>
@@ -162,9 +175,26 @@ const handleDropdownSelect = (key: string, character: Character) => {
                   </template>
                   <template #header>{{ char.name }}</template>
                   <template #description>
-                    <n-text depth="3" style="font-size: 12px">
-                      {{ char.alias || "No alias" }}
-                    </n-text>
+                    <n-space align="center" size="small">
+                      <n-text depth="3" style="font-size: 12px">
+                        {{ char.alias || "No alias" }}
+                      </n-text>
+                      <n-button
+                        v-if="char.id !== characterStore.defaultResponderId"
+                        text
+                        size="tiny"
+                        @click.stop="handleSetDefaultResponder(char.id)"
+                      >
+                        <template #icon>
+                          <n-icon><Star24Regular /></n-icon>
+                        </template>
+                      </n-button>
+                      <n-button v-else text disabled size="tiny">
+                        <template #icon>
+                          <n-icon color="#ffd700"><Star24Filled /></n-icon>
+                        </template>
+                      </n-button>
+                    </n-space>
                   </template>
                   <template #header-extra>
                     <n-dropdown

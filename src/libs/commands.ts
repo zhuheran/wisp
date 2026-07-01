@@ -185,6 +185,15 @@ export async function configsDeleteCharacter(id: string) {
     return invoke<void>('configs_delete_character', { id })
 }
 
+// Default Responder commands
+export async function configsGetDefaultResponder() {
+    return invoke<string | null>('configs_get_default_responder', {})
+}
+
+export async function configsSetDefaultResponder(characterId: string | null) {
+    return invoke<void>('configs_set_default_responder', { characterId })
+}
+
 // MCP commands
 import type {
     ServerConfig,

@@ -177,6 +177,21 @@ const isNumberParam = (index: number) => {
           </n-form-item>
         </n-card>
 
+        <n-card title="Role Bio" size="small" style="margin-top: 16px">
+          <n-text depth="3" style="margin-bottom: 8px; display: block">
+            A brief description used by the director to decide when to invite this pal.
+            Keep it under 500 characters.
+          </n-text>
+          <n-input
+            v-model:value="form.role_bio"
+            type="textarea"
+            placeholder="e.g., Expert in Rust backend and system architecture. Good at code review."
+            :autosize="{ minRows: 2, maxRows: 4 }"
+            :maxlength="500"
+            show-count
+          />
+        </n-card>
+
         <n-card title="Parameters" size="small" style="margin-top: 16px">
           <n-text depth="3" style="margin-bottom: 12px; display: block">
             Add custom parameters (temperature, top_p, etc.) as key-value pairs.

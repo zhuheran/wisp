@@ -483,3 +483,25 @@ pub async fn configs_delete_character(
         .delete_character(&id)
         .map_err(|e| e.to_string())
 }
+
+#[tauri::command]
+pub async fn configs_get_default_responder(
+    app_handle: AppHandle,
+) -> Result<Option<String>, String> {
+    let state = app_handle.state::<Mutex<AppData>>();
+    let state = state.lock().unwrap();
+    Ok(state.config_manager.get_default_responder())
+}
+
+#[tauri::command]
+pub async fn configs_set_default_responder(
+    app_handle: AppHandle,
+    character_id: Option<String>,
+) -> Result<(), String> {
+    let state = app_handle.state::<Mutex<AppData>>();
+    let state = state.lock().unwrap();
+    state
+        .config_manager
+        .set_default_responder(character_id)
+        .map_err(|e| e.to_string())
+}

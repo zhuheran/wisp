@@ -6,12 +6,15 @@ import {
   configsCreateCharacter,
   configsUpdateCharacter,
   configsDeleteCharacter,
+  configsGetDefaultResponder,
+  configsSetDefaultResponder,
 } from '../libs/commands'
 
 export const useCharacterStore = defineStore('character', () => {
   const characters = ref<Character[]>([])
   const currentCharacterId = ref<string | null>(null)
   const isLoading = ref(false)
+  const defaultResponderId = ref<string | null>(null)
 
   const currentCharacter = computed(() => {
     if (!currentCharacterId.value) return null
@@ -89,6 +92,11 @@ export const useCharacterStore = defineStore('character', () => {
       if (currentCharacterId.value === id) {
         currentCharacterId.value = null
       }
+      // If the deleted character was the default responder, clear it
+      if (defaultResponderId.value === id) {
+        defaultResponderId.value = null
+        await configsSetDefaultResponder(null)
+      }
     } finally {
       isLoading.value = false
     }
@@ -131,11 +139,26 @@ export const useCharacterStore = defineStore('character', () => {
     await updateCharacter(characterId, { parameters })
   }
 
+  const loadDefaultResponder = async () => {
+    try {
+      const id = await configsGetDefaultResponder()
+      defaultResponderId.value = id
+    } catch {
+      defaultResponderId.value = null
+    }
+  }
+
+  const setDefaultResponder = async (characterId: string | null) => {
+    await configsSetDefaultResponder(characterId)
+    defaultResponderId.value = characterId
+  }
+
   return {
     characters,
     currentCharacter,
     currentCharacterId,
     isLoading,
+    defaultResponderId,
     loadCharacters,
     selectCharacter,
     createCharacter,
@@ -144,5 +167,7 @@ export const useCharacterStore = defineStore('character', () => {
     getParameterValue,
     setParameterValue,
     removeParameter,
+    loadDefaultResponder,
+    setDefaultResponder,
   }
 })

@@ -126,6 +126,8 @@ pub fn run() {
 			commands::configs_create_character,
 			commands::configs_update_character,
 			commands::configs_delete_character,
+			commands::configs_get_default_responder,
+			commands::configs_set_default_responder,
 			// MCP commands
 			mcp::mcp_get_servers,
 			mcp::mcp_get_server,
