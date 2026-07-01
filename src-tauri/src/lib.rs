@@ -22,6 +22,7 @@ use mcp::commands::McpConfigManager;
 use mcp::types::TransportConfig;
 use mcp_stdio::McpStdioManager;
 use mcp_http::McpHttpManager;
+use std::collections::HashMap;
 use std::sync::Mutex;
 use tool_registry::ToolRegistry;
 mod types;
@@ -56,7 +57,7 @@ pub fn run() {
 			            std::sync::Arc::clone(&mcp_http_manager),
 			        ));
 
-			        app.manage(Mutex::new(AppData {
+			                app.manage(Mutex::new(AppData {
 			            chat: Chat::new(app.handle())?,
 			            diagram_cache: DiagramCache::new()?,
 			            key_manager: KeyManager::new("wisp".to_string()),
@@ -65,6 +66,7 @@ pub fn run() {
 			            mcp_stdio_manager,
 			            mcp_http_manager,
 			            tool_registry,
+			            unlocked_pals: HashMap::new(),
 			        }));
 
 			{

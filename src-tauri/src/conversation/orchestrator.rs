@@ -153,7 +153,7 @@ pub fn build_context_for_pal(
 
 /// After all pal replies, run the director check to see if another
 /// @mentioned pal should be invited into the conversation.
-async fn run_director_check<R: tauri::Runtime>(
+pub async fn run_director_check<R: tauri::Runtime>(
     app_handle: &tauri::AppHandle<R>,
     conversation_id: &str,
     user_message_id: &str,
@@ -364,6 +364,7 @@ mod tests {
             mcp_stdio_manager: stdio_manager,
             mcp_http_manager: http_manager,
             tool_registry,
+            unlocked_pals: HashMap::new(),
         };
 
         handle.manage(Mutex::new(app_data));

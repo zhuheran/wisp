@@ -1,3 +1,8 @@
+use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
+
+use serde::{Deserialize, Serialize};
+
 use crate::db;
 use db::chat::Chat;
 use super::cache::DiagramCache;
@@ -6,8 +11,6 @@ use super::configs::ConfigManager;
 use super::mcp::commands::McpConfigManager;
 use super::mcp_stdio::McpStdioManager;
 use super::mcp_http::McpHttpManager;
-use std::sync::Arc;
-use serde::{Deserialize, Serialize};
 
 use crate::tool_registry::ToolRegistry;
 
@@ -31,4 +34,8 @@ pub struct AppData {
     pub mcp_stdio_manager: Arc<McpStdioManager>,
     pub mcp_http_manager: Arc<McpHttpManager>,
     pub tool_registry: Arc<ToolRegistry>,
+    /// Tracks pal IDs that have been explicitly @mentioned per conversation.
+    /// Used by the director to determine which pals may be invited.
+    /// conversation_id → set of unlocked pal IDs.
+    pub unlocked_pals: HashMap<String, HashSet<String>>,
 }

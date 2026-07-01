@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
 
 use tauri::{AppHandle, Emitter, Manager};
@@ -531,6 +531,19 @@ pub async fn conversation_send_message_inner<R: tauri::Runtime>(
         )?;
     }
 
+    // Update unlocked_pals map from target_pal_ids (if any)
+    if let Some(ref target_pal_ids) = request.target_pal_ids {
+        if !target_pal_ids.is_empty() {
+            let state_mutex = app_handle.state::<Mutex<AppData>>();
+            let mut state = state_mutex.lock().map_err(|error| error.to_string())?;
+            state
+                .unlocked_pals
+                .entry(request.conversation_id.clone())
+                .or_default()
+                .extend(target_pal_ids.iter().cloned());
+        }
+    }
+
     if let Some(target_pal_ids) = request.target_pal_ids {
         if !target_pal_ids.is_empty() {
             // Multi-pal orchestration path
@@ -601,16 +614,92 @@ pub async fn conversation_send_message_inner<R: tauri::Runtime>(
     }
 
     // Fallback: single default responder path
-    run_conversation_rounds(
+    let assistant_message_id = run_conversation_rounds(
         app_handle.clone(),
-        request.conversation_id,
-        user_message_id,
-        request.model,
-        request.provider,
-        request.parameters,
-        request.character,
+        request.conversation_id.clone(),
+        user_message_id.clone(),
+        request.model.clone(),
+        request.provider.clone(),
+        request.parameters.clone(),
+        request.character.clone(),
     )
-    .await
+    .await?;
+
+    // ── Director check after single-pal path ───────────────────────
+    // Check if there are any previously unlocked pals that the
+    // director might invite to join the conversation.
+    let unlocked_pal_ids: HashSet<String> = {
+        let state_mutex = app_handle.state::<Mutex<AppData>>();
+        let state = state_mutex.lock().map_err(|error| error.to_string())?;
+        state
+            .unlocked_pals
+            .get(&request.conversation_id)
+            .cloned()
+            .unwrap_or_default()
+    };
+
+    if !unlocked_pal_ids.is_empty() {
+        let characters = {
+            let state_mutex = app_handle.state::<Mutex<AppData>>();
+            let state = state_mutex.lock().map_err(|error| error.to_string())?;
+            state.config_manager.get_characters()
+        };
+
+        let director_reply = orchestrator::run_director_check(
+            app_handle,
+            &request.conversation_id,
+            &user_message_id,
+            &[],
+            &characters,
+            &unlocked_pal_ids,
+            &request.provider,
+            request.parameters.as_ref(),
+        )
+        .await?;
+
+        if let Some(reply) = director_reply {
+            let message = Message {
+                id: reply.message_id.clone(),
+                text: reply.text.clone(),
+                reasoning: None,
+                sender: MessageRole::Assistant,
+                timestamp: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs() as i64,
+                tokens: None,
+                embedding: None,
+                images: None,
+                tool_calls: None,
+                source: reply.source.clone(),
+                pal_id: Some(reply.pal_id.clone()),
+                pal_name: Some(reply.pal_name.clone()),
+            };
+
+            {
+                let state_mutex = app_handle.state::<Mutex<AppData>>();
+                let mut state = state_mutex.lock().map_err(|error| error.to_string())?;
+                insert_message_and_emit(
+                    app_handle,
+                    &mut state,
+                    &request.conversation_id,
+                    message,
+                    Some(&assistant_message_id),
+                )?;
+            }
+
+            emit_event(
+                app_handle,
+                ConversationEventPayload::Completed {
+                    leaf_message_id: reply.message_id.clone(),
+                },
+            )?;
+
+            return Ok(reply.message_id);
+        }
+    }
+
+    Ok(assistant_message_id)
 }
 
 /// Tauri command wrapper for [`conversation_send_message_inner`].
@@ -770,6 +859,7 @@ mod tests {
             mcp_stdio_manager: stdio_manager,
             mcp_http_manager: http_manager,
             tool_registry,
+            unlocked_pals: HashMap::new(),
         };
 
         handle.manage(Mutex::new(app_data));
@@ -866,7 +956,7 @@ mod tests {
         let (handle, conversation_id) = setup_app();
 
         let request = ConversationSendRequest {
-            conversation_id,
+            conversation_id: conversation_id.clone(),
             parent_message_id: None,
             text: "Hello everyone".to_string(),
             images: None,
@@ -888,5 +978,111 @@ mod tests {
             "expected orchestrator 'Pal not found' error, got: {}",
             err
         );
+
+        // Verify unlocked_pals map was updated despite the error
+        let state_mutex = handle.state::<Mutex<AppData>>();
+        let state = state_mutex.lock().unwrap();
+        let stored = state.unlocked_pals.get(&conversation_id);
+        assert!(stored.is_some(), "unlocked_pals should contain an entry for the conversation");
+        assert!(stored.unwrap().contains("nonexistent-pal"), "unlocked_pals should contain the target_pal_id");
+    }
+
+    #[tokio::test]
+    async fn unlocked_pals_stores_target_pal_ids_from_request() {
+        let (handle, conversation_id) = setup_app();
+
+        // Send a message with target_pal_ids (will fail at LLM call, but
+        // unlocked_pals should be stored before that)
+        let request = ConversationSendRequest {
+            conversation_id: conversation_id.clone(),
+            parent_message_id: None,
+            text: "@coder @designer help".to_string(),
+            images: None,
+            model: "test-model".to_string(),
+            provider: test_provider(),
+            parameters: None,
+            character: None,
+            target_pal_ids: Some(vec!["coder".to_string(), "designer".to_string()]),
+        };
+
+        let _ = conversation_send_message_inner(&handle, request).await;
+
+        // Verify unlocked_pals has the correct entries
+        let state_mutex = handle.state::<Mutex<AppData>>();
+        let state = state_mutex.lock().unwrap();
+        let stored = state.unlocked_pals.get(&conversation_id);
+        assert!(stored.is_some(), "should have entry for conversation");
+        let stored_set = stored.unwrap();
+        assert!(stored_set.contains("coder"), "should contain coder");
+        assert!(stored_set.contains("designer"), "should contain designer");
+        assert_eq!(stored_set.len(), 2, "should have exactly 2 entries");
+    }
+
+    #[tokio::test]
+    async fn unlocked_pals_not_stored_when_no_target_pal_ids() {
+        let (handle, conversation_id) = setup_app();
+
+        let request = ConversationSendRequest {
+            conversation_id: conversation_id.clone(),
+            parent_message_id: None,
+            text: "Hello".to_string(),
+            images: None,
+            model: "test-model".to_string(),
+            provider: test_provider(),
+            parameters: None,
+            character: None,
+            target_pal_ids: None,
+        };
+
+        let _ = conversation_send_message_inner(&handle, request).await;
+
+        // Verify unlocked_pals is empty for this conversation
+        let state_mutex = handle.state::<Mutex<AppData>>();
+        let state = state_mutex.lock().unwrap();
+        let stored = state.unlocked_pals.get(&conversation_id);
+        assert!(stored.is_none(), "should NOT have an entry when no target_pal_ids");
+    }
+
+    #[tokio::test]
+    async fn unlocked_pals_accumulates_across_messages() {
+        let (handle, conversation_id) = setup_app();
+
+        // First message: mention @coder
+        let request1 = ConversationSendRequest {
+            conversation_id: conversation_id.clone(),
+            parent_message_id: None,
+            text: "@coder review this".to_string(),
+            images: None,
+            model: "test-model".to_string(),
+            provider: test_provider(),
+            parameters: None,
+            character: None,
+            target_pal_ids: Some(vec!["coder".to_string()]),
+        };
+        let _ = conversation_send_message_inner(&handle, request1).await;
+
+        // Second message: mention @designer
+        let request2 = ConversationSendRequest {
+            conversation_id: conversation_id.clone(),
+            parent_message_id: None,
+            text: "@designer share feedback".to_string(),
+            images: None,
+            model: "test-model".to_string(),
+            provider: test_provider(),
+            parameters: None,
+            character: None,
+            target_pal_ids: Some(vec!["designer".to_string()]),
+        };
+        let _ = conversation_send_message_inner(&handle, request2).await;
+
+        // Verify both coder and designer are in unlocked_pals
+        let state_mutex = handle.state::<Mutex<AppData>>();
+        let state = state_mutex.lock().unwrap();
+        let stored = state.unlocked_pals.get(&conversation_id);
+        assert!(stored.is_some());
+        let stored_set = stored.unwrap();
+        assert!(stored_set.contains("coder"), "should contain coder from first message");
+        assert!(stored_set.contains("designer"), "should contain designer from second message");
+        assert_eq!(stored_set.len(), 2, "should have accumulated both pals");
     }
 }
