@@ -2,7 +2,6 @@ use std::collections::{HashMap, HashSet};
 use std::error::Error;
 
 use serde_json::Value;
-use tauri::AppHandle;
 
 use crate::configs::character::Character;
 use crate::configs::provider::Provider;
@@ -24,8 +23,8 @@ pub struct PalReply {
 /// 2. For each pal, build context (previous messages + previous pal replies), call LLM
 /// 3. After all pal replies, run director check
 /// 4. Return all message IDs created
-pub async fn orchestrate_multi_pal_round(
-    app_handle: &AppHandle,
+pub async fn orchestrate_multi_pal_round<R: tauri::Runtime>(
+    app_handle: &tauri::AppHandle<R>,
     conversation_id: &str,
     user_message_id: &str,
     target_pal_ids: Vec<String>,
@@ -137,8 +136,8 @@ pub fn build_context_for_pal(
 
 /// After all pal replies, run the director check to see if another
 /// @mentioned pal should be invited into the conversation.
-async fn run_director_check(
-    app_handle: &AppHandle,
+async fn run_director_check<R: tauri::Runtime>(
+    app_handle: &tauri::AppHandle<R>,
     conversation_id: &str,
     user_message_id: &str,
     pal_replies: &[PalReply],
@@ -158,9 +157,13 @@ async fn run_director_check(
         return Ok(None);
     }
 
-    // 2. Get recent conversation text (from pal replies + context)
+    // 2. Get recent conversation text (last 10 messages)
+    const MAX_DIRECTOR_CONTEXT: usize = 10;
     let recent_messages: Vec<String> = pal_replies
         .iter()
+        .rev()
+        .take(MAX_DIRECTOR_CONTEXT)
+        .rev()
         .map(|r| format!("{}: {}", r.pal_name, r.text))
         .collect();
 
@@ -225,8 +228,8 @@ async fn run_director_check(
 }
 
 /// Call the LLM with a character's configuration.
-async fn call_llm_with_pal_config(
-    app_handle: &AppHandle,
+async fn call_llm_with_pal_config<R: tauri::Runtime>(
+    app_handle: &tauri::AppHandle<R>,
     messages: &[Message],
     pal: &Character,
     provider: &Provider,
@@ -348,5 +351,140 @@ mod tests {
 
         assert_eq!(context.len(), 2);
         assert_eq!(context[1].source, MessageSource::Directed);
+    }
+
+    // ── orchestrate_multi_pal_round tests ────────────────────
+    //
+    // These tests exercise the orchestrate_multi_pal_round function with
+    // mocked dependencies. Tests that require actual LLM calls are marked
+    // #[ignore] and serve as documentation stubs.
+
+    /// Test helper: create a mock Tauri AppHandle for testing.
+    /// Uses `MockRuntime` to avoid initializing a real window system.
+    /// Requires the "test" feature on the `tauri` crate.
+    fn test_app_handle() -> tauri::AppHandle<tauri::test::MockRuntime> {
+        let app = tauri::test::mock_app();
+        app.handle().clone()
+    }
+
+    /// Test helper: create a minimal Provider.
+    fn test_provider() -> Provider {
+        use crate::configs::model::{Model as ProviderModel, ModelInfo, ModelMetadata};
+
+        Provider {
+            name: "test-provider".to_string(),
+            display_name: "Test Provider".to_string(),
+            base_url: "http://localhost:9999".to_string(),
+            models: vec![ProviderModel {
+                metadata: ModelMetadata {
+                    name: "gpt-4".to_string(),
+                    display_name: "GPT-4".to_string(),
+                    creator: None,
+                    version: None,
+                    description: None,
+                },
+                model_info: ModelInfo::TextGeneration {
+                    parameters: Default::default(),
+                    capabilities: vec![],
+                    multimodal: None,
+                },
+                tokenizer: None,
+                max_input_size: 8192,
+                api_endpoint: None,
+            }],
+        }
+    }
+
+    #[tokio::test]
+    async fn orchestrate_empty_target_pal_ids_returns_empty_replies() {
+        // Step 1: Empty target_pal_ids → no pal replies, director has no
+        // unlocked pals → returns empty vec (no LLM calls made).
+        let handle = test_app_handle();
+        let provider = test_provider();
+        let characters = vec![
+            test_character("c1", "Alice", "You are Alice.", "Expert"),
+        ];
+
+        let result = orchestrate_multi_pal_round(
+            &handle,
+            "conv1",
+            "msg1",
+            vec![],  // empty target_pal_ids
+            &characters,
+            &provider,
+            None,
+        )
+        .await;
+
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().len(), 0);
+    }
+
+    #[tokio::test]
+    async fn orchestrate_pal_id_not_found_returns_error() {
+        // Step 5: Pal ID not found in all_characters → error before any LLM call.
+        let handle = test_app_handle();
+        let provider = test_provider();
+        let characters = vec![
+            test_character("c1", "Alice", "You are Alice.", "Expert"),
+        ];
+
+        let result = orchestrate_multi_pal_round(
+            &handle,
+            "conv1",
+            "msg1",
+            vec!["nonexistent".to_string()],
+            &characters,
+            &provider,
+            None,
+        )
+        .await;
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.contains("nonexistent"), "error should mention the missing pal_id");
+        assert!(err.contains("Pal not found"), "error should contain 'Pal not found'");
+    }
+
+    /// Stub: Single pal → one reply, then director check.
+    /// Full test requires mocking the LLM call; preserved here as a
+    /// documentation stub.
+    #[tokio::test]
+    #[ignore = "Requires mocking call_llm_with_pal_config to return a canned response"]
+    async fn orchestrate_single_pal_produces_one_reply_then_director_check() {
+        // TODO:
+        // 1. Provide one pal in target_pal_ids
+        // 2. Expect replies.len() == 1 (the pal's own reply)
+        // 3. Verify director check ran but returned None (only one pal, no other to invoke)
+    }
+
+    /// Stub: Multiple pals in order → sequential replies.
+    #[tokio::test]
+    #[ignore = "Requires mocking call_llm_with_pal_config to return canned responses"]
+    async fn orchestrate_multiple_pals_reply_in_order() {
+        // TODO:
+        // 1. Provide pals [c1, c2, c3] in target_pal_ids
+        // 2. Verify each pal's message appears in order
+        // 3. Verify each pal's context includes previous pals' replies
+    }
+
+    /// Stub: Director invokes a previously @mentioned pal.
+    #[tokio::test]
+    #[ignore = "Requires mocking the director LLM call to return an invoke decision"]
+    async fn orchestrate_director_invokes_previously_mentioned_pal() {
+        // TODO: Mock director LLM call to return {"action": "invoke", "pal_id": "c2"}.
+        // 1. Provide pal c1 in target_pal_ids, with c2 also in all_characters
+        // 2. After c1 replies, director decides to invoke c2
+        // 3. Verify c2's PalReply is appended with MessageSource::Directed
+    }
+
+    /// Stub: Director decides not to invoke → no additional reply.
+    #[tokio::test]
+    #[ignore = "Requires mocking the director LLM call to return a 'none' decision"]
+    async fn orchestrate_director_decides_not_to_invoke() {
+        // TODO: Mock director LLM call to return {"action": "none"}.
+        // 1. Provide pal c1 in target_pal_ids
+        // 2. After c1 replies, director decides not to invoke anyone
+        // 3. Verify no additional PalReply beyond c1's
     }
 }

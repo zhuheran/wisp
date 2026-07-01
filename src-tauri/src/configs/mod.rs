@@ -40,7 +40,7 @@ pub struct ConfigManager {
 }
 
 impl ConfigManager {
-    pub fn new(app_handle: &AppHandle) -> Result<Self, String> {
+    pub fn new<R: tauri::Runtime>(app_handle: &tauri::AppHandle<R>) -> Result<Self, String> {
         let config_dir = app_handle
             .path()
             .app_data_dir()

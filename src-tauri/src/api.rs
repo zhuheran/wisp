@@ -8,7 +8,7 @@ use async_openai::{
 };
 use futures::StreamExt;
 use serde_json::Value;
-use tauri::{AppHandle, Emitter};
+use tauri::Emitter;
 use crate::configs::provider::Provider;
 
 use super::key_manager::KeyManager;
@@ -97,8 +97,8 @@ fn summarize_messages_for_debug(messages: &[ChatCompletionRequestMessage]) -> St
 /// Tool calling is handled entirely via the `<|tool_calls|>` text protocol —
 /// no native `ChatCompletionTool` is registered. The model responds in plain text
 /// and tool calls are extracted by `parse_tool_calls` on the caller side.
-pub async fn stream_openai_messages(
-    app_handle: AppHandle,
+pub async fn stream_openai_messages<R: tauri::Runtime>(
+    app_handle: tauri::AppHandle<R>,
     messages: Vec<ChatCompletionRequestMessage>,
     model: String,
     provider: Provider,

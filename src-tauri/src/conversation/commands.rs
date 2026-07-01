@@ -7,6 +7,7 @@ use uuid::Uuid;
 use crate::api::{stream_openai_messages, OpenAiStreamEvents};
 use crate::configs::character::Character;
 use crate::configs::provider::Provider;
+use crate::conversation::orchestrator;
 use crate::conversation::payload::{build_openai_messages, format_tool_result};
 use crate::conversation::tool_parser::parse_tool_calls;
 use crate::conversation::types::{ConversationToolCall, MessageSource};
@@ -61,14 +62,14 @@ pub enum ConversationEventPayload {
     Failed { error: String },
 }
 
-fn emit_event(app_handle: &AppHandle, payload: ConversationEventPayload) -> Result<(), String> {
+fn emit_event<R: tauri::Runtime>(app_handle: &tauri::AppHandle<R>, payload: ConversationEventPayload) -> Result<(), String> {
     app_handle
         .emit("conversation_event", payload)
         .map_err(|error| error.to_string())
 }
 
-fn insert_message_and_emit(
-    app_handle: &AppHandle,
+fn insert_message_and_emit<R: tauri::Runtime>(
+    app_handle: &tauri::AppHandle<R>,
     state: &mut AppData,
     conversation_id: &str,
     message: Message,
@@ -104,8 +105,8 @@ fn insert_message_and_emit(
     )
 }
 
-async fn execute_tool_call(
-    app_handle: &AppHandle,
+async fn execute_tool_call<R: tauri::Runtime>(
+    app_handle: &tauri::AppHandle<R>,
     call: ConversationToolCall,
 ) -> Result<ConversationToolCall, String> {
     let registry = {
@@ -246,16 +247,16 @@ Wrap a JSON array of tool calls in `<|tool_calls|>` tags:
     )
 }
 
-async fn resolve_enabled_mcp_tools(
-    app_handle: &AppHandle,
+async fn resolve_enabled_mcp_tools<R: tauri::Runtime>(
+    app_handle: &tauri::AppHandle<R>,
 ) -> Result<Vec<ToolDefinition>, String> {
     let state = app_handle.state::<Mutex<AppData>>();
     let state = state.lock().map_err(|error| error.to_string())?;
     Ok(state.tool_registry.list_enabled_tools())
 }
 
-async fn run_conversation_rounds(
-    app_handle: AppHandle,
+async fn run_conversation_rounds<R: tauri::Runtime>(
+    app_handle: tauri::AppHandle<R>,
     conversation_id: String,
     mut current_leaf_id: String,
     model: String,
@@ -263,6 +264,8 @@ async fn run_conversation_rounds(
     parameters: Option<HashMap<String, serde_json::Value>>,
     character: Option<Character>,
 ) -> Result<String, String> {
+    let pal_id = character.as_ref().map(|c| c.id.clone());
+    let pal_name = character.as_ref().map(|c| c.name.clone());
     for round in 0..10 {
         let path = {
             let state_mutex = app_handle.state::<Mutex<AppData>>();
@@ -318,9 +321,9 @@ async fn run_conversation_rounds(
                 embedding: None,
                 images: None,
                 tool_calls: None,
-                source: Default::default(),
-                pal_id: None,
-                pal_name: None,
+                source: MessageSource::UserPrompted,
+                pal_id: pal_id.clone(),
+                pal_name: pal_name.clone(),
             };
             let state_mutex = app_handle.state::<Mutex<AppData>>();
             let mut state = state_mutex.lock().map_err(|error| error.to_string())?;
@@ -375,9 +378,9 @@ async fn run_conversation_rounds(
             } else {
                 Some(serde_json::to_string(&calls).map_err(|error| error.to_string())?)
             },
-            source: Default::default(),
-            pal_id: None,
-            pal_name: None,
+            source: MessageSource::UserPrompted,
+            pal_id: pal_id.clone(),
+            pal_name: pal_name.clone(),
         };
 
         {
@@ -490,9 +493,11 @@ async fn run_conversation_rounds(
     Err(format!("Max tool rounds reached for conversation '{}'", conversation_id))
 }
 
-#[tauri::command]
-pub async fn conversation_send_message(
-    app_handle: AppHandle,
+/// Inner logic of conversation_send_message, generic over Runtime for
+/// testability. Callers outside tests should use the
+/// [`conversation_send_message`] command wrapper.
+pub async fn conversation_send_message_inner<R: tauri::Runtime>(
+    app_handle: &tauri::AppHandle<R>,
     request: ConversationSendRequest,
 ) -> Result<String, String> {
     let user_message_id = Uuid::new_v4().to_string();
@@ -518,7 +523,7 @@ pub async fn conversation_send_message(
         let state_mutex = app_handle.state::<Mutex<AppData>>();
         let mut state = state_mutex.lock().map_err(|error| error.to_string())?;
         insert_message_and_emit(
-            &app_handle,
+            app_handle,
             &mut state,
             &request.conversation_id,
             user_message,
@@ -526,8 +531,78 @@ pub async fn conversation_send_message(
         )?;
     }
 
+    if let Some(target_pal_ids) = request.target_pal_ids {
+        if !target_pal_ids.is_empty() {
+            // Multi-pal orchestration path
+            let characters = {
+                let state_mutex = app_handle.state::<Mutex<AppData>>();
+                let state = state_mutex.lock().map_err(|error| error.to_string())?;
+                state.config_manager.get_characters()
+            };
+
+            let replies = orchestrator::orchestrate_multi_pal_round(
+                &app_handle,
+                &request.conversation_id,
+                &user_message_id,
+                target_pal_ids,
+                &characters,
+                &request.provider,
+                request.parameters.as_ref(),
+            )
+            .await?;
+
+            for reply in &replies {
+                let message = Message {
+                    id: reply.message_id.clone(),
+                    text: reply.text.clone(),
+                    reasoning: None,
+                    sender: MessageRole::Assistant,
+                    timestamp: std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs() as i64,
+                    tokens: None,
+                    embedding: None,
+                    images: None,
+                    tool_calls: None,
+                    source: reply.source.clone(),
+                    pal_id: Some(reply.pal_id.clone()),
+                    pal_name: Some(reply.pal_name.clone()),
+                };
+
+                {
+                    let state_mutex = app_handle.state::<Mutex<AppData>>();
+                        let mut state = state_mutex.lock().map_err(|error| error.to_string())?;
+                        insert_message_and_emit(
+                            app_handle,
+                            &mut state,
+                            &request.conversation_id,
+                            message,
+                            Some(&user_message_id),
+                        )?;
+                }
+            }
+
+            emit_event(
+                app_handle,
+                ConversationEventPayload::Completed {
+                    leaf_message_id: replies
+                        .last()
+                        .map(|r| r.message_id.clone())
+                        .unwrap_or(user_message_id.clone()),
+                },
+            )?;
+
+            return Ok(replies
+                .last()
+                .map(|r| r.message_id.clone())
+                .unwrap_or(user_message_id));
+        }
+    }
+
+    // Fallback: single default responder path
     run_conversation_rounds(
-        app_handle,
+        app_handle.clone(),
         request.conversation_id,
         user_message_id,
         request.model,
@@ -536,6 +611,15 @@ pub async fn conversation_send_message(
         request.character,
     )
     .await
+}
+
+/// Tauri command wrapper for [`conversation_send_message_inner`].
+#[tauri::command]
+pub async fn conversation_send_message(
+    app_handle: AppHandle,
+    request: ConversationSendRequest,
+) -> Result<String, String> {
+    conversation_send_message_inner(&app_handle, request).await
 }
 
 #[tauri::command]
@@ -636,4 +720,173 @@ pub async fn conversation_edit_and_regenerate(
         },
     )
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+
+    use crate::cache::DiagramCache;
+    use crate::configs::ConfigManager;
+    use crate::db::create_memory_pool;
+    use crate::db::chat::Chat;
+    use crate::key_manager::KeyManager;
+    use crate::mcp::commands::McpConfigManager;
+    use crate::mcp_http::McpHttpManager;
+    use crate::mcp_stdio::McpStdioManager;
+    use crate::tool_registry::ToolRegistry;
+
+    /// Create a mock Tauri AppHandle with a managed AppData containing a
+    /// conversation ready for use. Returns (handle, conversation_id).
+    fn setup_app() -> (tauri::AppHandle<tauri::test::MockRuntime>, String) {
+        let app = tauri::test::mock_app();
+        let handle = app.handle().clone();
+
+        let conversation_id = "test-conv".to_string();
+        let mut chat = Chat::new_with_pool(create_memory_pool()).expect("chat");
+        chat.create_conversation(&conversation_id, "Test", "desc")
+            .expect("conversation created");
+
+        let diagram_cache = DiagramCache::new().expect("diagram cache");
+        let key_manager = KeyManager::new("test-wisp".to_string());
+        let config_manager =
+            ConfigManager::new(&handle).expect("config manager");
+        let mcp_config_manager =
+            McpConfigManager::new(&handle).expect("mcp config");
+        let stdio_manager = Arc::new(McpStdioManager::new());
+        let http_manager = Arc::new(McpHttpManager::new());
+        let tool_registry = Arc::new(ToolRegistry::new(
+            Arc::clone(&stdio_manager),
+            Arc::clone(&http_manager),
+        ));
+
+        let app_data = AppData {
+            chat,
+            diagram_cache,
+            key_manager,
+            config_manager,
+            mcp_config_manager,
+            mcp_stdio_manager: stdio_manager,
+            mcp_http_manager: http_manager,
+            tool_registry,
+        };
+
+        handle.manage(Mutex::new(app_data));
+
+        (handle, conversation_id)
+    }
+
+    fn test_provider() -> Provider {
+        use crate::configs::model::{Model as ProviderModel, ModelInfo, ModelMetadata};
+
+        Provider {
+            name: "test-provider".to_string(),
+            display_name: "Test Provider".to_string(),
+            base_url: "http://localhost:9999".to_string(),
+            models: vec![ProviderModel {
+                metadata: ModelMetadata {
+                    name: "gpt-4".to_string(),
+                    display_name: "GPT-4".to_string(),
+                    creator: None,
+                    version: None,
+                    description: None,
+                },
+                model_info: ModelInfo::TextGeneration {
+                    parameters: Default::default(),
+                    capabilities: vec![],
+                    multimodal: None,
+                },
+                tokenizer: None,
+                max_input_size: 8192,
+                api_endpoint: None,
+            }],
+        }
+    }
+
+    #[tokio::test]
+    async fn send_message_with_none_target_pal_ids_uses_single_pal_path() {
+        let (handle, conversation_id) = setup_app();
+
+        let request = ConversationSendRequest {
+            conversation_id,
+            parent_message_id: None,
+            text: "Hello".to_string(),
+            images: None,
+            model: "test-model".to_string(),
+            provider: test_provider(),
+            parameters: None,
+            character: None,
+            target_pal_ids: None,
+        };
+
+        let result = conversation_send_message_inner(&handle, request).await;
+
+        // Falls through to single-pal run_conversation_rounds, which will
+        // fail at the LLM call (no real API). The error should NOT contain
+        // any orchestrator-specific phrasing like "Pal not found".
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            !err.contains("Pal not found"),
+            "expected single-pal path error, got orchestrator error: {}",
+            err
+        );
+    }
+
+    #[tokio::test]
+    async fn send_message_with_empty_target_pal_ids_uses_single_pal_path() {
+        let (handle, conversation_id) = setup_app();
+
+        let request = ConversationSendRequest {
+            conversation_id,
+            parent_message_id: None,
+            text: "Hello".to_string(),
+            images: None,
+            model: "test-model".to_string(),
+            provider: test_provider(),
+            parameters: None,
+            character: None,
+            target_pal_ids: Some(vec![]),
+        };
+
+        let result = conversation_send_message_inner(&handle, request).await;
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            !err.contains("Pal not found"),
+            "expected single-pal path error, got orchestrator error: {}",
+            err
+        );
+    }
+
+    #[tokio::test]
+    async fn send_message_with_non_empty_target_pal_ids_triggers_orchestrator() {
+        let (handle, conversation_id) = setup_app();
+
+        let request = ConversationSendRequest {
+            conversation_id,
+            parent_message_id: None,
+            text: "Hello everyone".to_string(),
+            images: None,
+            model: "test-model".to_string(),
+            provider: test_provider(),
+            parameters: None,
+            character: None,
+            target_pal_ids: Some(vec!["nonexistent-pal".to_string()]),
+        };
+
+        let result = conversation_send_message_inner(&handle, request).await;
+
+        // Orchestrator tries to find "nonexistent-pal" in characters (empty
+        // list from the fresh ConfigManager) and fails immediately.
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("Pal not found"),
+            "expected orchestrator 'Pal not found' error, got: {}",
+            err
+        );
+    }
 }
