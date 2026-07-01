@@ -107,6 +107,7 @@ pub fn run() {
             commands::list_conversations,
 			commands::update_conversation_entry_id,
 			commands::update_conversation,
+			commands::conversation_set_default_responder,
 			commands::get_url,
 			commands::post_url,
 			commands::set_api_key,

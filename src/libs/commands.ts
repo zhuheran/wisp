@@ -127,6 +127,10 @@ export async function deleteCredential(name: string) {
 	return invoke<void>('delete_api_key', { name })
 }
 
+export async function conversationSetDefaultResponder(conversationId: string, characterId: string | null) {
+	return invoke<void>('conversation_set_default_responder', { conversationId, characterId })
+}
+
 // Configs commands
 export async function configsGetProviders() {
     return invoke<Provider[]>('configs_get_providers', {})

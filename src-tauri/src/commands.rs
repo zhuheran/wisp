@@ -87,6 +87,20 @@ pub fn delete_api_key(app_handle: AppHandle, name: String) -> Result<(), String>
     state.key_manager.delete_api_key(&name).map_err(|x| x.to_string())
 }
 
+#[tauri::command]
+pub async fn conversation_set_default_responder(
+    app_handle: AppHandle,
+    conversation_id: String,
+    character_id: Option<String>,
+) -> Result<(), String> {
+    let state = app_handle.state::<Mutex<AppData>>();
+    let mut state = state.lock().map_err(|e| e.to_string())?;
+    state
+        .chat
+        .set_conversation_default_responder(&conversation_id, character_id.as_deref())
+        .map_err(|e| e.to_string())
+}
+
 // Configs commands
 #[tauri::command]
 pub async fn configs_get_providers(

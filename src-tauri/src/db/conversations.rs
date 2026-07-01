@@ -16,32 +16,39 @@ impl Conversations {
         conn.execute(
             &format!(
                 "CREATE TABLE IF NOT EXISTS {} (
-					id TEXT PRIMARY KEY,
-					name TEXT NOT NULL,
-					description TEXT,
-					entry_message_id TEXT,
-					FOREIGN KEY (entry_message_id) REFERENCES {} (id) ON DELETE CASCADE
-				)",
+						id TEXT PRIMARY KEY,
+						name TEXT NOT NULL,
+						description TEXT,
+						entry_message_id TEXT,
+						default_pal_id TEXT,
+						FOREIGN KEY (entry_message_id) REFERENCES {} (id) ON DELETE CASCADE
+					)",
                 Self::TABLE_NAME,
-				message_table_name
+					message_table_name
             ),
             [],
         )?;
 
+        // Migration: add default_pal_id column for databases created before this column existed
+        let _ = conn.execute(
+            &format!("ALTER TABLE {} ADD COLUMN default_pal_id TEXT", Self::TABLE_NAME),
+            [],
+        );
+
         Ok(Self { pool })
     }
 
-	pub fn create(&mut self, id: &str, name: &str, description: Option<&str>, entry_message_id: Option<&str>) -> Result<(), ConversationError> {
-		let conn = self.pool.get()?;
-		conn.execute(
-			&format!(
-				"INSERT INTO {} (id, name, description, entry_message_id) VALUES (?1, ?2, ?3, ?4)",
-				Self::TABLE_NAME
-			),
-			params![id, name, description, entry_message_id],
-		)?;
-		Ok(())
-	}
+	pub fn create(&mut self, id: &str, name: &str, description: Option<&str>, entry_message_id: Option<&str>, default_pal_id: Option<&str>) -> Result<(), ConversationError> {
+			let conn = self.pool.get()?;
+			conn.execute(
+				&format!(
+					"INSERT INTO {} (id, name, description, entry_message_id, default_pal_id) VALUES (?1, ?2, ?3, ?4, ?5)",
+					Self::TABLE_NAME
+				),
+				params![id, name, description, entry_message_id, default_pal_id],
+			)?;
+			Ok(())
+		}
 
 	pub fn exists(&mut self, id: &str) -> Result<bool, ConversationError> {
 		let conn = self.pool.get()?;
@@ -66,7 +73,7 @@ impl Conversations {
 				name: row.get(1)?,
 				description: row.get(2)?,
 				entry_message_id: row.get(3)?,
-				default_pal_id: None,
+				default_pal_id: row.get(4).ok().flatten(),
 			})
 		});
 
@@ -90,7 +97,7 @@ impl Conversations {
 				name: row.get(1)?,
 				description: row.get(2)?,
 				entry_message_id: row.get(3)?,
-				default_pal_id: None,
+				default_pal_id: row.get(4).ok().flatten(),
 			})
 		});
 
@@ -137,6 +144,18 @@ impl Conversations {
 		Ok(())
 	}
 
+	pub fn update_default_pal_id(&mut self, id: &str, default_pal_id: Option<&str>) -> Result<(), ConversationError> {
+		let conn = self.pool.get()?;
+		conn.execute(
+			&format!(
+				"UPDATE {} SET default_pal_id = ?2 WHERE id = ?1",
+				Self::TABLE_NAME
+			),
+			params![id, default_pal_id],
+		)?;
+		Ok(())
+	}
+
 	pub fn delete(&mut self, id: &str) -> Result<(), ConversationError> {
 		let conn = self.pool.get()?;
 		conn.execute(
@@ -163,7 +182,7 @@ impl Conversations {
 						name: row.get(1)?,
 						description: row.get(2)?,
 						entry_message_id: row.get(3)?,
-						default_pal_id: None,
+						default_pal_id: row.get(4).ok().flatten(),
 					})
 				})?
 				.collect::<Result<Vec<_>, rusqlite::Error>>()?;

@@ -1,22 +1,29 @@
 <script lang="ts" setup>
 import { NButton } from "naive-ui";
 import { useChatStore } from "../stores/chat";
-import { onMounted, ref } from "vue";
+import { onMounted, ref, onBeforeMount } from "vue";
 import { useThemeVars } from "naive-ui";
 import { Menu, MenuItem } from "@tauri-apps/api/menu";
 import ConversationInfoDialog from "./ConversationInfoDialog.vue";
+import CreateConversationDialog from "./CreateConversationDialog.vue";
 import { useMessage, useDialog } from "naive-ui";
+import { useCharacterStore } from "../stores/character";
 
 const theme = useThemeVars();
 const message = useMessage();
 const dialog = useDialog();
 const chatStore = useChatStore();
+const characterStore = useCharacterStore();
 
 // Info dialog state
 const showInfoDialog = ref(false);
 const activeConversation = ref<any>(null);
 
+// Create conversation dialog state
+const showCreateDialog = ref(false);
+
 onMounted(chatStore.listConversations);
+onBeforeMount(characterStore.loadCharacters);
 
 const emit = defineEmits<{
   (e: "select", id: string): void;
@@ -45,9 +52,12 @@ const confirmDeletion = () => {
   });
 };
 
-const handleNewConversation = async () => {
-  const newId = await chatStore.createConversation("New Conversation", "");
-  emit("select", newId);
+const handleNewConversation = () => {
+  showCreateDialog.value = true;
+};
+
+const handleCreateDialogCreated = (id: string) => {
+  emit("select", id);
 };
 
 const handleDeleteConversation = async (id: string) => {
@@ -133,6 +143,10 @@ const showContextMenu = async (e: MouseEvent, conversation: any) => {
           activeConversation = null;
         }
       "
+    />
+    <create-conversation-dialog
+      v-model:show="showCreateDialog"
+      @created="handleCreateDialogCreated"
     />
   </div>
 </template>

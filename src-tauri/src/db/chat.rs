@@ -53,7 +53,7 @@ impl Chat {
         let tx = conn.transaction()?;
 
         self.conversation_manager
-            .create(conversation_id, name, Some(description), None)?;
+            .create(conversation_id, name, Some(description), None, None)?;
 
         tx.commit()?;
         Ok(())
@@ -224,6 +224,17 @@ impl Chat {
         self.conversation_manager.delete(conversation_id)?;
 
         tx.commit()?;
+        Ok(())
+    }
+
+    /// Sets the default responder (pal) for a conversation
+    pub fn set_conversation_default_responder(
+        &mut self,
+        conversation_id: &str,
+        character_id: Option<&str>,
+    ) -> Result<(), ChatError> {
+        self.conversation_manager
+            .update_default_pal_id(conversation_id, character_id)?;
         Ok(())
     }
 
