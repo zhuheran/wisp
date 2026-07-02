@@ -519,3 +519,25 @@ pub async fn configs_set_default_responder(
         .set_default_responder(character_id)
         .map_err(|e| e.to_string())
 }
+
+#[tauri::command]
+pub async fn configs_get_chore_llm(
+    app_handle: AppHandle,
+) -> Result<Option<crate::configs::ChoreLlmRef>, String> {
+    let state = app_handle.state::<Mutex<AppData>>();
+    let state = state.lock().unwrap();
+    Ok(state.config_manager.get_chore_llm())
+}
+
+#[tauri::command]
+pub async fn configs_set_chore_llm(
+    app_handle: AppHandle,
+    chore_llm: Option<crate::configs::ChoreLlmRef>,
+) -> Result<(), String> {
+    let state = app_handle.state::<Mutex<AppData>>();
+    let state = state.lock().unwrap();
+    state
+        .config_manager
+        .set_chore_llm(chore_llm)
+        .map_err(|e| e.to_string())
+}
