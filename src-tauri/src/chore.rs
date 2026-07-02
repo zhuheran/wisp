@@ -20,7 +20,17 @@ pub fn parse_display_names(raw: &str) -> HashMap<String, String> {
 
     let parsed: Value = match serde_json::from_str(trimmed) {
         Ok(v) => v,
-        Err(_) => return HashMap::new(),
+        Err(_) => {
+            let start = trimmed.find('[');
+            let end = trimmed.rfind(']');
+            match (start, end) {
+                (Some(s), Some(e)) if s < e => match serde_json::from_str(&trimmed[s..=e]) {
+                    Ok(v) => v,
+                    Err(_) => return HashMap::new(),
+                },
+                _ => return HashMap::new(),
+            }
+        }
     };
 
     let arr = match parsed.as_array() {
@@ -206,6 +216,20 @@ mod tests {
     #[test]
     fn accepts_camel_case_key() {
         let raw = r#"[{"name":"x","displayName":"X Do Thing"}]"#;
+        let map = parse_display_names(raw);
+        assert_eq!(map.get("x"), Some(&"X Do Thing".to_string()));
+    }
+
+    #[test]
+    fn extracts_array_despite_leading_prose() {
+        let raw = "Here are the display names:\n[\n  {\"name\":\"read_file\",\"display_name\":\"Filesystem Read File\"}\n]\nLet me know if you need more.";
+        let map = parse_display_names(raw);
+        assert_eq!(map.get("read_file"), Some(&"Filesystem Read File".to_string()));
+    }
+
+    #[test]
+    fn handles_uppercase_code_fence() {
+        let raw = "```JSON\n[{\"name\":\"x\",\"display_name\":\"X Do Thing\"}]\n```";
         let map = parse_display_names(raw);
         assert_eq!(map.get("x"), Some(&"X Do Thing".to_string()));
     }
