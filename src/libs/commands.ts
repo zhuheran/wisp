@@ -390,3 +390,26 @@ export async function compressImage(
 export async function getImageInfo(base64Data: string): Promise<ImageInfo> {
     return invoke<ImageInfo>('get_image_info', { base64Data })
 }
+
+export interface ChoreLlmRef {
+	provider: string;
+	model: string;
+}
+
+export interface ToolDisplayNameInput {
+	serverName: string;
+	toolName: string;
+	description?: string;
+}
+
+export async function mcpGetChoreLlm() {
+	return invoke<ChoreLlmRef | null>('configs_get_chore_llm', {})
+}
+
+export async function mcpSetChoreLlm(choreLlm: ChoreLlmRef | null) {
+	return invoke<void>('configs_set_chore_llm', { choreLlm })
+}
+
+export async function mcpGenerateToolDisplayNames(tools: ToolDisplayNameInput[]) {
+	return invoke<Record<string, string>>('mcp_generate_tool_display_names', { tools })
+}

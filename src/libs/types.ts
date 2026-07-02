@@ -235,6 +235,7 @@ export interface RegisteredTool {
 	metadata?: Record<string, unknown>;
 	serverId?: string;
 	originalName?: string;
+	displayName?: string;
 	enabled: boolean;
 }
 
