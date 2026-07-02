@@ -35,6 +35,7 @@ import {
 } from '../libs/commands'
 import { transformPayload, type PayloadItem, DEFAULT_PIPELINE_CONFIG } from '../pipeline'
 import type { ToolCallContent } from '../libs/types'
+import { enrichDisplayNames } from '../libs/toolDisplayNames'
 import { listen } from '@tauri-apps/api/event'
 
 export const useMcpStore = defineStore('mcp', () => {
@@ -200,6 +201,7 @@ export const useMcpStore = defineStore('mcp', () => {
         originalName: typeof tool.metadata?.original_name === 'string' ? tool.metadata.original_name : undefined,
         enabled: tool.enabled,
       }))
+      await enrichDisplayNames(tools.value, servers.value)
     } catch (e) {
       console.error('Failed to refresh registry tools:', e)
     }
