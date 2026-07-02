@@ -45,6 +45,7 @@ onMounted(() => {
     characterStore.loadCharacters()
     const mcpStore = useMcpStore();
     provide("McpStore", mcpStore);
+    mcpStore.init()
   })()
 })
 

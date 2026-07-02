@@ -69,6 +69,10 @@ export const useMcpStore = defineStore('mcp', () => {
     connectionStatuses.value.set(event.server_id, status)
   }
 
+  const isServerConnected = (serverId: string): boolean => {
+    return connectionStatuses.value.get(serverId)?.connected ?? false
+  }
+
   const connectServer = async (serverId: string) => {
     const server = servers.value.find(s => s.id === serverId)
     if (!server) {
@@ -426,17 +430,27 @@ ${toolList}
   const initMcpStatusListener = async () => {
     if (unlistenMcpStatus) return
     unlistenMcpStatus = await listen('mcp_status_updated', (event) => {
-      applyStatusEvent(event.payload as { server_id: string; connected: boolean; error?: string | null; last_ping_at?: number | null; reconnect_attempts: number })
+      const payload = event.payload as { server_id: string; connected: boolean; error?: string | null; last_ping_at?: number | null; reconnect_attempts: number }
+      const wasConnected = isServerConnected(payload.server_id)
+      applyStatusEvent(payload)
+      if (!wasConnected && payload.connected) {
+        refreshAllTools()
+      }
     })
   }
 
+  let initialized = false
   const init = async () => {
-    await loadServers()
-    await initMcpStatusListener()
+    if (initialized) return
+    initialized = true
+    await Promise.all([
+      loadServers(),
+      loadPipelineConfig(),
+      loadConversationConfig(),
+      initMcpStatusListener(),
+    ])
     await Promise.all([refreshAllStatuses(), refreshAllTools()])
   }
-
-  init()
 
   const addServer = async (server: ServerConfig) => {
     isLoading.value = true
@@ -589,6 +603,7 @@ ${toolList}
     sessions,
     currentSession,
     isLoading,
+    init,
     loadServers,
     addServer,
     updateServer,

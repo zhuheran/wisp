@@ -1,21 +1,11 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref } from 'vue'
 import { NSplit, NEmpty, useThemeVars } from 'naive-ui'
-import { useMcpStore } from '../stores/mcp'
 import McpServerList from '../components/McpServerList.vue'
 import McpServerDetails from '../components/McpServerDetails.vue'
 
 const theme = useThemeVars()
-const mcpStore = useMcpStore()
 const selectedServerId = ref<string | null>(null)
-
-onMounted(async () => {
-  await Promise.all([
-    mcpStore.loadServers(),
-    mcpStore.loadPipelineConfig(),
-    mcpStore.loadConversationConfig(),
-  ])
-})
 </script>
 
 <template>
