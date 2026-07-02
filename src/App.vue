@@ -17,6 +17,7 @@ import {
   Bot24Regular,
   Cube24Regular,
   PlugConnected24Regular,
+  Settings24Regular,
 } from "@vicons/fluent";
 import useHighlightjs from "./composables/useHighlightjs";
 const hljs = useHighlightjs();
@@ -77,6 +78,11 @@ onMounted(() => {
               <router-link to="/mcp" active-class="sidebar-item-active">
                 <div class="sidebar-item">
                   <n-icon size="24"><PlugConnected24Regular /></n-icon>
+                </div>
+              </router-link>
+              <router-link to="/settings" active-class="sidebar-item-active">
+                <div class="sidebar-item">
+                  <n-icon size="24"><Settings24Regular /></n-icon>
                 </div>
               </router-link>
             </div>
