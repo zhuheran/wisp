@@ -219,6 +219,8 @@ pub async fn run_director_check<R: tauri::Runtime>(
     // 6. If invoke, create PalReply with source: Directed
     if decision.should_invoke {
         if let Some(pal_id) = decision.target_pal_id {
+        	println!("Director calls {}", pal_id);
+
             let pal = all_characters
                 .iter()
                 .find(|c| c.id == pal_id)
@@ -250,6 +252,9 @@ pub async fn run_director_check<R: tauri::Runtime>(
                 source: MessageSource::Directed,
             }));
         }
+    }
+    else {
+    	println!("Director believes no one should be called");
     }
 
     // 7. Return None if action: none

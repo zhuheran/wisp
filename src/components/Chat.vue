@@ -167,7 +167,10 @@ console.log(`[Chat] Message bubble culling enabled`);
   if (!chatStore.userInput.trim() && !imageInputRef.value?.hasImages) return;
 
   const images = imageInputRef.value?.getImagesForMessage?.() || [];
-  const targetPalIds = parseAtMentions(chatStore.userInput);
+  // NMention internally transforms @pal into special markers,
+  // so we use the tracked currentTargetPalIds instead of parsing text.
+  const targetPalIds = [...currentTargetPalIds.value];
+  currentTargetPalIds.value = [];
 
   const userMessage: Omit<Message, "id"> = {
     text: chatStore.userInput,
@@ -197,7 +200,7 @@ console.log(`[Chat] Message bubble culling enabled`);
   }
 
   chatStore
-    .sendMessage(userMessage, {
+    .sendMessage(userMessage, targetPalIds.length > 0 ? targetPalIds : undefined, {
       beforeSend: () => {
         chatStore.clearUserInput();
         imageInputRef.value?.clearImages();
@@ -311,17 +314,25 @@ const showEditor = (messageId: string) => {
 
 const mentionedPalIds = ref<Set<string>>(new Set());
 
+// NMention inserts `value` into the text (not `label`).
+// Use display name as value so text shows @Coder instead of @<uuid>.
 const mentionOptions = computed(() =>
   characterStore.characters.map(c => ({
-    label: c.alias ? `${c.name} (${c.alias})` : c.name,
-    value: c.id,
+    label: c.name,
+    value: c.name,
   }))
 );
 
+// Track selected pal IDs directly via @select event (NMention inserts
+// value=name into text, but we need the actual ID for backend routing).
+const currentTargetPalIds = ref<string[]>([]);
+
 function onMention(option: { label: string; value: string }) {
-  mentionedPalIds.value.add(option.value);
-  // Track in chat store for API call
-  chatStore.addMentionedPal?.(option.value);
+  const pal = characterStore.characters.find(c => c.name === option.value);
+  if (!pal) return;
+  mentionedPalIds.value.add(pal.id);
+  currentTargetPalIds.value.push(pal.id);
+  chatStore.addMentionedPal?.(pal.id);
 }
 
 function getPalName(palId: string): string {
@@ -330,19 +341,6 @@ function getPalName(palId: string): string {
 
 function removePal(palId: string) {
   mentionedPalIds.value.delete(palId);
-}
-
-function parseAtMentions(text: string): string[] {
-  const regex = /@(\w+)/g;
-  const ids: string[] = [];
-  let match;
-  while ((match = regex.exec(text)) !== null) {
-    const pal = characterStore.characters.find(
-      (c) => c.name === match[1] || c.alias === match[1]
-    );
-    if (pal) ids.push(pal.id);
-  }
-  return ids;
 }
 
 onMounted(() => {
@@ -557,7 +555,7 @@ onMounted(() => {
 <style scoped>
 .chat-container {
   display: grid;
-  grid-template-rows: 1fr auto;
+  grid-template-rows: auto 1fr auto;
   height: 100%;
 }
 

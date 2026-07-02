@@ -100,7 +100,10 @@ export const useChatStore = defineStore('chat', () => {
 		return Array.from(mentionedPalIds.value)
 	}
 
-	const sendMessage = async (message: Omit<Message, 'id'>, { beforeSend, onReceiving, onFinish }: Partial<SendMessageCallbacks> = {}, parentMessageId = lastMessageId.value ?? undefined, toolRound = 0): Promise<void> => {
+	const sendMessage = async (message: Omit<Message, 'id'>, targetPalIdsOrCallbacks?: string[] | Partial<SendMessageCallbacks>, callbacks?: Partial<SendMessageCallbacks>, parentMessageId = lastMessageId.value ?? undefined, toolRound = 0): Promise<void> => {
+				// Overload: if second arg is string[], treat as targetPalIds
+				const targetPalIds: string[] = Array.isArray(targetPalIdsOrCallbacks) ? targetPalIdsOrCallbacks : [];
+				const { beforeSend, onReceiving, onFinish } = Array.isArray(targetPalIdsOrCallbacks) ? (callbacks ?? {}) : (targetPalIdsOrCallbacks ?? {});
 		if (toolRound > 0) {
 			throw new Error('Rust-backed sendMessage does not support frontend continuation rounds')
 		}
@@ -162,7 +165,7 @@ export const useChatStore = defineStore('chat', () => {
 		})
 
 		try {
-			const targetPalIds = parseAtMentions(message.text)
+			const ids = targetPalIds.length > 0 ? targetPalIds : parseAtMentions(message.text)
 
 			await Commands.conversationSendMessage({
 				conversation_id: conversationId,
@@ -176,11 +179,11 @@ export const useChatStore = defineStore('chat', () => {
 					return acc
 				}, {} as Record<string, unknown>) ?? null,
 				character: currentCharacter.value,
-				target_pal_ids: targetPalIds.length > 0 ? targetPalIds : undefined,
+				target_pal_ids: ids.length > 0 ? ids : undefined,
 			})
 
 			// Track mentioned pals
-			targetPalIds.forEach(id => addMentionedPal(id))
+			ids.forEach(id => addMentionedPal(id))
 
 			failureTracker.throwIfFailed()
 			if (onFinish) await onFinish(latestAssistantText, latestAssistantReasoning || undefined)
