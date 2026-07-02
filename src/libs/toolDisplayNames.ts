@@ -42,14 +42,16 @@ export async function enrichDisplayNames(
     servers.find((s) => s.id === id)?.name ?? ''
 
   for (const tool of tools) {
-    const key = hashDescription(tool.description ?? '')
+    const desc = tool.description ?? ''
+    if (!desc) continue
+    const key = hashDescription(desc)
     if (cache[key]) tool.displayName = cache[key]
   }
 
   const uncached = tools.filter((t) => !t.displayName)
   if (uncached.length === 0) return
 
-  const dedupeKey = uncached.map((t) => t.name).join('|')
+  const dedupeKey = hashDescription(uncached.map((t) => t.name).slice().sort().join('\n'))
   if (inflight.has(dedupeKey)) {
     await inflight.get(dedupeKey)
     return
@@ -68,7 +70,8 @@ export async function enrichDisplayNames(
         const name = result[tool.name]
         if (name) {
           tool.displayName = name
-          toCache[hashDescription(tool.description ?? '')] = name
+          const desc = tool.description ?? ''
+          if (desc) toCache[hashDescription(desc)] = name
         }
       }
       if (Object.keys(toCache).length > 0) cacheDisplayNames(toCache)
