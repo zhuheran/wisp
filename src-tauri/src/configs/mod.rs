@@ -10,12 +10,20 @@ use tauri::{AppHandle, Manager};
 use thiserror::Error;
 use toml;
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChoreLlmRef {
+    pub provider: String,
+    pub model: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 struct Config {
     providers: Vec<provider::Provider>,
     characters: Vec<character::Character>,
     #[serde(default)]
     default_responder_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    chore_llm: Option<ChoreLlmRef>,
 }
 
 #[derive(Debug, Error)]
@@ -213,6 +221,22 @@ impl ConfigManager {
     pub fn set_default_responder(&self, character_id: Option<String>) -> Result<(), ConfigError> {
         let mut configs = self.configs.lock().unwrap();
         configs.default_responder_id = character_id;
+        std::mem::drop(configs);
+        self.save()?;
+        Ok(())
+    }
+
+    // ========== Chore LLM ==========
+
+    /// Get the chore LLM reference.
+    pub fn get_chore_llm(&self) -> Option<ChoreLlmRef> {
+        self.configs.lock().unwrap().chore_llm.clone()
+    }
+
+    /// Set the chore LLM reference.
+    pub fn set_chore_llm(&self, chore_llm: Option<ChoreLlmRef>) -> Result<(), ConfigError> {
+        let mut configs = self.configs.lock().unwrap();
+        configs.chore_llm = chore_llm;
         std::mem::drop(configs);
         self.save()?;
         Ok(())
