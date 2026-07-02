@@ -86,6 +86,13 @@ const toolColumns = [
   {
     title: 'Name',
     key: 'name',
+    render(row: RegisteredTool) {
+      return h(
+        'span',
+        { title: row.name },
+        row.displayName || row.name
+      )
+    },
   },
   {
     title: 'Description',
