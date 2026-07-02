@@ -70,7 +70,7 @@ const handleClear = async () => {
         </n-form-item>
         <n-space justify="end">
           <n-button @click="handleClear">Clear</n-button>
-          <n-button type="primary" @click="handleSave">Save</n-button>
+          <n-button type="primary" :disabled="!selectedModel" @click="handleSave">Save</n-button>
         </n-space>
       </n-form>
     </n-card>

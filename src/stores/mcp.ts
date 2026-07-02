@@ -201,7 +201,7 @@ export const useMcpStore = defineStore('mcp', () => {
         originalName: typeof tool.metadata?.original_name === 'string' ? tool.metadata.original_name : undefined,
         enabled: tool.enabled,
       }))
-      await enrichDisplayNames(tools.value, servers.value)
+      void enrichDisplayNames(tools.value, servers.value)
     } catch (e) {
       console.error('Failed to refresh registry tools:', e)
     }
