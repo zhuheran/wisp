@@ -12,6 +12,7 @@ mod mcp_http;
 mod image;
 mod conversation;
 mod tool_registry;
+mod chore;
 use tauri::{Builder, Manager};
 
 use db::chat::Chat;
@@ -152,6 +153,7 @@ pub fn run() {
 			            tool_registry::registry_execute,
 			            tool_registry::registry_set_enabled,
 			            tool_registry::registry_refresh,
+			chore::mcp_generate_tool_display_names,
 			// Image commands
 			image::compress_image,
 			image::get_image_info,
