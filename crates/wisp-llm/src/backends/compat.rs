@@ -36,7 +36,7 @@ pub(crate) fn build_chat_body(req: &StreamRequest) -> Value {
     if let Some(params) = &req.parameters {
         apply_parameters(&mut body, params);
     } else {
-        body["max_tokens"] = json!(1024);
+        body["max_tokens"] = json!(10240);
     }
 
     if !req.tools.is_empty() {
@@ -131,7 +131,7 @@ pub(crate) async fn stream_with_body(
         let line = {
             let bytes = buf.drain(..=nl).collect::<Vec<u8>>();
             let s = std::str::from_utf8(&bytes).unwrap_or("");
-            s.strip_suffix('\r').unwrap_or(s).to_string()
+            s.trim_end_matches(|c| c == '\r' || c == '\n').to_string()
         };
 
         if line.is_empty() {
@@ -202,25 +202,10 @@ pub(crate) async fn stream_with_body(
 }
 
 fn apply_parameters(body: &mut Value, params: &HashMap<String, Value>) {
-    if let Some(temp) = params.get("temperature").and_then(|v| v.as_f64()) {
-        body["temperature"] = json!(temp as f32);
-    }
-    if let Some(top_p) = params.get("top_p").and_then(|v| v.as_f64()) {
-        body["top_p"] = json!(top_p as f32);
-    }
-    if let Some(max_tokens) = params.get("max_tokens").and_then(|v| v.as_i64()) {
-        body["max_tokens"] = json!(max_tokens as u32);
-    } else {
-        body["max_tokens"] = json!(1024u32);
-    }
-    if let Some(penalty) = params.get("presence_penalty").and_then(|v| v.as_f64()) {
-        body["presence_penalty"] = json!(penalty as f32);
-    }
-    if let Some(penalty) = params.get("frequency_penalty").and_then(|v| v.as_f64()) {
-        body["frequency_penalty"] = json!(penalty as f32);
-    }
-    if let Some(seed) = params.get("seed").and_then(|v| v.as_i64()) {
-        body["seed"] = json!(seed as i32);
+    if let Some(body_obj) = body.as_object_mut() {
+        for (key, value) in params {
+            body_obj.insert(key.clone(), value.clone());
+        }
     }
 }
 
@@ -229,28 +214,33 @@ mod tests {
     use super::*;
 
     #[test]
-    fn apply_parameters_sets_max_tokens_default() {
+    fn apply_parameters_forwards_all_entries() {
+        let mut body = json!({"model": "test", "messages": [], "stream": true});
+        let mut params = HashMap::new();
+        params.insert("max_tokens".to_string(), json!(4096));
+        params.insert("temperature".to_string(), json!(0.5));
+        params.insert("reasoning_effort".to_string(), json!("high"));
+        apply_parameters(&mut body, &params);
+        assert_eq!(body["max_tokens"], json!(4096));
+        assert_eq!(body["temperature"], json!(0.5));
+        assert_eq!(body["reasoning_effort"], "high");
+    }
+
+    #[test]
+    fn apply_parameters_does_nothing_when_empty() {
         let mut body = json!({"model": "test", "messages": [], "stream": true});
         let params = HashMap::new();
         apply_parameters(&mut body, &params);
-        assert_eq!(body["max_tokens"], json!(1024u32));
+        assert!(body.get("max_tokens").is_none());
+        assert_eq!(body["model"], "test");
     }
 
     #[test]
-    fn apply_parameters_respects_explicit_max_tokens() {
-        let mut body = json!({});
+    fn apply_parameters_overwrites_existing_keys() {
+        let mut body = json!({"model": "test", "temperature": 1.0});
         let mut params = HashMap::new();
-        params.insert("max_tokens".to_string(), json!(4096));
+        params.insert("temperature".to_string(), json!(0.2));
         apply_parameters(&mut body, &params);
-        assert_eq!(body["max_tokens"], json!(4096u32));
-    }
-
-    #[test]
-    fn apply_parameters_sets_temperature() {
-        let mut body = json!({});
-        let mut params = HashMap::new();
-        params.insert("temperature".to_string(), json!(0.5));
-        apply_parameters(&mut body, &params);
-        assert_eq!(body["temperature"], json!(0.5f32));
+        assert_eq!(body["temperature"], json!(0.2));
     }
 }
