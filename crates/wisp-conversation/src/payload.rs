@@ -128,6 +128,44 @@ fn convert_assistant_message_deepseek(message: &Message) -> Value {
     Value::Object(msg)
 }
 
+pub fn build_openai_messages_compat_reasoning(messages: &[Message]) -> Vec<Value> {
+    let mut converted = Vec::with_capacity(messages.len());
+
+    for message in messages {
+        match message.sender {
+            MessageRole::User => converted.push(convert_user_message_value(message)),
+            MessageRole::Assistant => {
+                converted.push(convert_assistant_message_compat(message));
+            }
+            MessageRole::System => converted.push(json!({
+                "role": "system",
+                "content": message.text,
+            })),
+            MessageRole::Tool => converted.push(json!({
+                "role": "system",
+                "content": message.text,
+            })),
+        }
+    }
+
+    converted
+}
+
+fn convert_assistant_message_compat(message: &Message) -> Value {
+    let mut msg = serde_json::Map::new();
+    msg.insert("role".to_string(), json!("assistant"));
+    let text = reconstruct_tool_call_text(message);
+    msg.insert("content".to_string(), json!(text));
+
+    if let Some(reasoning) = &message.reasoning {
+        if !reasoning.is_empty() {
+            msg.insert("reasoning_content".to_string(), json!(reasoning));
+        }
+    }
+
+    Value::Object(msg)
+}
+
 /// 格式化 tool call 的结果成 AI 可读的结构化文本（存储到 DB + 构建 system message 用）
 pub fn format_tool_result(call: &ConversationToolCall) -> String {
     let result = match &call.result {
@@ -277,5 +315,23 @@ mod tests {
         );
         let converted = build_openai_messages_with_reasoning(&[msg], true);
         assert_eq!(converted[0]["reasoning_content"], "");
+    }
+
+    #[test]
+    fn compat_includes_reasoning_when_present() {
+        let msg = message_with_reasoning_and_tools(
+            "answer",
+            Some("thinking..."),
+            Some(r#"[{"name":"x","arguments":{}}]"#),
+        );
+        let converted = build_openai_messages_compat_reasoning(&[msg]);
+        assert_eq!(converted[0]["reasoning_content"], "thinking...");
+    }
+
+    #[test]
+    fn compat_omits_reasoning_when_empty() {
+        let msg = message_with_reasoning_and_tools("answer", Some(""), None);
+        let converted = build_openai_messages_compat_reasoning(&[msg]);
+        assert!(converted[0].get("reasoning_content").is_none());
     }
 }

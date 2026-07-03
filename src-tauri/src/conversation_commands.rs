@@ -12,7 +12,8 @@ use wisp_configs::provider::ApiType;
 use crate::abort::AbortRegistry;
 use crate::orchestrator;
 use wisp_conversation::payload::{
-    build_openai_messages_value, build_openai_messages_with_reasoning, format_tool_result,
+    build_openai_messages_value, build_openai_messages_with_reasoning,
+    build_openai_messages_compat_reasoning, format_tool_result,
 };
 use wisp_conversation::tool_parser::parse_tool_calls;
 use wisp_conversation::{ConversationToolCall, ConversationToolContent, ConversationToolResult};
@@ -320,7 +321,8 @@ async fn run_conversation_rounds_inner<R: tauri::Runtime>(
 
         let mut openai_messages = match provider.api_type {
             ApiType::DeepSeek => build_openai_messages_with_reasoning(&path, true),
-            _ => build_openai_messages_value(&path),
+            ApiType::OpenAiCompatible => build_openai_messages_compat_reasoning(&path),
+            ApiType::OpenAi => build_openai_messages_value(&path),
         };
 
         let enabled_tools = resolve_enabled_mcp_tools(app_handle).await?;

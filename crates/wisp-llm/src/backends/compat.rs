@@ -146,6 +146,18 @@ impl LlmBackend for OpenAiCompatBackend {
                                     outcome.reasoning.push_str(reasoning);
                                     (req.callbacks.on_reasoning)(reasoning);
                                 }
+                                if let Some(reasoning_details) =
+                                    delta.get("reasoning_details").and_then(|c| c.as_array())
+                                {
+                                    for detail in reasoning_details {
+                                        if let Some(text) =
+                                            detail.get("text").and_then(|t| t.as_str())
+                                        {
+                                            outcome.reasoning.push_str(text);
+                                            (req.callbacks.on_reasoning)(text);
+                                        }
+                                    }
+                                }
                                 if let Some(tool_calls) =
                                     delta.get("tool_calls").and_then(|c| c.as_array())
                                 {
