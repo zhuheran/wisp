@@ -13,6 +13,7 @@ wisp-db = { path = "crates/wisp-db" }
 wisp-configs = { path = "crates/wisp-configs" }
 wisp-llm = { path = "crates/wisp-llm" }
 wisp-mcp = { path = "crates/wisp-mcp" }
+wisp-tool-registry = { path = "crates/wisp-tool-registry" }
 wisp-conversation = { path = "crates/wisp-conversation" }
 
 serde = { version = "1", features = ["derive"] }
