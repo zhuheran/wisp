@@ -53,7 +53,16 @@ fn convert_user_message_value(message: &Message) -> Value {
 }
 
 fn convert_assistant_message_value(message: &Message) -> Value {
-    let text = if let Some(raw_calls) = &message.tool_calls {
+    let text = reconstruct_tool_call_text(message);
+
+    json!({
+        "role": "assistant",
+        "content": text,
+    })
+}
+
+fn reconstruct_tool_call_text(message: &Message) -> String {
+    if let Some(raw_calls) = &message.tool_calls {
         let simplified: Vec<Value> = serde_json::from_str::<Vec<Value>>(raw_calls)
             .unwrap_or_default()
             .into_iter()
@@ -71,12 +80,52 @@ fn convert_assistant_message_value(message: &Message) -> Value {
         }
     } else {
         message.text.clone()
-    };
+    }
+}
 
-    json!({
-        "role": "assistant",
-        "content": text,
-    })
+pub fn build_openai_messages_with_reasoning(
+    messages: &[Message],
+    include_reasoning_on_tool_turns: bool,
+) -> Vec<Value> {
+    let mut converted = Vec::with_capacity(messages.len());
+
+    for message in messages {
+        match message.sender {
+            MessageRole::User => converted.push(convert_user_message_value(message)),
+            MessageRole::Assistant => {
+                if include_reasoning_on_tool_turns {
+                    converted.push(convert_assistant_message_deepseek(message));
+                } else {
+                    converted.push(convert_assistant_message_value(message));
+                }
+            }
+            MessageRole::System => converted.push(json!({
+                "role": "system",
+                "content": message.text,
+            })),
+            MessageRole::Tool => converted.push(json!({
+                "role": "system",
+                "content": message.text,
+            })),
+        }
+    }
+
+    converted
+}
+
+fn convert_assistant_message_deepseek(message: &Message) -> Value {
+    let mut msg = serde_json::Map::new();
+    msg.insert("role".to_string(), json!("assistant"));
+
+    let text = reconstruct_tool_call_text(message);
+    msg.insert("content".to_string(), json!(text));
+
+    if message.tool_calls.is_some() {
+        let reasoning = message.reasoning.as_deref().unwrap_or("");
+        msg.insert("reasoning_content".to_string(), json!(reasoning));
+    }
+
+    Value::Object(msg)
 }
 
 /// 格式化 tool call 的结果成 AI 可读的结构化文本（存储到 DB + 构建 system message 用）
@@ -143,6 +192,16 @@ mod tests {
         }
     }
 
+    fn message_with_reasoning_and_tools(
+        text: &str,
+        reasoning: Option<&str>,
+        tool_calls: Option<&str>,
+    ) -> Message {
+        let mut msg = message(MessageRole::Assistant, text, tool_calls.map(|s| s.to_string()));
+        msg.reasoning = reasoning.map(|s| s.to_string());
+        msg
+    }
+
     #[test]
     fn value_assistant_message_is_sent_as_plain_text() {
         let messages = vec![
@@ -188,5 +247,35 @@ mod tests {
         let converted = build_openai_messages_value(&[message(MessageRole::Assistant, "hello", None)]);
         assert_eq!(converted[0]["role"], "assistant");
         assert_eq!(converted[0]["content"], "hello");
+    }
+
+    #[test]
+    fn deepseek_includes_reasoning_on_tool_turns() {
+        let msg = message_with_reasoning_and_tools(
+            "answer",
+            Some("thinking..."),
+            Some(r#"[{"name":"x","arguments":{}}]"#),
+        );
+        let converted = build_openai_messages_with_reasoning(&[msg], true);
+        assert_eq!(converted[0]["role"], "assistant");
+        assert_eq!(converted[0]["reasoning_content"], "thinking...");
+    }
+
+    #[test]
+    fn deepseek_omits_reasoning_on_plain_turns() {
+        let msg = message_with_reasoning_and_tools("answer", Some("thinking..."), None);
+        let converted = build_openai_messages_with_reasoning(&[msg], true);
+        assert!(converted[0].get("reasoning_content").is_none());
+    }
+
+    #[test]
+    fn deepseek_empty_reasoning_on_tool_turns_when_none_stored() {
+        let msg = message_with_reasoning_and_tools(
+            "answer",
+            None,
+            Some(r#"[{"name":"x","arguments":{}}]"#),
+        );
+        let converted = build_openai_messages_with_reasoning(&[msg], true);
+        assert_eq!(converted[0]["reasoning_content"], "");
     }
 }

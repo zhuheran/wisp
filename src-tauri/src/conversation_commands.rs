@@ -8,9 +8,12 @@ use wisp_llm::{backend_for, StreamCallbacks, StreamRequest, ToolChoice};
 use wisp_llm::ToolDefinition as LlmToolDefinition;
 use wisp_configs::character::Character;
 use wisp_configs::provider::Provider;
+use wisp_configs::provider::ApiType;
 use crate::abort::AbortRegistry;
 use crate::orchestrator;
-use wisp_conversation::payload::{build_openai_messages_value, format_tool_result};
+use wisp_conversation::payload::{
+    build_openai_messages_value, build_openai_messages_with_reasoning, format_tool_result,
+};
 use wisp_conversation::tool_parser::parse_tool_calls;
 use wisp_conversation::{ConversationToolCall, ConversationToolContent, ConversationToolResult};
 use wisp_common::MessageSource;
@@ -315,7 +318,10 @@ async fn run_conversation_rounds_inner<R: tauri::Runtime>(
                 .map_err(|error| format!("Failed to build message path for conversation '{}' from leaf '{}': {}", conversation_id, current_leaf_id, error))?
         };
 
-        let mut openai_messages = build_openai_messages_value(&path);
+        let mut openai_messages = match provider.api_type {
+            ApiType::DeepSeek => build_openai_messages_with_reasoning(&path, true),
+            _ => build_openai_messages_value(&path),
+        };
 
         let enabled_tools = resolve_enabled_mcp_tools(app_handle).await?;
         let tools_prompt = build_enabled_tools_prompt(&enabled_tools);
