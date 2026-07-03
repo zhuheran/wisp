@@ -50,11 +50,6 @@ impl LlmBackend for OpenAiCompatBackend {
             return Err(LlmError::Api { status, body });
         }
 
-        // Parse the SSE byte stream inline. reqwest-sse 0.2's `.events()` returns a
-        // non-`Send` `dyn Stream`, which cannot be held across `.await` inside a
-        // `Send` `async_trait` future. Reading `bytes_stream()` (which is `Send`) and
-        // parsing the SSE wire format ourselves keeps the future `Send` while still
-        // delegating `[DONE]` detection and JSON parsing to `crate::sse`.
         let mut byte_stream = response.bytes_stream();
         let mut outcome = StreamOutcome::default();
         let mut buf: Vec<u8> = Vec::new();
@@ -66,7 +61,6 @@ impl LlmBackend for OpenAiCompatBackend {
                 return Err(LlmError::Cancelled);
             }
 
-            // Drive the byte stream until we have a full line to process, or it ends.
             loop {
                 if buf.iter().any(|&b| b == b'\n') {
                     break;
@@ -78,11 +72,9 @@ impl LlmBackend for OpenAiCompatBackend {
                 }
             }
 
-            // Extract a single line (up to and including the first '\n').
             let nl = match buf.iter().position(|&b| b == b'\n') {
                 Some(i) => i,
                 None => {
-                    // Stream ended without a trailing newline; flush any remainder.
                     if buf.is_empty() && data_acc.is_empty() {
                         break;
                     }
@@ -97,7 +89,6 @@ impl LlmBackend for OpenAiCompatBackend {
             };
 
             if line.is_empty() {
-                // Blank line dispatches the accumulated event.
                 if data_acc.is_empty() {
                     continue;
                 }
@@ -140,7 +131,6 @@ impl LlmBackend for OpenAiCompatBackend {
                 }
                 data_acc.push_str(data);
             }
-            // Other SSE fields (event:, id:, retry:, comments) are intentionally ignored.
         }
 
         Ok(outcome)
