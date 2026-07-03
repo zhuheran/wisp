@@ -163,11 +163,14 @@ export interface Model {
 	api_endpoint?: string;
 }
 
+export type ApiType = 'open_ai' | 'deep_seek' | 'open_ai_compatible';
+
 export interface Provider {
 	name: string;
 	display_name: string;
 	base_url: string;
 	models: Model[];
+	api_type?: ApiType;
 }
 
 // ========== MCP Types ==========

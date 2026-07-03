@@ -3,12 +3,23 @@ use wisp_keyring::{KeyManager, KeyManagerError};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum ApiType {
+    OpenAi,
+    DeepSeek,
+    #[default]
+    OpenAiCompatible,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Provider {
     pub name: String,
     pub display_name: String,
     pub base_url: String,
     pub models: Vec<Model>,
+    #[serde(default)]
+    pub api_type: ApiType,
 }
 
 #[derive(Error, Debug)]
