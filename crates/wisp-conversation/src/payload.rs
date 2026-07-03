@@ -79,6 +79,25 @@ fn convert_assistant_message_with_policy(message: &Message, config: &ReasoningCo
     msg.insert("role".to_string(), json!("assistant"));
     msg.insert("content".to_string(), json!(text));
 
+    if let Some(tc_json) = &message.tool_calls {
+        if let Ok(calls) = serde_json::from_str::<Vec<crate::types::ConversationToolCall>>(tc_json) {
+            let openai_tool_calls: Vec<Value> = calls.iter().map(|call| {
+                let args = serde_json::to_string(&call.arguments).unwrap_or_default();
+                json!({
+                    "id": call.id,
+                    "type": "function",
+                    "function": {
+                        "name": call.name,
+                        "arguments": args,
+                    }
+                })
+            }).collect();
+            if !openai_tool_calls.is_empty() {
+                msg.insert("tool_calls".to_string(), json!(openai_tool_calls));
+            }
+        }
+    }
+
     let include_reasoning = match config.policy {
         ReasoningPassback::Never => false,
         ReasoningPassback::Always => message.reasoning.as_deref().map(|r| !r.is_empty()).unwrap_or(false),
@@ -302,5 +321,27 @@ mod tests {
         };
         let converted = build_openai_messages_with_reasoning(&[msg], &config);
         assert!(converted[0].get("reasoning_content").is_none());
+    }
+
+    #[test]
+    fn assistant_with_tool_calls_includes_openai_format() {
+        let msg = message_with_reasoning_and_tools(
+            "",
+            Some("thinking..."),
+            Some(r#"[{"id":"call_1","name":"get_weather","arguments":{"location":"Hangzhou"}}]"#),
+        );
+        let config = ReasoningConfig {
+            field_name: "reasoning_content",
+            policy: ReasoningPassback::ToolTurnsOnly,
+        };
+        let converted = build_openai_messages_with_reasoning(&[msg], &config);
+        let tool_calls = converted[0]["tool_calls"].as_array().unwrap();
+        assert_eq!(tool_calls[0]["id"], "call_1");
+        assert_eq!(tool_calls[0]["type"], "function");
+        assert_eq!(tool_calls[0]["function"]["name"], "get_weather");
+        assert_eq!(
+            tool_calls[0]["function"]["arguments"],
+            r#"{"location":"Hangzhou"}"#
+        );
     }
 }
