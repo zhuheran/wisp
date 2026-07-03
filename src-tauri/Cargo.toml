@@ -20,6 +20,7 @@ wisp-configs.workspace = true
 wisp-llm.workspace = true
 wisp-mcp.workspace = true
 wisp-tool-registry.workspace = true
+wisp-software-tools.workspace = true
 wisp-conversation.workspace = true
 
 tauri = { version = "2.11", features = ["macos-private-api", "test"] }
