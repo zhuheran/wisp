@@ -27,5 +27,5 @@ dist-ssr
 
 .VSCodeCounter
 
-/target/
+/target
 Cargo.lock
