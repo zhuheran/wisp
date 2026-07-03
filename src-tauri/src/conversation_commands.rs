@@ -4,7 +4,8 @@ use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, Manager};
 use uuid::Uuid;
 
-use wisp_llm::{backend_for, StreamCallbacks, StreamRequest};
+use wisp_llm::{backend_for, StreamCallbacks, StreamRequest, ToolChoice};
+use wisp_llm::ToolDefinition as LlmToolDefinition;
 use wisp_configs::character::Character;
 use wisp_configs::provider::Provider;
 use crate::abort::AbortRegistry;
@@ -318,6 +319,14 @@ async fn run_conversation_rounds_inner<R: tauri::Runtime>(
 
         let enabled_tools = resolve_enabled_mcp_tools(app_handle).await?;
         let tools_prompt = build_enabled_tools_prompt(&enabled_tools);
+        let tool_defs: Vec<LlmToolDefinition> = enabled_tools
+            .iter()
+            .map(|t| LlmToolDefinition {
+                name: t.name.clone(),
+                description: t.description.clone().unwrap_or_default(),
+                parameters: t.input_schema.clone(),
+            })
+            .collect();
 
         let mut system_prompt_sections = Vec::new();
         if let Some(character) = &character {
@@ -405,6 +414,8 @@ async fn run_conversation_rounds_inner<R: tauri::Runtime>(
                 parameters: parameters.clone(),
                 callbacks,
                 cancel: cancel.clone(),
+                tools: tool_defs,
+                tool_choice: ToolChoice::Auto,
             })
             .await
             .map_err(|error| format!(
@@ -413,12 +424,16 @@ async fn run_conversation_rounds_inner<R: tauri::Runtime>(
             ))?;
 
         let parsed = parse_tool_calls(&outcome.text);
-        let calls = parsed
+        let native_calls = wisp_conversation::merge_tool_call_deltas(&outcome.tool_call_deltas);
+        let mut calls = parsed
             .calls
             .into_iter()
             .filter(|call| !call.name.trim().is_empty())
             .filter(|call| call.arguments.is_object())
             .collect::<Vec<_>>();
+        if !native_calls.is_empty() {
+            calls = native_calls;
+        }
         let assistant_message = Message {
             id: assistant_message_id.clone(),
             text: parsed.clean_text.clone(),

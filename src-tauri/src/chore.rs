@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tauri::{AppHandle, Manager, Runtime};
 use tokio_util::sync::CancellationToken;
-use wisp_llm::{backend_for, StreamCallbacks, StreamRequest};
+use wisp_llm::{backend_for, StreamCallbacks, StreamRequest, ToolChoice};
 
 pub fn parse_display_names(raw: &str) -> HashMap<String, String> {
     let trimmed = raw
@@ -103,6 +103,8 @@ pub async fn chore_complete<R: Runtime>(
             ])),
             callbacks,
             cancel: CancellationToken::new(),
+            tools: vec![],
+            tool_choice: ToolChoice::default(),
         })
         .await
         .map_err(|e| format!("chore completion failed for model '{model}': {e}"))?;

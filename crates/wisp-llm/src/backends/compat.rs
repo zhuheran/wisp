@@ -5,7 +5,7 @@ use futures::StreamExt;
 use serde_json::{json, Value};
 use wisp_keyring::KeyManager;
 
-use crate::backend::{LlmBackend, StreamOutcome, StreamRequest};
+use crate::backend::{LlmBackend, StreamOutcome, StreamRequest, ToolChoice};
 use crate::error::LlmError;
 use crate::sse;
 
@@ -33,6 +33,32 @@ impl LlmBackend for OpenAiCompatBackend {
             apply_parameters(&mut body, params);
         } else {
             body["max_tokens"] = json!(1024);
+        }
+
+        if !req.tools.is_empty() {
+            let tools_json: Vec<Value> = req
+                .tools
+                .iter()
+                .map(|t| {
+                    json!({
+                        "type": "function",
+                        "function": {
+                            "name": t.name,
+                            "description": t.description,
+                            "parameters": t.parameters,
+                        }
+                    })
+                })
+                .collect();
+            body["tools"] = json!(tools_json);
+            body["tool_choice"] = match &req.tool_choice {
+                ToolChoice::Auto => json!("auto"),
+                ToolChoice::None => json!("none"),
+                ToolChoice::Required => json!("required"),
+                ToolChoice::Specific(name) => {
+                    json!({"type": "function", "function": {"name": name}})
+                }
+            };
         }
 
         let client = reqwest::Client::new();
@@ -119,6 +145,13 @@ impl LlmBackend for OpenAiCompatBackend {
                                 {
                                     outcome.reasoning.push_str(reasoning);
                                     (req.callbacks.on_reasoning)(reasoning);
+                                }
+                                if let Some(tool_calls) =
+                                    delta.get("tool_calls").and_then(|c| c.as_array())
+                                {
+                                    for tc in tool_calls {
+                                        outcome.tool_call_deltas.push(tc.clone());
+                                    }
                                 }
                             }
                         }

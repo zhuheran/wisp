@@ -15,6 +15,27 @@ pub struct StreamCallbacks {
     pub on_reasoning: ChunkCallback,
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ToolDefinition {
+    pub name: String,
+    pub description: String,
+    pub parameters: serde_json::Value,
+}
+
+#[derive(Debug, Clone)]
+pub enum ToolChoice {
+    Auto,
+    None,
+    Required,
+    Specific(String),
+}
+
+impl Default for ToolChoice {
+    fn default() -> Self {
+        ToolChoice::Auto
+    }
+}
+
 pub struct StreamRequest {
     pub messages: Vec<Value>,
     pub model: String,
@@ -22,12 +43,15 @@ pub struct StreamRequest {
     pub parameters: Option<HashMap<String, Value>>,
     pub callbacks: StreamCallbacks,
     pub cancel: CancellationToken,
+    pub tools: Vec<ToolDefinition>,
+    pub tool_choice: ToolChoice,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct StreamOutcome {
     pub text: String,
     pub reasoning: String,
+    pub tool_call_deltas: Vec<Value>,
 }
 
 #[async_trait::async_trait]

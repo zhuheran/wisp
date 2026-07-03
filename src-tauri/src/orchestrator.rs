@@ -270,7 +270,7 @@ async fn call_llm_with_pal_config<R: tauri::Runtime>(
 ) -> Result<String, String> {
     use std::sync::Arc;
     use tokio_util::sync::CancellationToken;
-    use wisp_llm::{backend_for, StreamCallbacks, StreamRequest};
+    use wisp_llm::{backend_for, StreamCallbacks, StreamRequest, ToolChoice};
 
     let api_messages: Vec<serde_json::Value> =
         wisp_conversation::payload::build_openai_messages_value(messages);
@@ -288,6 +288,8 @@ async fn call_llm_with_pal_config<R: tauri::Runtime>(
             parameters: parameters.cloned(),
             callbacks,
             cancel: CancellationToken::new(),
+            tools: vec![],
+            tool_choice: ToolChoice::default(),
         })
         .await
         .map_err(|e: wisp_llm::LlmError| format!("LLM call failed: {}", e))?;

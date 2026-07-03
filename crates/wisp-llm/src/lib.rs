@@ -3,7 +3,10 @@ pub mod error;
 pub mod sse;
 pub mod backends;
 
-pub use backend::{LlmBackend, StreamRequest, StreamOutcome, StreamCallbacks, ChunkCallback};
+pub use backend::{
+    ChunkCallback, LlmBackend, StreamCallbacks, StreamRequest, StreamOutcome, ToolChoice,
+    ToolDefinition,
+};
 pub use error::LlmError;
 
 use std::sync::Arc;
