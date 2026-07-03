@@ -139,7 +139,9 @@ export const useChatStore = defineStore('chat', () => {
 				failureTracker.handleEvent(event)
 			}
 		})
+		const streamId = crypto.randomUUID();
 		const unlistenContent = await listen<ConversationStreamChunkEvent>('conversation_stream_chunk', (event) => {
+			if (event.payload.stream_id && event.payload.stream_id !== streamId) return;
 			const mid = event.payload.message_id
 			const chunk = event.payload.chunk
 			if (mid) {
@@ -152,6 +154,7 @@ export const useChatStore = defineStore('chat', () => {
 			if (onReceiving) onReceiving(chunk, false)
 		})
 		const unlistenReasoning = await listen<ConversationStreamChunkEvent>('conversation_stream_reasoning', (event) => {
+			if (event.payload.stream_id && event.payload.stream_id !== streamId) return;
 			const mid = event.payload.message_id
 			const chunk = event.payload.chunk
 			if (mid) {
@@ -180,6 +183,7 @@ export const useChatStore = defineStore('chat', () => {
 				}, {} as Record<string, unknown>) ?? null,
 				character: currentCharacter.value,
 				target_pal_ids: ids.length > 0 ? ids : undefined,
+				stream_id: streamId,
 			})
 
 			// Track mentioned pals
@@ -232,7 +236,9 @@ export const useChatStore = defineStore('chat', () => {
 				}
 			}
 		})
+		const streamId = crypto.randomUUID();
 		const unlistenContent = await listen<ConversationStreamChunkEvent>('conversation_stream_chunk', (event) => {
+			if (event.payload.stream_id && event.payload.stream_id !== streamId) return;
 			const mid = event.payload.message_id
 			const chunk = event.payload.chunk
 			if (mid) {
@@ -245,6 +251,7 @@ export const useChatStore = defineStore('chat', () => {
 			if (onReceiving) onReceiving(chunk, false)
 		})
 		const unlistenReasoning = await listen<ConversationStreamChunkEvent>('conversation_stream_reasoning', (event) => {
+			if (event.payload.stream_id && event.payload.stream_id !== streamId) return;
 			const mid = event.payload.message_id
 			const chunk = event.payload.chunk
 			if (mid) {
@@ -269,6 +276,7 @@ export const useChatStore = defineStore('chat', () => {
 					return acc
 				}, {} as Record<string, unknown>) ?? null,
 				character: currentCharacter.value,
+				stream_id: streamId,
 			})
 			failureTracker.throwIfFailed()
 			if (onFinish) await onFinish(latestAssistantText, latestAssistantReasoning || undefined)
@@ -314,7 +322,9 @@ export const useChatStore = defineStore('chat', () => {
 				}
 			}
 		})
+		const streamId = crypto.randomUUID();
 		const unlistenContent = await listen<ConversationStreamChunkEvent>('conversation_stream_chunk', (event) => {
+			if (event.payload.stream_id && event.payload.stream_id !== streamId) return;
 			const mid = event.payload.message_id
 			const chunk = event.payload.chunk
 			if (mid) {
@@ -327,6 +337,7 @@ export const useChatStore = defineStore('chat', () => {
 			if (onReceiving) onReceiving(chunk, false)
 		})
 		const unlistenReasoning = await listen<ConversationStreamChunkEvent>('conversation_stream_reasoning', (event) => {
+			if (event.payload.stream_id && event.payload.stream_id !== streamId) return;
 			const mid = event.payload.message_id
 			const chunk = event.payload.chunk
 			if (mid) {
@@ -351,6 +362,7 @@ export const useChatStore = defineStore('chat', () => {
 					return acc
 				}, {} as Record<string, unknown>) ?? null,
 				character: currentCharacter.value,
+				stream_id: streamId,
 			})
 			failureTracker.throwIfFailed()
 			if (onFinish) await onFinish(latestAssistantText, latestAssistantReasoning || undefined)
@@ -396,7 +408,9 @@ export const useChatStore = defineStore('chat', () => {
 				}
 			}
 		})
+		const streamId = crypto.randomUUID();
 		const unlistenContent = await listen<ConversationStreamChunkEvent>('conversation_stream_chunk', (event) => {
+			if (event.payload.stream_id && event.payload.stream_id !== streamId) return;
 			const mid = event.payload.message_id
 			const chunk = event.payload.chunk
 			if (mid) {
@@ -409,6 +423,7 @@ export const useChatStore = defineStore('chat', () => {
 			if (onReceiving) onReceiving(chunk, false)
 		})
 		const unlistenReasoning = await listen<ConversationStreamChunkEvent>('conversation_stream_reasoning', (event) => {
+			if (event.payload.stream_id && event.payload.stream_id !== streamId) return;
 			const mid = event.payload.message_id
 			const chunk = event.payload.chunk
 			if (mid) {
@@ -433,6 +448,7 @@ export const useChatStore = defineStore('chat', () => {
 					return acc
 				}, {} as Record<string, unknown>) ?? null,
 				character: currentCharacter.value,
+				stream_id: streamId,
 			})
 			failureTracker.throwIfFailed()
 			if (onFinish) await onFinish(latestAssistantText, latestAssistantReasoning || undefined)

@@ -364,6 +364,7 @@ export interface ConversationSendRequest {
 	parameters?: Record<string, unknown> | null;
 	character?: Character | null;
 	target_pal_ids?: string[];
+	stream_id?: string;
 }
 
 export interface ConversationRegenerateRequest {
@@ -374,6 +375,7 @@ export interface ConversationRegenerateRequest {
 	provider: Provider;
 	parameters?: Record<string, unknown> | null;
 	character?: Character | null;
+	stream_id?: string;
 }
 
 export interface ConversationDeriveRequest {
@@ -384,6 +386,7 @@ export interface ConversationDeriveRequest {
 	provider: Provider;
 	parameters?: Record<string, unknown> | null;
 	character?: Character | null;
+	stream_id?: string;
 }
 
 export type ConversationEventPayload =
@@ -393,6 +396,7 @@ export type ConversationEventPayload =
 	| { type: 'failed'; error: string };
 
 export interface ConversationStreamChunkEvent {
+	stream_id?: string | null;
 	message_id?: string | null;
 	chunk: string;
 }

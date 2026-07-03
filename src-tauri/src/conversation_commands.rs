@@ -29,6 +29,8 @@ pub struct ConversationSendRequest {
     pub character: Option<Character>,
     #[serde(default)]
     pub target_pal_ids: Option<Vec<String>>,
+    #[serde(default)]
+    pub stream_id: Option<String>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -40,6 +42,8 @@ pub struct ConversationRegenerateRequest {
     pub provider: Provider,
     pub parameters: Option<HashMap<String, serde_json::Value>>,
     pub character: Option<Character>,
+    #[serde(default)]
+    pub stream_id: Option<String>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -53,6 +57,8 @@ pub struct ConversationDeriveRequest {
     pub character: Option<Character>,
     #[serde(default)]
     pub target_pal_ids: Option<Vec<String>>,
+    #[serde(default)]
+    pub stream_id: Option<String>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -265,6 +271,7 @@ async fn run_conversation_rounds<R: tauri::Runtime>(
     provider: Provider,
     parameters: Option<HashMap<String, serde_json::Value>>,
     character: Option<Character>,
+    stream_id: String,
 ) -> Result<String, String> {
     let pal_id = character.as_ref().map(|c| c.id.clone());
     let pal_name = character.as_ref().map(|c| c.name.clone());
@@ -333,12 +340,14 @@ async fn run_conversation_rounds<R: tauri::Runtime>(
 
         let cancel = CancellationToken::new();
         let assistant_msg_id = assistant_message_id.clone();
+        let sid = stream_id.clone();
         let ah = app_handle.clone();
         let callbacks = StreamCallbacks {
             on_content: Arc::new(move |chunk: &str| {
                 let _ = ah.emit(
                     "conversation_stream_chunk",
                     serde_json::json!({
+                        "stream_id": &sid,
                         "message_id": &assistant_msg_id,
                         "chunk": chunk,
                     }),
@@ -346,11 +355,13 @@ async fn run_conversation_rounds<R: tauri::Runtime>(
             }),
             on_reasoning: Arc::new({
                 let assistant_msg_id = assistant_message_id.clone();
+                let sid = stream_id.clone();
                 let ah = app_handle.clone();
                 move |chunk: &str| {
                     let _ = ah.emit(
                         "conversation_stream_reasoning",
                         serde_json::json!({
+                            "stream_id": &sid,
                             "message_id": &assistant_msg_id,
                             "chunk": chunk,
                         }),
@@ -525,6 +536,7 @@ pub async fn conversation_send_message_inner<R: tauri::Runtime>(
     app_handle: &tauri::AppHandle<R>,
     request: ConversationSendRequest,
 ) -> Result<String, String> {
+    let stream_id = request.stream_id.clone().unwrap_or_else(|| Uuid::new_v4().to_string());
     let user_message_id = Uuid::new_v4().to_string();
     let user_message = Message {
         id: user_message_id.clone(),
@@ -647,6 +659,7 @@ pub async fn conversation_send_message_inner<R: tauri::Runtime>(
         request.provider.clone(),
         request.parameters.clone(),
         request.character.clone(),
+        stream_id.clone(),
     )
     .await?;
 
@@ -753,6 +766,7 @@ pub async fn conversation_regenerate_message(
     };
 
     let _ = request.insert_guidance;
+    let stream_id = request.stream_id.clone().unwrap_or_else(|| Uuid::new_v4().to_string());
     run_conversation_rounds(
         app_handle,
         request.conversation_id,
@@ -761,6 +775,7 @@ pub async fn conversation_regenerate_message(
         request.provider,
         request.parameters,
         request.character,
+        stream_id,
     )
     .await
 }
@@ -793,6 +808,7 @@ pub async fn conversation_derive_message(
             parameters: request.parameters,
             character: request.character,
             target_pal_ids: request.target_pal_ids,
+            stream_id: request.stream_id,
         },
     )
     .await
@@ -831,6 +847,7 @@ pub async fn conversation_edit_and_regenerate(
             provider: request.provider,
             parameters: request.parameters,
             character: request.character,
+            stream_id: request.stream_id,
         },
     )
     .await
@@ -934,6 +951,7 @@ mod tests {
             parameters: None,
             character: None,
             target_pal_ids: None,
+            stream_id: None,
         };
 
         let result = conversation_send_message_inner(&handle, request).await;
@@ -964,6 +982,7 @@ mod tests {
             parameters: None,
             character: None,
             target_pal_ids: Some(vec![]),
+            stream_id: None,
         };
 
         let result = conversation_send_message_inner(&handle, request).await;
@@ -991,6 +1010,7 @@ mod tests {
             parameters: None,
             character: None,
             target_pal_ids: Some(vec!["nonexistent-pal".to_string()]),
+            stream_id: None,
         };
 
         let result = conversation_send_message_inner(&handle, request).await;
@@ -1029,6 +1049,7 @@ mod tests {
             parameters: None,
             character: None,
             target_pal_ids: Some(vec!["coder".to_string(), "designer".to_string()]),
+            stream_id: None,
         };
 
         let _ = conversation_send_message_inner(&handle, request).await;
@@ -1058,6 +1079,7 @@ mod tests {
             parameters: None,
             character: None,
             target_pal_ids: None,
+            stream_id: None,
         };
 
         let _ = conversation_send_message_inner(&handle, request).await;
@@ -1084,6 +1106,7 @@ mod tests {
             parameters: None,
             character: None,
             target_pal_ids: Some(vec!["coder".to_string()]),
+            stream_id: None,
         };
         let _ = conversation_send_message_inner(&handle, request1).await;
 
@@ -1098,6 +1121,7 @@ mod tests {
             parameters: None,
             character: None,
             target_pal_ids: Some(vec!["designer".to_string()]),
+            stream_id: None,
         };
         let _ = conversation_send_message_inner(&handle, request2).await;
 
