@@ -30,12 +30,15 @@ import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { MessageRole, type ImageContent, type ToolCallItem } from "../libs/types";
 import { useChatStore } from "../stores/chat";
 import { useMcpStore } from "../stores/mcp";
+import { formatToolResultMarkdown } from "../utils/toolResult";
 import { ref, computed, useTemplateRef, watch } from "vue";
 import { mixColours } from "../utils/colour";
 import { useElementSize, useElementVisibility } from "@vueuse/core";
 import { debounce } from "lodash";
 import { Menu, MenuItem, PredefinedMenuItem } from "@tauri-apps/api/menu";
+import { useWindowSize } from "@vueuse/core";
 
+const {height: windowHeight, width: windowWidth} = useWindowSize()
 const chatStore = useChatStore();
 const mcpStore = useMcpStore();
 const dialog = useDialog();
@@ -101,7 +104,7 @@ const visible = useElementVisibility(container);
 if (props.culling) {
   const size = useElementSize(container);
   watch(
-    [size.height, rendered, visible],
+    [size.height, rendered, visible, windowWidth, windowHeight],
     debounce((newVal) => {
       if (!rendered.value || isStreaming.value) return;
       height.value = Math.round(newVal[0]);
@@ -183,17 +186,27 @@ const onReadyStatusChange = (ready: boolean) => {
   if (ready) emit("ready");
 };
 
-const thinkingPanelExpandedNames = computed<string[]>(() => {
-  if (!(props.over ?? true)) return ["thinking"]
-  return []
-});
+const thinkingPanelExpandedNames = ref<string[]>([]);
 
-const groupThinkingExpandedNames = computed<string[]>(() => {
-  if (!(props.over ?? true)) {
-    return props.groupMessages?.map((_, i) => `thinking-${i}`) ?? []
-  }
-  return []
-});
+watch(
+  () => props.over ?? true,
+  (isOver) => {
+    thinkingPanelExpandedNames.value = isOver ? [] : ["thinking"];
+  },
+  { immediate: true }
+);
+
+const groupThinkingExpandedNames = ref<string[]>([]);
+
+watch(
+  () => [props.over ?? true, props.groupMessages] as const,
+  ([isOver, groupMessages]) => {
+    groupThinkingExpandedNames.value = isOver
+      ? []
+      : (groupMessages?.map((_, i) => `thinking-${i}`) ?? []);
+  },
+  { immediate: true }
+);
 
 const footerVisible = ref(false);
 
@@ -204,15 +217,9 @@ const hasToolCalls = computed(() => props.toolCalls && props.toolCalls.length > 
 const isToolMessage = computed(() => props.sender === MessageRole.Tool);
 
 const formatToolResult = (call: ToolCallItem): string => {
-  if (!call.result) return 'No result';
-  return call.result.content
-    .map(c => {
-      if (c.type === 'text') return c.text;
-      if (c.type === 'image') return '[Image]';
-      if (c.type === 'resource') return `[Resource: ${c.uri || 'unknown'}]`;
-      return JSON.stringify(c);
-    })
-    .join('\n\n');
+  // Inline panel header already shows the tool name + status, so the body
+  // only needs the arguments block + result content.
+  return formatToolResultMarkdown(call, { includeHeader: false });
 };
 
 const getToolDisplayName = (toolName: string): string => {
@@ -240,7 +247,13 @@ const showDivider = (blockIdx: number): boolean => {
 </script>
 
 <template>
-  <div ref="container">
+  <div ref="container"
+  @mouseenter="() => (footerVisible = true)"
+  @mouseleave="() => (footerVisible = false)"
+  @focusin="() => (footerVisible = true)"
+  @focusout="() => (footerVisible = false)"
+  :style="{paddingBottom: footerVisible ? '0px' : '36px'}"
+  >
     <div
       v-if="!visible && height !== 0 && culling && !isStreaming"
       class="placeholder"
@@ -257,10 +270,6 @@ const showDivider = (blockIdx: number): boolean => {
           :class="sender"
           :id="id"
           :tabindex="10"
-          @mouseenter="() => (footerVisible = true)"
-          @mouseleave="() => (footerVisible = false)"
-          @focusin="() => (footerVisible = true)"
-          @focusout="() => (footerVisible = false)"
         >
           <div v-if="pal_id" class="message-pal-header">
             <n-icon size="16"><Bot20Regular /></n-icon>
@@ -304,11 +313,11 @@ const showDivider = (blockIdx: number): boolean => {
                       </n-collapse-item>
                     </n-collapse>
                   </div>
-                  <MarkdownRenderer
-                    v-if="!block.toolCalls || block.toolCalls.length === 0"
+                  <MarkdownRenderer v-if="!block.toolCalls || block.toolCalls.length === 0"
                     :text="block.text"
                     :over="over"
                     v-model:ready="rendered"
+                    style="margin: 6px 0px 6px 0px;"
                   />
                   <template v-else>
                     <MarkdownRenderer
@@ -327,7 +336,12 @@ const showDivider = (blockIdx: number): boolean => {
                             </n-flex>
                           </template>
                           <div class="tool-call-result">
-                            <pre>{{ formatToolResult(call) }}</pre>
+                            <MarkdownRenderer
+                              :text="formatToolResult(call)"
+                              :over="over"
+                              v-model:ready="rendered"
+                              @update:ready="onReadyStatusChange"
+                            />
                           </div>
                         </n-collapse-item>
                       </n-collapse>
@@ -384,8 +398,13 @@ const showDivider = (blockIdx: number): boolean => {
                           </n-tag>
                         </n-flex>
                       </template>
-                      <div class="tool-call-result">
-                        <pre>{{ props.text }}</pre>
+                      <div class="tool-call-result tool-call-result-md">
+                        <MarkdownRenderer
+                          :text="props.text"
+                          :over="over"
+                          v-model:ready="rendered"
+                          @update:ready="onReadyStatusChange"
+                        />
                       </div>
                     </n-collapse-item>
                   </n-collapse>
@@ -420,7 +439,9 @@ const showDivider = (blockIdx: number): boolean => {
                             </n-flex>
                           </template>
                           <div class="tool-call-result">
-                            <pre>{{ formatToolResult(call) }}</pre>
+                            <MarkdownRenderer
+                              :text="formatToolResult(call)"
+                            />
                           </div>
                         </n-collapse-item>
                       </n-collapse>
@@ -432,7 +453,7 @@ const showDivider = (blockIdx: number): boolean => {
           </div>
           <div
             class="footer"
-            :style="{ visibility: footerVisible ? 'visible' : 'hidden' }"
+            v-if="footerVisible"
           >
             <n-flex :wrap="false" align="center">
               <n-button-group class="button-group">
@@ -628,6 +649,7 @@ const showDivider = (blockIdx: number): boolean => {
   border-radius: v-bind("theme.borderRadiusSmall");
   border: 1px solid v-bind("theme.borderColor");
   box-shadow: v-bind("theme.boxShadow3");
+  margin: 2px 0px 2px 0px;
 }
 
 .images-container {
@@ -651,6 +673,7 @@ const showDivider = (blockIdx: number): boolean => {
   border-radius: v-bind("theme.borderRadiusSmall");
   border: 1px solid rgba(64, 160, 64, 0.3);
   box-shadow: v-bind("theme.boxShadow3");
+  margin: 2px 0px 2px 0px;
 }
 
 .tool-call-container.error {
@@ -680,7 +703,8 @@ const showDivider = (blockIdx: number): boolean => {
 }
 
 .footer {
-  padding: 8px 16px 0 16px;
+  height: 36px;
+  padding: 8px 16px 8px 16px;
   width: 100%;
   box-sizing: border-box;
   min-width: fit-content;
@@ -688,6 +712,13 @@ const showDivider = (blockIdx: number): boolean => {
   justify-content: space-between;
   align-items: center;
   gap: 8px;
+
+  position: sticky;
+  bottom: 0;
+
+  background-color: color-mix(in srgb, v-bind("theme.cardColor") 60%, transparent);
+  backdrop-filter: blur(6px);
+  border-top: 1px solid v-bind("theme.cardColor");
 }
 
 .placeholder {

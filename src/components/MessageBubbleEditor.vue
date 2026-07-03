@@ -7,7 +7,7 @@ import { oneDark } from '@codemirror/theme-one-dark'
 import { vsCodeLight } from '@fsegurai/codemirror-theme-vscode-light';
 import { basicSetup, EditorView } from 'codemirror'
 import { markdown } from '@codemirror/lang-markdown'
-import { ref, watch } from 'vue';
+import { ref, watch, computed } from 'vue';
 import { useChatStore } from '../stores/chat';
 
 const chat = useChatStore()
@@ -37,6 +37,10 @@ const handleReady = (payload: any) => {
 const code = ref<string>("")
 const loadingSave = ref(false)
 const loadingResend = ref(false)
+
+const isRootMessage = computed(() => {
+  return chat.threadTree.getParentId(props.id) === undefined
+})
 
 const loadMessage = () => {
   if (!props.id) return
@@ -77,7 +81,7 @@ const updateMessageLocal = (text: string) => {
 }
 
 const resendMessageLocal = (text: string) => {
-  emit('resend', true, text)
+  emit('resend', !isRootMessage.value, text)
   closeEditor()
 }
 </script>

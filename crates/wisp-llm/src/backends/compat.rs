@@ -93,7 +93,7 @@ pub(crate) async fn stream_with_body(
     if !response.status().is_success() {
         let status = response.status().as_u16();
         let body = response.text().await.unwrap_or_default();
-        return Err(LlmError::Api { status, body });
+        return Err(LlmError::api_from_response(status, body));
     }
 
     let mut byte_stream = response.bytes_stream();

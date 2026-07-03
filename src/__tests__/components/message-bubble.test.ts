@@ -2,9 +2,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { mount } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
-import { h, ref } from "vue";
+import { h, ref, nextTick } from "vue";
 import { MessageRole } from "../../libs/types";
 import MessageBubble from "../../components/MessageBubble.vue";
+import { NCollapse } from "naive-ui";
 
 vi.mock("@tauri-apps/plugin-clipboard-manager", () => ({
   writeText: vi.fn(),
@@ -153,5 +154,90 @@ describe("MessageBubble pal display", () => {
     expect(header.text()).not.toContain("📍");
     expect(header.text()).not.toContain("directed");
     expect(header.text()).not.toContain("mentioned");
+  });
+});
+
+describe("MessageBubble thinking panel expand/collapse", () => {
+  beforeEach(() => {
+    setActivePinia(createPinia());
+  });
+
+  it("expands thinking panel while streaming (over=false)", async () => {
+    const wrapper = createWrapper({
+      reasoning: "let me think...",
+      over: false,
+    });
+
+    const reasoningContainer = wrapper.find(".reasoning-container");
+    const collapse = reasoningContainer.findComponent(NCollapse);
+    expect(collapse.props("expandedNames")).toEqual(["thinking"]);
+  });
+
+  it("collapses thinking panel when over=true", async () => {
+    const wrapper = createWrapper({
+      reasoning: "let me think...",
+      over: true,
+    });
+
+    const reasoningContainer = wrapper.find(".reasoning-container");
+    const collapse = reasoningContainer.findComponent(NCollapse);
+    expect(collapse.props("expandedNames")).toEqual([]);
+  });
+
+  it("auto-collapses when streaming transitions to over=true", async () => {
+    const wrapper = createWrapper({
+      reasoning: "let me think...",
+      over: false,
+    });
+
+    let collapse = wrapper.find(".reasoning-container").findComponent(NCollapse);
+    expect(collapse.props("expandedNames")).toEqual(["thinking"]);
+
+    await wrapper.setProps({ over: true });
+    await nextTick();
+    collapse = wrapper.find(".reasoning-container").findComponent(NCollapse);
+    expect(collapse.props("expandedNames")).toEqual([]);
+  });
+
+  it("allows manual expand after streaming ends (v-model is writable)", async () => {
+    const wrapper = createWrapper({
+      reasoning: "let me think...",
+      over: true,
+    });
+
+    const reasoningContainer = wrapper.find(".reasoning-container");
+    const collapse = reasoningContainer.findComponent(NCollapse);
+    expect(collapse.props("expandedNames")).toEqual([]);
+
+    // Simulate naive-ui emitting update:expandedNames when user clicks the header.
+    // A read-only computed (the previous bug) would throw here.
+    collapse.vm.$emit("update:expandedNames", ["thinking"]);
+    await nextTick();
+
+    expect(collapse.props("expandedNames")).toEqual(["thinking"]);
+  });
+
+  it("supports manual expand for grouped messages", async () => {
+    const wrapper = createWrapper({
+      groupMessages: [
+        { text: "first", reasoning: "thinking 1", sender: MessageRole.Assistant },
+        { text: "second", reasoning: "thinking 2", sender: MessageRole.Assistant },
+      ],
+      text: "",
+      over: true,
+    });
+
+    const collapses = wrapper.findAllComponents(NCollapse);
+    const reasoningCollapses = collapses.filter((c) =>
+      c.props("expandedNames") !== undefined
+    );
+    expect(reasoningCollapses.length).toBeGreaterThanOrEqual(2);
+
+    const first = reasoningCollapses[0];
+    expect(first.props("expandedNames")).toEqual([]);
+
+    first.vm.$emit("update:expandedNames", ["thinking-0"]);
+    await nextTick();
+    expect(first.props("expandedNames")).toEqual(["thinking-0"]);
   });
 });

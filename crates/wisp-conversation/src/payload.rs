@@ -2,15 +2,16 @@ use serde_json::{json, Value};
 
 use wisp_db::types::{Message, MessageRole};
 use wisp_llm::{ReasoningConfig, ReasoningPassback};
-use crate::types::{ConversationToolCall, ConversationToolContent};
+use crate::types::{ConversationToolCall, ConversationToolContent, ConversationToolResult};
 
 pub fn build_openai_messages(messages: &[Message]) -> Vec<Value> {
-    build_openai_messages_with_reasoning(messages, &ReasoningConfig::default())
+    build_openai_messages_with_reasoning(messages, &ReasoningConfig::default(), false)
 }
 
 pub fn build_openai_messages_with_reasoning(
     messages: &[Message],
     config: &ReasoningConfig,
+    native_tools: bool,
 ) -> Vec<Value> {
     let mut converted = Vec::with_capacity(messages.len());
 
@@ -18,7 +19,7 @@ pub fn build_openai_messages_with_reasoning(
         match message.sender {
             MessageRole::User => converted.push(convert_user_message(message)),
             MessageRole::Assistant => {
-                converted.push(convert_assistant_message_with_policy(message, config));
+                converted.push(convert_assistant_message_with_policy(message, config, native_tools));
             }
             MessageRole::System => converted.push(json!({
                 "role": "system",
@@ -72,8 +73,8 @@ fn convert_user_message(message: &Message) -> Value {
     })
 }
 
-fn convert_assistant_message_with_policy(message: &Message, config: &ReasoningConfig) -> Value {
-    let text = reconstruct_tool_call_text(message);
+fn convert_assistant_message_with_policy(message: &Message, config: &ReasoningConfig, native_tools: bool) -> Value {
+    let text = reconstruct_tool_call_text(message, native_tools);
 
     let mut msg = serde_json::Map::new();
     msg.insert("role".to_string(), json!("assistant"));
@@ -112,7 +113,10 @@ fn convert_assistant_message_with_policy(message: &Message, config: &ReasoningCo
     Value::Object(msg)
 }
 
-fn reconstruct_tool_call_text(message: &Message) -> String {
+fn reconstruct_tool_call_text(message: &Message, native_tools: bool) -> String {
+    if native_tools {
+        return message.text.clone();
+    }
     if let Some(raw_calls) = &message.tool_calls {
         let simplified: Vec<Value> = serde_json::from_str::<Vec<Value>>(raw_calls)
             .unwrap_or_default()
@@ -137,24 +141,36 @@ fn reconstruct_tool_call_text(message: &Message) -> String {
 pub fn format_tool_result(call: &ConversationToolCall) -> String {
     let result = match &call.result {
         Some(r) => r,
-        None => return format!("[Tool: {}]\n[No result]", call.name),
+        None => {
+            return format!(
+                "**🧰 {}**\n\n> _No result_",
+                escape_md(&call.name)
+            );
+        }
     };
 
-    let status = if result.is_error { "error" } else { "success" };
-    let args_str = serde_json::to_string(&call.arguments).unwrap_or_default();
+    let status_emoji = if result.is_error { "❌" } else { "✅" };
+    let status_label = if result.is_error { "error" } else { "success" };
 
-    let mut lines = Vec::new();
-    lines.push(format!("[Tool: {}]", call.name));
-    lines.push(format!("Arguments: {}", args_str));
-    lines.push(format!("Status: {}", status));
+    let args_str = serde_json::to_string_pretty(&call.arguments).unwrap_or_default();
 
-    let has_content = result.content.iter().any(|c| matches!(c, ConversationToolContent::Text { text } if !text.is_empty()));
-    if has_content {
+    let mut lines: Vec<String> = Vec::new();
+    lines.push(format!("**🧰 {}** · {} {}", escape_md(&call.name), status_emoji, status_label));
+    lines.push(String::new());
+    lines.push("```json".to_string());
+    lines.push(args_str.trim().to_string());
+    lines.push("```".to_string());
+
+    let has_text = result.content.iter().any(|c| matches!(c, ConversationToolContent::Text { text } if !text.is_empty()));
+    if has_text {
         lines.push(String::new());
         if result.is_error {
-            lines.push("[Error]".to_string());
+            lines.push("> **Error**".to_string());
+            lines.push(String::new());
+            lines.push("> ".to_string());
         } else {
-            lines.push("[Result]".to_string());
+            lines.push("**Result**".to_string());
+            lines.push(String::new());
         }
         for content in &result.content {
             match content {
@@ -162,10 +178,10 @@ pub fn format_tool_result(call: &ConversationToolCall) -> String {
                     lines.push(text.clone());
                 }
                 ConversationToolContent::Image { .. } => {
-                    lines.push("[Image]".to_string());
+                    lines.push("_[image]_".to_string());
                 }
                 ConversationToolContent::Resource { uri, text, .. } => {
-                    lines.push(text.clone().unwrap_or_else(|| format!("[Resource: {uri}]")));
+                    lines.push(text.clone().unwrap_or_else(|| format!("_[resource: {uri}]_")));
                 }
                 _ => {}
             }
@@ -173,6 +189,14 @@ pub fn format_tool_result(call: &ConversationToolCall) -> String {
     }
 
     lines.join("\n")
+}
+
+fn escape_md(s: &str) -> String {
+    s.replace('_', "\\_")
+        .replace('*', "\\*")
+        .replace('`', "\\`")
+        .replace('[', "\\[")
+        .replace(']', "\\]")
 }
 
 #[cfg(test)]
@@ -233,6 +257,73 @@ mod tests {
         assert!(converted[0]["content"].as_str().unwrap().contains("[Tool: search]"));
     }
 
+    fn tool_call(name: &str, args: serde_json::Value, text: Option<&str>, is_error: bool) -> ConversationToolCall {
+        ConversationToolCall {
+            id: format!("call_{}", name),
+            name: name.to_string(),
+            arguments: args,
+            qualified_name: None,
+            result: Some(ConversationToolResult {
+                content: text
+                    .map(|t| vec![ConversationToolContent::Text { text: t.to_string() }])
+                    .unwrap_or_default(),
+                is_error,
+            }),
+        }
+    }
+
+    #[test]
+    fn formats_successful_tool_result_as_markdown() {
+        let call = tool_call(
+            "get_weather",
+            serde_json::json!({"location": "Hangzhou"}),
+            Some("Sunny, 28°C"),
+            false,
+        );
+        let out = format_tool_result(&call);
+        assert!(out.contains("**🧰 get\\_weather**"));
+        assert!(out.contains("✅ success"));
+        assert!(out.contains("```json"));
+        assert!(out.contains("\"location\": \"Hangzhou\""));
+        assert!(out.contains("**Result**"));
+        assert!(out.contains("Sunny, 28°C"));
+    }
+
+    #[test]
+    fn formats_error_tool_result_as_blockquote() {
+        let call = tool_call(
+            "broken_tool",
+            serde_json::json!({"x": 1}),
+            Some("boom"),
+            true,
+        );
+        let out = format_tool_result(&call);
+        assert!(out.contains("❌ error"));
+        assert!(out.contains("> **Error**"));
+        assert!(out.contains("boom"));
+    }
+
+    #[test]
+    fn formats_missing_result_as_no_result() {
+        let call = ConversationToolCall {
+            id: "c".to_string(),
+            name: "noop".to_string(),
+            arguments: serde_json::json!({}),
+            qualified_name: None,
+            result: None,
+        };
+        let out = format_tool_result(&call);
+        assert!(out.contains("**🧰 noop**"));
+        assert!(out.contains("_No result_"));
+    }
+
+    #[test]
+    fn escapes_markdown_special_chars_in_tool_name() {
+        let call = tool_call("my_tool_name", serde_json::json!({}), Some("ok"), false);
+        let out = format_tool_result(&call);
+        assert!(out.contains("**🧰 my\\_tool\\_name**"));
+    }
+
     #[test]
     fn builds_multimodal_user_message_for_images() {
         let mut msg = message(MessageRole::User, "describe", None);
@@ -267,7 +358,7 @@ mod tests {
             field_name: "reasoning_content",
             policy: ReasoningPassback::ToolTurnsOnly,
         };
-        let converted = build_openai_messages_with_reasoning(&[msg], &config);
+        let converted = build_openai_messages_with_reasoning(&[msg], &config, false);
         assert_eq!(converted[0]["reasoning_content"], "thinking...");
     }
 
@@ -278,7 +369,7 @@ mod tests {
             field_name: "reasoning_content",
             policy: ReasoningPassback::ToolTurnsOnly,
         };
-        let converted = build_openai_messages_with_reasoning(&[msg], &config);
+        let converted = build_openai_messages_with_reasoning(&[msg], &config, false);
         assert!(converted[0].get("reasoning_content").is_none());
     }
 
@@ -293,7 +384,7 @@ mod tests {
             field_name: "reasoning_content",
             policy: ReasoningPassback::ToolTurnsOnly,
         };
-        let converted = build_openai_messages_with_reasoning(&[msg], &config);
+        let converted = build_openai_messages_with_reasoning(&[msg], &config, false);
         assert_eq!(converted[0]["reasoning_content"], "");
     }
 
@@ -308,7 +399,7 @@ mod tests {
             field_name: "reasoning_content",
             policy: ReasoningPassback::Always,
         };
-        let converted = build_openai_messages_with_reasoning(&[msg], &config);
+        let converted = build_openai_messages_with_reasoning(&[msg], &config, false);
         assert_eq!(converted[0]["reasoning_content"], "thinking...");
     }
 
@@ -319,7 +410,7 @@ mod tests {
             field_name: "reasoning_content",
             policy: ReasoningPassback::Always,
         };
-        let converted = build_openai_messages_with_reasoning(&[msg], &config);
+        let converted = build_openai_messages_with_reasoning(&[msg], &config, false);
         assert!(converted[0].get("reasoning_content").is_none());
     }
 
@@ -334,7 +425,7 @@ mod tests {
             field_name: "reasoning_content",
             policy: ReasoningPassback::ToolTurnsOnly,
         };
-        let converted = build_openai_messages_with_reasoning(&[msg], &config);
+        let converted = build_openai_messages_with_reasoning(&[msg], &config, false);
         let tool_calls = converted[0]["tool_calls"].as_array().unwrap();
         assert_eq!(tool_calls[0]["id"], "call_1");
         assert_eq!(tool_calls[0]["type"], "function");
@@ -343,5 +434,47 @@ mod tests {
             tool_calls[0]["function"]["arguments"],
             r#"{"location":"Hangzhou"}"#
         );
+    }
+
+    #[test]
+    fn native_tools_skips_tag_reconstruction_in_content() {
+        let msg = message_with_reasoning_and_tools(
+            "Let me check the weather",
+            None,
+            Some(r#"[{"id":"call_1","name":"get_weather","arguments":{"location":"Hangzhou"}}]"#),
+        );
+        let converted = build_openai_messages_with_reasoning(&[msg], &ReasoningConfig::default(), true);
+        let content = converted[0]["content"].as_str().unwrap();
+        assert_eq!(content, "Let me check the weather");
+        assert!(!content.contains("<|tool_calls|>"));
+        let tool_calls = converted[0]["tool_calls"].as_array().unwrap();
+        assert_eq!(tool_calls[0]["function"]["name"], "get_weather");
+    }
+
+    #[test]
+    fn native_tools_with_empty_text_keeps_empty_content() {
+        let msg = message_with_reasoning_and_tools(
+            "",
+            None,
+            Some(r#"[{"id":"call_1","name":"search","arguments":{"q":"weather"}}]"#),
+        );
+        let converted = build_openai_messages_with_reasoning(&[msg], &ReasoningConfig::default(), true);
+        let content = converted[0]["content"].as_str().unwrap();
+        assert_eq!(content, "");
+        assert!(!content.contains("<|tool_calls|>"));
+        let tool_calls = converted[0]["tool_calls"].as_array().unwrap();
+        assert_eq!(tool_calls[0]["function"]["name"], "search");
+    }
+
+    #[test]
+    fn custom_tools_still_reconstructs_tags() {
+        let msg = message_with_reasoning_and_tools(
+            "some text",
+            None,
+            Some(r#"[{"id":"call_1","name":"search","arguments":{"q":"weather"}}]"#),
+        );
+        let converted = build_openai_messages_with_reasoning(&[msg], &ReasoningConfig::default(), false);
+        let content = converted[0]["content"].as_str().unwrap();
+        assert!(content.contains("<|tool_calls|>"));
     }
 }

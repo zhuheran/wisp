@@ -319,11 +319,6 @@ async fn run_conversation_rounds_inner<R: tauri::Runtime>(
                 .map_err(|error| format!("Failed to build message path for conversation '{}' from leaf '{}': {}", conversation_id, current_leaf_id, error))?
         };
 
-        let backend = backend_for(&provider);
-        let reasoning_config = backend.reasoning_config();
-        let mut openai_messages =
-            build_openai_messages_with_reasoning(&path, &reasoning_config);
-
         let enabled_tools = resolve_enabled_mcp_tools(app_handle).await?;
         let supports_native_tools = provider
             .get_model(&model)
@@ -334,6 +329,11 @@ async fn run_conversation_rounds_inner<R: tauri::Runtime>(
                 _ => false,
             })
             .unwrap_or(false);
+
+        let backend = backend_for(&provider);
+        let reasoning_config = backend.reasoning_config();
+        let mut openai_messages =
+            build_openai_messages_with_reasoning(&path, &reasoning_config, supports_native_tools);
 
         let tool_defs: Vec<LlmToolDefinition> = if supports_native_tools {
             enabled_tools
@@ -560,6 +560,7 @@ async fn run_conversation_rounds_inner<R: tauri::Runtime>(
             },
         )?;
 
+        let mut tool_parent_id = assistant_message_id.clone();
         for call in &completed_calls {
             let tool_message = Message {
                 id: Uuid::new_v4().to_string(),
@@ -588,9 +589,10 @@ async fn run_conversation_rounds_inner<R: tauri::Runtime>(
                     &mut state,
                     &conversation_id,
                     tool_message.clone(),
-                    Some(&assistant_message_id),
+                    Some(&tool_parent_id),
                 )?;
             }
+            tool_parent_id = tool_message.id.clone();
             current_leaf_id = tool_message.id;
         }
     }
@@ -909,18 +911,27 @@ pub async fn conversation_edit_and_regenerate(
         )?;
     }
 
-    conversation_regenerate_message(
+    let parent_id = {
+        let state_mutex = app_handle.state::<Mutex<AppData>>();
+        let mut state = state_mutex.lock().map_err(|error| error.to_string())?;
+        state
+            .chat
+            .thread_manager
+            .get_parent(&request.replaced_message_id)
+            .map_err(|error| error.to_string())?
+            .unwrap_or(request.replaced_message_id.clone())
+    };
+
+    let stream_id = request.stream_id.unwrap_or_else(|| Uuid::new_v4().to_string());
+    run_conversation_rounds(
         app_handle,
-        ConversationRegenerateRequest {
-            conversation_id: request.conversation_id,
-            message_id: request.replaced_message_id,
-            insert_guidance: false,
-            model: request.model,
-            provider: request.provider,
-            parameters: request.parameters,
-            character: request.character,
-            stream_id: request.stream_id,
-        },
+        request.conversation_id,
+        parent_id,
+        request.model,
+        request.provider,
+        request.parameters,
+        request.character,
+        stream_id,
     )
     .await
 }

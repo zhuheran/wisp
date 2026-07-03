@@ -23,6 +23,93 @@ type MessageDisplay = {
 		toolCalls: ComputedRef<ToolCallItem[]>,
 }
 
+/**
+ * Accumulates streamed text/reasoning chunks for the assistant message(s)
+ * produced during a single send/regenerate flow. In multi-round tool-call
+ * flows the backend emits chunks for a NEW message_id per round; without
+ * resetting, the previous round's text would bleed into the next one.
+ * Tracking the current message_id lets us reset both accumulators on switch.
+ */
+export function createStreamingAccumulator() {
+	let text = ''
+	let reasoning = ''
+	let currentMid: string | null = null
+	return {
+		pushText(mid: string, chunk: string): string {
+			if (currentMid !== mid) {
+				text = ''
+				reasoning = ''
+				currentMid = mid
+			}
+			text += chunk
+			return text
+		},
+		pushReasoning(mid: string, chunk: string): string {
+			if (currentMid !== mid) {
+				text = ''
+				reasoning = ''
+				currentMid = mid
+			}
+			reasoning += chunk
+			return reasoning
+		},
+		get text() { return text },
+		get reasoning() { return reasoning },
+	}
+}
+
+type MessagePatch = Record<string, unknown>;
+
+/** Minimum gap between reactive message updates during streaming, in ms. */
+const STREAM_THROTTLE_MS = 300;
+
+/**
+ * Batches per-chunk message patches so the reactive `messages` map (and the
+ * MarkdownRenderer downstream) is only updated at most every `intervalMs`.
+ *
+ * Patches are merged while pending, so concurrent text + reasoning updates
+ * within the same window are flushed together without clobbering each other.
+ * A `message_id` switch (new tool-call round) forces an immediate flush so no
+ * round's final state is lost.
+ */
+export function createThrottledMessagePatcher(
+	apply: (mid: string, patch: MessagePatch) => void,
+	intervalMs: number,
+) {
+	let pendingMid: string | null = null;
+	let pendingPatch: MessagePatch | null = null;
+	let timer: ReturnType<typeof setTimeout> | null = null;
+	let lastFlush = Date.now();
+
+	const run = () => {
+		timer = null;
+		if (pendingMid !== null && pendingPatch !== null) {
+			apply(pendingMid, pendingPatch);
+			pendingMid = null;
+			pendingPatch = null;
+			lastFlush = Date.now();
+		}
+	};
+
+	return {
+		schedule(mid: string, patch: MessagePatch) {
+			if (pendingMid !== null && mid !== pendingMid) {
+				if (timer) { clearTimeout(timer); timer = null; }
+				run();
+			}
+			pendingMid = mid;
+			pendingPatch = pendingPatch
+				? { ...pendingPatch, ...patch }
+				: { ...patch };
+			if (timer) return;
+			const delay = Math.max(0, intervalMs - (Date.now() - lastFlush));
+			if (delay === 0) run();
+			else timer = setTimeout(run, delay);
+		},
+		flush: run,
+	};
+}
+
 
 
 
@@ -120,8 +207,11 @@ export const useChatStore = defineStore('chat', () => {
 		if (!chosenModel.value || !chosenProvider.value) throw new Error('Model or provider not selected')
 
 		isStreaming.value = true
-		let latestAssistantText = ''
-		let latestAssistantReasoning = ''
+		const streamingAcc = createStreamingAccumulator()
+		const messageUpdater = createThrottledMessagePatcher((mid, patch) => {
+			const original = messages.value.get(mid);
+			if (original) messages.value.set(mid, { ...original, ...patch });
+		}, STREAM_THROTTLE_MS)
 		const failureTracker = createConversationFailureTracker()
 
 		const unlistenConversation = await listenConversationEvents((event) => {
@@ -153,12 +243,8 @@ export const useChatStore = defineStore('chat', () => {
 			if (event.payload.stream_id && event.payload.stream_id !== streamId) return;
 			const mid = event.payload.message_id
 			const chunk = event.payload.chunk
-			if (mid) {
-				const original = messages.value.get(mid)
-				if (original) {
-					latestAssistantText += chunk
-					messages.value.set(mid, { ...original, text: latestAssistantText })
-				}
+			if (mid && messages.value.get(mid)) {
+				messageUpdater.schedule(mid, { text: streamingAcc.pushText(mid, chunk) })
 			}
 			if (onReceiving) onReceiving(chunk, false)
 		})
@@ -166,12 +252,8 @@ export const useChatStore = defineStore('chat', () => {
 			if (event.payload.stream_id && event.payload.stream_id !== streamId) return;
 			const mid = event.payload.message_id
 			const chunk = event.payload.chunk
-			if (mid) {
-				const original = messages.value.get(mid)
-				if (original) {
-					latestAssistantReasoning += chunk
-					messages.value.set(mid, { ...original, reasoning: latestAssistantReasoning })
-				}
+			if (mid && messages.value.get(mid)) {
+				messageUpdater.schedule(mid, { reasoning: streamingAcc.pushReasoning(mid, chunk) })
 			}
 			if (onReceiving) onReceiving(chunk, true)
 		})
@@ -199,13 +281,15 @@ export const useChatStore = defineStore('chat', () => {
 			ids.forEach(id => addMentionedPal(id))
 
 			failureTracker.throwIfFailed()
-			if (onFinish) await onFinish(latestAssistantText, latestAssistantReasoning || undefined)
+			messageUpdater.flush()
+			if (onFinish) await onFinish(streamingAcc.text, streamingAcc.reasoning || undefined)
 		}
 		catch (e) {
 			console.error('[Chat] conversationSendMessage error:', e)
 			return Promise.reject(e)
 		}
 		finally {
+			messageUpdater.flush()
 			await unlistenConversation()
 			await unlistenContent()
 			await unlistenReasoning()
@@ -222,8 +306,11 @@ export const useChatStore = defineStore('chat', () => {
 		if (!chosenModel.value || !chosenProvider.value) throw new Error('Model or provider not selected')
 
 		isStreaming.value = true
-		let latestAssistantText = ''
-		let latestAssistantReasoning = ''
+		const streamingAcc = createStreamingAccumulator()
+		const messageUpdater = createThrottledMessagePatcher((mid, patch) => {
+			const original = messages.value.get(mid);
+			if (original) messages.value.set(mid, { ...original, ...patch });
+		}, STREAM_THROTTLE_MS)
 		const failureTracker = createConversationFailureTracker()
 
 		const unlistenConversation = await listenConversationEvents((event) => {
@@ -252,12 +339,8 @@ export const useChatStore = defineStore('chat', () => {
 			if (event.payload.stream_id && event.payload.stream_id !== streamId) return;
 			const mid = event.payload.message_id
 			const chunk = event.payload.chunk
-			if (mid) {
-				const original = messages.value.get(mid)
-				if (original) {
-					latestAssistantText += chunk
-					messages.value.set(mid, { ...original, text: latestAssistantText })
-				}
+			if (mid && messages.value.get(mid)) {
+				messageUpdater.schedule(mid, { text: streamingAcc.pushText(mid, chunk) })
 			}
 			if (onReceiving) onReceiving(chunk, false)
 		})
@@ -265,12 +348,8 @@ export const useChatStore = defineStore('chat', () => {
 			if (event.payload.stream_id && event.payload.stream_id !== streamId) return;
 			const mid = event.payload.message_id
 			const chunk = event.payload.chunk
-			if (mid) {
-				const original = messages.value.get(mid)
-				if (original) {
-					latestAssistantReasoning += chunk
-					messages.value.set(mid, { ...original, reasoning: latestAssistantReasoning })
-				}
+			if (mid && messages.value.get(mid)) {
+				messageUpdater.schedule(mid, { reasoning: streamingAcc.pushReasoning(mid, chunk) })
 			}
 			if (onReceiving) onReceiving(chunk, true)
 		})
@@ -290,13 +369,15 @@ export const useChatStore = defineStore('chat', () => {
 				stream_id: streamId,
 			})
 			failureTracker.throwIfFailed()
-			if (onFinish) await onFinish(latestAssistantText, latestAssistantReasoning || undefined)
+			messageUpdater.flush()
+			if (onFinish) await onFinish(streamingAcc.text, streamingAcc.reasoning || undefined)
 		}
 		catch (e) {
 			console.error('[Chat] conversationRegenerateMessage error:', e)
 			return Promise.reject(e)
 		}
 		finally {
+			messageUpdater.flush()
 			await unlistenConversation()
 			await unlistenContent()
 			await unlistenReasoning()
@@ -310,8 +391,11 @@ export const useChatStore = defineStore('chat', () => {
 		if (!chosenModel.value || !chosenProvider.value) return Promise.reject('Model or provider not selected')
 
 		isStreaming.value = true
-		let latestAssistantText = ''
-		let latestAssistantReasoning = ''
+		const streamingAcc = createStreamingAccumulator()
+		const messageUpdater = createThrottledMessagePatcher((mid, patch) => {
+			const original = messages.value.get(mid);
+			if (original) messages.value.set(mid, { ...original, ...patch });
+		}, STREAM_THROTTLE_MS)
 		const failureTracker = createConversationFailureTracker()
 
 		const unlistenConversation = await listenConversationEvents((event) => {
@@ -340,12 +424,8 @@ export const useChatStore = defineStore('chat', () => {
 			if (event.payload.stream_id && event.payload.stream_id !== streamId) return;
 			const mid = event.payload.message_id
 			const chunk = event.payload.chunk
-			if (mid) {
-				const original = messages.value.get(mid)
-				if (original) {
-					latestAssistantText += chunk
-					messages.value.set(mid, { ...original, text: latestAssistantText })
-				}
+			if (mid && messages.value.get(mid)) {
+				messageUpdater.schedule(mid, { text: streamingAcc.pushText(mid, chunk) })
 			}
 			if (onReceiving) onReceiving(chunk, false)
 		})
@@ -353,12 +433,8 @@ export const useChatStore = defineStore('chat', () => {
 			if (event.payload.stream_id && event.payload.stream_id !== streamId) return;
 			const mid = event.payload.message_id
 			const chunk = event.payload.chunk
-			if (mid) {
-				const original = messages.value.get(mid)
-				if (original) {
-					latestAssistantReasoning += chunk
-					messages.value.set(mid, { ...original, reasoning: latestAssistantReasoning })
-				}
+			if (mid && messages.value.get(mid)) {
+				messageUpdater.schedule(mid, { reasoning: streamingAcc.pushReasoning(mid, chunk) })
 			}
 			if (onReceiving) onReceiving(chunk, true)
 		})
@@ -378,13 +454,15 @@ export const useChatStore = defineStore('chat', () => {
 				stream_id: streamId,
 			})
 			failureTracker.throwIfFailed()
-			if (onFinish) await onFinish(latestAssistantText, latestAssistantReasoning || undefined)
+			messageUpdater.flush()
+			if (onFinish) await onFinish(streamingAcc.text, streamingAcc.reasoning || undefined)
 		}
 		catch (e) {
 			console.error('[Chat] conversationDeriveMessage error:', e)
 			return Promise.reject(e)
 		}
 		finally {
+			messageUpdater.flush()
 			await unlistenConversation()
 			await unlistenContent()
 			await unlistenReasoning()
@@ -398,8 +476,11 @@ export const useChatStore = defineStore('chat', () => {
 		if (!chosenModel.value || !chosenProvider.value) return Promise.reject('Model or provider not selected')
 
 		isStreaming.value = true
-		let latestAssistantText = ''
-		let latestAssistantReasoning = ''
+		const streamingAcc = createStreamingAccumulator()
+		const messageUpdater = createThrottledMessagePatcher((mid, patch) => {
+			const original = messages.value.get(mid);
+			if (original) messages.value.set(mid, { ...original, ...patch });
+		}, STREAM_THROTTLE_MS)
 		const failureTracker = createConversationFailureTracker()
 
 		const unlistenConversation = await listenConversationEvents((event) => {
@@ -428,12 +509,8 @@ export const useChatStore = defineStore('chat', () => {
 			if (event.payload.stream_id && event.payload.stream_id !== streamId) return;
 			const mid = event.payload.message_id
 			const chunk = event.payload.chunk
-			if (mid) {
-				const original = messages.value.get(mid)
-				if (original) {
-					latestAssistantText += chunk
-					messages.value.set(mid, { ...original, text: latestAssistantText })
-				}
+			if (mid && messages.value.get(mid)) {
+				messageUpdater.schedule(mid, { text: streamingAcc.pushText(mid, chunk) })
 			}
 			if (onReceiving) onReceiving(chunk, false)
 		})
@@ -441,12 +518,8 @@ export const useChatStore = defineStore('chat', () => {
 			if (event.payload.stream_id && event.payload.stream_id !== streamId) return;
 			const mid = event.payload.message_id
 			const chunk = event.payload.chunk
-			if (mid) {
-				const original = messages.value.get(mid)
-				if (original) {
-					latestAssistantReasoning += chunk
-					messages.value.set(mid, { ...original, reasoning: latestAssistantReasoning })
-				}
+			if (mid && messages.value.get(mid)) {
+				messageUpdater.schedule(mid, { reasoning: streamingAcc.pushReasoning(mid, chunk) })
 			}
 			if (onReceiving) onReceiving(chunk, true)
 		})
@@ -466,13 +539,15 @@ export const useChatStore = defineStore('chat', () => {
 				stream_id: streamId,
 			})
 			failureTracker.throwIfFailed()
-			if (onFinish) await onFinish(latestAssistantText, latestAssistantReasoning || undefined)
+			messageUpdater.flush()
+			if (onFinish) await onFinish(streamingAcc.text, streamingAcc.reasoning || undefined)
 		}
 		catch (e) {
 			console.error('[Chat] conversationEditAndRegenerate error:', e)
 			return Promise.reject(e)
 		}
 		finally {
+			messageUpdater.flush()
 			await unlistenConversation()
 			await unlistenContent()
 			await unlistenReasoning()

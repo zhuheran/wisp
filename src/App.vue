@@ -170,6 +170,11 @@ body {
   display: flex;
   flex-direction: column;
   gap: 8px;
+
+  border-right: solid 1px rgba(128, 128, 128, 0.4);
+  border-left: solid 1px rgba(128, 128, 128, 0.3);
+  background: linear-gradient(90deg,rgba(128, 128, 128, 0.1) 0%, rgba(128, 128, 128, 0.1) 30%, rgba(128, 128, 128, 0.3) 100%);
+  box-shadow: 1px 0px 2px 2px rgba(0, 0, 0, 0.2), 0px 0px 6px 6px rgba(0, 0, 0, 0.1);
 }
 
 .sidebar-item {
@@ -188,8 +193,13 @@ body {
   background-color: v-bind("theme.common.hoverColor");
 }
 
+.sidebar-item-active .sidebar-item {
+  background-color: color-mix(in srgb, v-bind("theme.common.textColor1") 80%, transparent);
+  box-shadow: v-bind("theme.common.boxShadow1");
+}
+
 .sidebar-item-active svg {
-  color: v-bind("theme.common.textColor1");
+  color: v-bind("theme.common.baseColor");
 }
 
 .main-content {

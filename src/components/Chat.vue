@@ -248,30 +248,24 @@ const regenerateMessage = (messageId: string, insertGuidance = false) => {
 };
 
 const resendMessage = (messageId: string, text: string, derive: boolean) => {
-  if (derive) {
-    chatStore.deriveMessage(messageId, text, {
-      beforeSend: () => {
-        chatStore.clearUserInput();
-        autoScrollWrapper.value?.scrollToBottom(false);
-      },
-      onReceiving: () => {
-        autoScrollWrapper.value?.scrollToBottom();
-      },
-    });
-  } else {
-    chatStore.editAndRegenerateMessage(messageId, text, {
-      beforeSend: () => {
-        chatStore.clearUserInput();
-        autoScrollWrapper.value?.scrollToBottom(false);
-      },
-      onReceiving: () => {
-        autoScrollWrapper.value?.scrollToBottom();
-      },
-      onFinish: () => {
-        setTimeout(() => autoScrollWrapper.value?.scrollToBottom(false), 1000);
-      },
-    });
-  }
+  const callbacks = {
+    beforeSend: () => {
+      chatStore.clearUserInput();
+      autoScrollWrapper.value?.scrollToBottom(false);
+    },
+    onReceiving: () => {
+      autoScrollWrapper.value?.scrollToBottom();
+    },
+    onFinish: () => {
+      setTimeout(() => autoScrollWrapper.value?.scrollToBottom(false), 1000);
+    },
+  };
+
+  const promise = derive
+    ? chatStore.deriveMessage(messageId, text, callbacks)
+    : chatStore.editAndRegenerateMessage(messageId, text, callbacks);
+
+  promise.catch((e) => notificationMessage.error(errorMessage(e)));
 };
 
 const navigateToSibling = (id: string, direction: number) => {
@@ -367,7 +361,7 @@ onMounted(() => {
           v-if="chatStore.displayedMessage.length > 0"
           ref="autoScrollWrapper"
           :auto="true"
-          :smooth="true"
+          :smooth="false"
         >
           <div class="bubble-container">
             <template v-for="group in messageGroups" :key="group.messages[0].id">
@@ -595,6 +589,7 @@ onMounted(() => {
   gap: 8px;
   padding: 8px;
   align-items: center;
+  border-top: solid 1px v-bind("theme.borderColor");
 }
 
 .bubble-container {
