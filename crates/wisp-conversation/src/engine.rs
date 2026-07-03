@@ -103,16 +103,17 @@ where
                 wisp_db::types::ConversationError::InvalidOperation(error.to_string()),
             )))?;
 
-        self.chat.add_message(
-            conversation_id,
-            user_message_id,
-            text,
-            None,
-            &MessageRole::User.to_string(),
-            parent_message_id,
-            images_json.as_deref(),
-            None,
-        )?;
+		self.chat.add_message(
+		    conversation_id,
+		    user_message_id,
+		    text,
+		    None,
+		    &MessageRole::User.to_string(),
+		    parent_message_id,
+		    images_json.as_deref(),
+		    None,
+		    None,
+		)?;
 
         self.continue_from_leaf(conversation_id, user_message_id)
     }
@@ -150,6 +151,7 @@ where
                 Some(&current_leaf_id),
                 None,
                 tool_calls_json.as_deref(),
+                None,
             )?;
 
             if calls.is_empty() {
@@ -184,6 +186,7 @@ where
                     None,
                     &MessageRole::Tool.to_string(),
                     Some(&assistant_message_id),
+                    None,
                     None,
                     None,
                 )?;

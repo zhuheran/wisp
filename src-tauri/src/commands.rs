@@ -268,6 +268,7 @@ pub async fn add_message(
     parent_id: Option<String>,
     images: Option<String>,
     tool_calls: Option<String>,
+    tool_call_id: Option<String>,
 ) -> Result<String, String> {
     let state = app_handle.state::<Mutex<AppData>>();
     let mut state = state.lock().unwrap();
@@ -284,6 +285,7 @@ pub async fn add_message(
             parent_id.as_deref(),
             images.as_deref(),
             tool_calls.as_deref(),
+            tool_call_id.as_deref(),
         )
         .map(|_| message_id)
         .map_err(|e| e.to_string())

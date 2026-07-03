@@ -70,13 +70,14 @@ impl Chat {
         parent_message_id: Option<&str>,
         images: Option<&str>,
         tool_calls: Option<&str>,
+        tool_call_id: Option<&str>,
     ) -> Result<(), ChatError> {
         let mut conn = self.pool.get()?;
         let tx = conn.transaction()?;
 
         // Add the message
         self.messages_manager
-            .add(message_id, text, reasoning, sender, None, None, images, tool_calls)?;
+            .add(message_id, text, reasoning, sender, None, None, images, tool_calls, tool_call_id)?;
 
         // Link to parent message
         self.thread_manager.add(message_id, parent_message_id)?;
@@ -386,7 +387,7 @@ mod tests {
     use crate::create_memory_pool;
 
     fn add(chat: &mut Chat, conversation_id: &str, id: &str, text: &str, sender: &str, parent: Option<&str>) {
-        chat.add_message(conversation_id, id, text, None, sender, parent, None, None)
+        chat.add_message(conversation_id, id, text, None, sender, parent, None, None, None)
             .expect("message inserted");
     }
 

@@ -133,6 +133,8 @@ pub struct Message {
     pub images: Option<Vec<ImageContent>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_calls: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
     #[serde(default)]
     pub source: wisp_common::MessageSource,
     #[serde(default)]

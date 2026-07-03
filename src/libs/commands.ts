@@ -9,8 +9,8 @@ export async function createConversation(name: string, description?: string)  {
 	return invoke<string>('create_conversation', { name, description })
 }
 
-export async function addMessage(conversationId: string, text: string, sender: string, reasoning?: string, parentId?: string, images?: string, toolCalls?: string) {
-	return invoke<string>('add_message', { conversationId, text, reasoning, sender, parentId, images, toolCalls })
+export async function addMessage(conversationId: string, text: string, sender: string, reasoning?: string, parentId?: string, images?: string, toolCalls?: string, toolCallId?: string) {
+	return invoke<string>('add_message', { conversationId, text, sender, reasoning, parentId, images, toolCalls, toolCallId })
 }
 
 export async function updateMessage(messageId: string, text: string, reasoning?: string, toolCalls?: string) {

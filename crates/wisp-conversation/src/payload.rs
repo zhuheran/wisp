@@ -24,10 +24,20 @@ pub fn build_openai_messages_with_reasoning(
                 "role": "system",
                 "content": message.text,
             })),
-            MessageRole::Tool => converted.push(json!({
-                "role": "system",
-                "content": message.text,
-            })),
+            MessageRole::Tool => {
+                if let Some(tool_call_id) = &message.tool_call_id {
+                    converted.push(json!({
+                        "role": "tool",
+                        "tool_call_id": tool_call_id,
+                        "content": message.text,
+                    }));
+                } else {
+                    converted.push(json!({
+                        "role": "system",
+                        "content": message.text,
+                    }));
+                }
+            }
         }
     }
 
@@ -163,6 +173,7 @@ mod tests {
             embedding: None,
             images: None,
             tool_calls,
+            tool_call_id: None,
             source: Default::default(),
             pal_id: None,
             pal_name: None,

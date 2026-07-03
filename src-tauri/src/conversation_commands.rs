@@ -105,6 +105,7 @@ fn insert_message_and_emit<R: tauri::Runtime>(
             parent_id,
             images_json.as_deref(),
             message.tool_calls.as_deref(),
+            message.tool_call_id.as_deref(),
         )
         .map_err(|error| error.to_string())?;
 
@@ -384,6 +385,7 @@ async fn run_conversation_rounds_inner<R: tauri::Runtime>(
                 embedding: None,
                 images: None,
                 tool_calls: None,
+                tool_call_id: None,
                 source: MessageSource::UserPrompted,
                 pal_id: pal_id.clone(),
                 pal_name: pal_name.clone(),
@@ -479,6 +481,7 @@ async fn run_conversation_rounds_inner<R: tauri::Runtime>(
             } else {
                 Some(serde_json::to_string(&calls).map_err(|error| error.to_string())?)
             },
+            tool_call_id: None,
             source: MessageSource::UserPrompted,
             pal_id: pal_id.clone(),
             pal_name: pal_name.clone(),
@@ -571,6 +574,7 @@ async fn run_conversation_rounds_inner<R: tauri::Runtime>(
                 embedding: None,
                 images: None,
                 tool_calls: None,
+                tool_call_id: Some(call.id.clone()),
                 source: Default::default(),
                 pal_id: None,
                 pal_name: None,
@@ -616,6 +620,7 @@ pub async fn conversation_send_message_inner<R: tauri::Runtime>(
         embedding: None,
         images: request.images.clone(),
         tool_calls: None,
+        tool_call_id: None,
         source: MessageSource::UserPrompted,
         pal_id: None,
         pal_name: None,
@@ -680,6 +685,7 @@ pub async fn conversation_send_message_inner<R: tauri::Runtime>(
                     embedding: None,
                     images: None,
                     tool_calls: None,
+                    tool_call_id: None,
                     source: reply.source.clone(),
                     pal_id: Some(reply.pal_id.clone()),
                     pal_name: Some(reply.pal_name.clone()),
@@ -774,6 +780,7 @@ pub async fn conversation_send_message_inner<R: tauri::Runtime>(
                 embedding: None,
                 images: None,
                 tool_calls: None,
+                tool_call_id: None,
                 source: reply.source.clone(),
                 pal_id: Some(reply.pal_id.clone()),
                 pal_name: Some(reply.pal_name.clone()),
