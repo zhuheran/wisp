@@ -24,7 +24,7 @@ use wisp_mcp::McpConfigManager;
 use wisp_mcp::TransportConfig;
 use wisp_mcp::McpStdioManager;
 use wisp_mcp::McpHttpManager;
-use wisp_mcp::ToolRegistry;
+use wisp_tool_registry::ToolRegistry;
 use std::collections::HashMap;
 use std::sync::Mutex;
 use crate::types::AppData;
@@ -53,10 +53,7 @@ pub fn run() {
 			let stdio_manager = std::sync::Arc::clone(&mcp_stdio_manager);
 			let http_manager = std::sync::Arc::clone(&mcp_http_manager);
 
-			        let tool_registry = std::sync::Arc::new(ToolRegistry::new(
-			            std::sync::Arc::clone(&mcp_stdio_manager),
-			            std::sync::Arc::clone(&mcp_http_manager),
-			        ));
+		        let tool_registry = std::sync::Arc::new(ToolRegistry::new());
 
 			                app.manage(Mutex::new(AppData {
 		            chat: Chat::new(app.handle())?,

@@ -16,9 +16,9 @@ use wisp_conversation::payload::{
 };
 use wisp_conversation::tool_parser::parse_tool_calls;
 use wisp_conversation::{ConversationToolCall, ConversationToolContent, ConversationToolResult};
-use wisp_common::MessageSource;
+use wisp_common::{ToolContent, MessageSource};
 use wisp_db::types::{ImageContent, Message, MessageRole};
-use wisp_mcp::{ToolContent, ToolDefinition};
+use wisp_tool_registry::ToolDefinition;
 use crate::types::AppData;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -131,7 +131,7 @@ async fn execute_tool_call<R: tauri::Runtime>(
     };
 
     let result = registry
-        .execute(&call.name, call.arguments.clone())
+        .execute(&call.name, call.arguments.clone(), None)
         .await
         .map_err(|error| format!("Tool '{}' failed: {}", call.name, error))?;
 
@@ -970,10 +970,7 @@ mod tests {
             McpConfigManager::new(&handle).expect("mcp config");
         let stdio_manager = Arc::new(McpStdioManager::new());
         let http_manager = Arc::new(McpHttpManager::new());
-        let tool_registry = Arc::new(ToolRegistry::new(
-            Arc::clone(&stdio_manager),
-            Arc::clone(&http_manager),
-        ));
+        let tool_registry = Arc::new(ToolRegistry::new());
 
         let app_data = AppData {
             chat,

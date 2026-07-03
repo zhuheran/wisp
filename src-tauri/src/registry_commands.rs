@@ -1,7 +1,9 @@
 use std::sync::Mutex;
 use tauri::{AppHandle, Manager};
 use crate::types::AppData;
-use wisp_mcp::{NormalizedTool, TransportConfig, ToolDefinition, ToolResult};
+use wisp_mcp::{NormalizedTool, TransportConfig, register_mcp_tools};
+use wisp_tool_registry::ToolDefinition;
+use wisp_common::ToolResult;
 
 /// Refresh the registry by fetching tools from all connected MCP servers.
 #[tauri::command]
@@ -79,9 +81,18 @@ pub async fn registry_refresh(app_handle: AppHandle) -> Result<(), String> {
     // Register all discovered tools in the registry
     {
         let state = app_handle.state::<Mutex<AppData>>();
-        let mut state = state.lock().map_err(|e| e.to_string())?;
+        let state = state.lock().map_err(|e| e.to_string())?;
+        let stdio_mgr = std::sync::Arc::clone(&state.mcp_stdio_manager);
+        let http_mgr = std::sync::Arc::clone(&state.mcp_http_manager);
         for (server_id, tools, transport) in &server_tools {
-            state.tool_registry.register_server(server_id, tools, transport);
+            register_mcp_tools(
+                &state.tool_registry,
+                server_id,
+                tools,
+                transport,
+                std::sync::Arc::clone(&stdio_mgr),
+                std::sync::Arc::clone(&http_mgr),
+            );
         }
     }
 
@@ -94,11 +105,6 @@ pub async fn registry_list_tools(app_handle: AppHandle) -> Result<Vec<ToolDefini
     let state = app_handle.state::<Mutex<AppData>>();
     let state = state.lock().map_err(|e| e.to_string())?;
     let mut tools: Vec<ToolDefinition> = state.tool_registry.list_tools();
-    // Sync enabled state
-    let enabled = state.tool_registry.enabled_set();
-    for tool in &mut tools {
-        tool.enabled = enabled.contains(&tool.name);
-    }
     tools.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(tools)
 }
@@ -117,7 +123,7 @@ pub async fn registry_execute(
         std::sync::Arc::clone(&state.tool_registry)
     };
     registry
-        .execute(&name, args)
+        .execute(&name, args, None)
         .await
         .map_err(|e| e.to_string())
 }
@@ -126,7 +132,7 @@ pub async fn registry_execute(
 #[tauri::command]
 pub async fn registry_set_enabled(app_handle: AppHandle, names: Vec<String>) -> Result<(), String> {
     let state = app_handle.state::<Mutex<AppData>>();
-    let mut state = state.lock().map_err(|e| e.to_string())?;
+    let state = state.lock().map_err(|e| e.to_string())?;
     let names_set: std::collections::HashSet<String> = names.into_iter().collect();
     state.tool_registry.set_enabled(names_set);
     Ok(())

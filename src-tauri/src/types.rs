@@ -6,7 +6,7 @@ use wisp_configs::ConfigManager;
 use wisp_mcp::McpConfigManager;
 use wisp_mcp::McpStdioManager;
 use wisp_mcp::McpHttpManager;
-use wisp_mcp::ToolRegistry;
+use wisp_tool_registry::ToolRegistry;
 
 use crate::cache::DiagramCache;
 use wisp_keyring::KeyManager;

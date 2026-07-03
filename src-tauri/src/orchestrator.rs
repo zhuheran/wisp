@@ -360,10 +360,7 @@ mod tests {
             McpConfigManager::new(&handle).expect("mcp config");
         let stdio_manager = Arc::new(McpStdioManager::new());
         let http_manager = Arc::new(McpHttpManager::new());
-        let tool_registry = Arc::new(ToolRegistry::new(
-            Arc::clone(&stdio_manager),
-            Arc::clone(&http_manager),
-        ));
+        let tool_registry = Arc::new(ToolRegistry::new());
 
         let app_data = AppData {
             chat,
