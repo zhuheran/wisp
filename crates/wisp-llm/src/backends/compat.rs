@@ -195,6 +195,8 @@ pub(crate) async fn stream_with_body(
                 data_acc.push('\n');
             }
             data_acc.push_str(data);
+        } else if line.starts_with(':') {
+            continue;
         }
     }
 
