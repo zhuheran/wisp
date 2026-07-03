@@ -14,6 +14,7 @@ wisp-configs = { path = "crates/wisp-configs" }
 wisp-llm = { path = "crates/wisp-llm" }
 wisp-mcp = { path = "crates/wisp-mcp" }
 wisp-tool-registry = { path = "crates/wisp-tool-registry" }
+wisp-software-tools = { path = "crates/wisp-software-tools" }
 wisp-conversation = { path = "crates/wisp-conversation" }
 
 serde = { version = "1", features = ["derive"] }

@@ -1,0 +1,16 @@
+[package]
+name = "wisp-software-tools"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+wisp-common.workspace = true
+wisp-tool-registry.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+schemars = "1"
+async-trait.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true }
