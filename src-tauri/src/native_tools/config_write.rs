@@ -10,7 +10,9 @@ use wisp_software_tools::NativeTool;
 
 #[derive(Deserialize, JsonSchema)]
 pub struct ConfigWriteArgs {
+    /// One of: "default_responder", "chore_llm".
     pub key: String,
+    /// For "default_responder": a pal ID string or null. For "chore_llm": {"provider": "...", "model": "..."} or null.
     pub value: serde_json::Value,
 }
 
@@ -31,7 +33,7 @@ impl NativeTool for ConfigWrite {
     }
 
     fn description(&self) -> &str {
-        "Write a configuration value. Supported keys: \"default_responder\" (string|null), \"chore_llm\" ({provider, model}|null)."
+        "Write application configuration values. Instruction: use the key parameter to select which setting to change, and provide the new value in the value parameter. See the schema below for accepted formats."
     }
 
     fn schema(&self) -> Value {

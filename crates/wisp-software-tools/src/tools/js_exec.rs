@@ -21,7 +21,7 @@ impl NativeTool for JsExec {
     }
 
     fn description(&self) -> &str {
-        "Execute JavaScript code in a sandboxed QuickJS runtime and return the result. No filesystem or network access. Use JSON.stringify() to return complex values."
+        "Execute JavaScript code in a sandboxed QuickJS runtime. No filesystem or network access. Instruction: simply return a value from the code — objects and arrays are auto-serialized to JSON by the tool, so do not wrap results in JSON.stringify yourself."
     }
 
     fn schema(&self) -> Value {

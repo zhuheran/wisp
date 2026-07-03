@@ -10,6 +10,7 @@ use wisp_software_tools::NativeTool;
 
 #[derive(Deserialize, JsonSchema)]
 pub struct ConfigReadArgs {
+    /// One of: "providers", "characters", "default_responder", "chore_llm".
     pub key: String,
 }
 
@@ -30,7 +31,7 @@ impl NativeTool for ConfigRead {
     }
 
     fn description(&self) -> &str {
-        "Read a configuration value. Supported keys: \"providers\", \"characters\", \"default_responder\", \"chore_llm\"."
+        "Read application configuration values. Instruction: pass one of the supported keys listed in the key parameter schema below."
     }
 
     fn schema(&self) -> Value {
