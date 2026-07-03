@@ -8,6 +8,7 @@ use wisp_llm::{backend_for, StreamCallbacks, StreamRequest, ToolChoice};
 use wisp_llm::ToolDefinition as LlmToolDefinition;
 use wisp_configs::character::Character;
 use wisp_configs::provider::Provider;
+use wisp_configs::model::{ModelInfo, TextModelCapability};
 use crate::abort::AbortRegistry;
 use crate::orchestrator;
 use wisp_conversation::payload::{
@@ -323,15 +324,34 @@ async fn run_conversation_rounds_inner<R: tauri::Runtime>(
             build_openai_messages_with_reasoning(&path, &reasoning_config);
 
         let enabled_tools = resolve_enabled_mcp_tools(app_handle).await?;
-        let tools_prompt = build_enabled_tools_prompt(&enabled_tools);
-        let tool_defs: Vec<LlmToolDefinition> = enabled_tools
-            .iter()
-            .map(|t| LlmToolDefinition {
-                name: t.name.clone(),
-                description: t.description.clone().unwrap_or_default(),
-                parameters: t.input_schema.clone(),
+        let supports_native_tools = provider
+            .get_model(&model)
+            .map(|m| match &m.model_info {
+                ModelInfo::TextGeneration { capabilities, .. } => {
+                    capabilities.contains(&TextModelCapability::ToolUse)
+                }
+                _ => false,
             })
-            .collect();
+            .unwrap_or(false);
+
+        let tool_defs: Vec<LlmToolDefinition> = if supports_native_tools {
+            enabled_tools
+                .iter()
+                .map(|t| LlmToolDefinition {
+                    name: t.name.clone(),
+                    description: t.description.clone().unwrap_or_default(),
+                    parameters: t.input_schema.clone(),
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+
+        let tools_prompt = if supports_native_tools {
+            String::new()
+        } else {
+            build_enabled_tools_prompt(&enabled_tools)
+        };
 
         let mut system_prompt_sections = Vec::new();
         if let Some(character) = &character {
@@ -339,7 +359,7 @@ async fn run_conversation_rounds_inner<R: tauri::Runtime>(
                 system_prompt_sections.push(character.system_prompt.trim().to_string());
             }
         }
-        if !tools_prompt.is_empty() && tool_defs.is_empty() {
+        if !tools_prompt.is_empty() {
             system_prompt_sections.push(tools_prompt);
         }
         if !system_prompt_sections.is_empty() {
