@@ -339,7 +339,7 @@ async fn run_conversation_rounds_inner<R: tauri::Runtime>(
                 system_prompt_sections.push(character.system_prompt.trim().to_string());
             }
         }
-        if !tools_prompt.is_empty() {
+        if !tools_prompt.is_empty() && tool_defs.is_empty() {
             system_prompt_sections.push(tools_prompt);
         }
         if !system_prompt_sections.is_empty() {
