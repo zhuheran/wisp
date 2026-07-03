@@ -6,6 +6,7 @@ use async_openai::types::{
     ChatCompletionRequestUserMessage, ChatCompletionRequestUserMessageContent,
     ChatCompletionRequestUserMessageContentPart, ImageDetail, ImageUrl,
 };
+use serde_json::{json, Value};
 
 use wisp_db::types::{Message, MessageRole};
 use crate::types::{ConversationToolCall, ConversationToolContent};
@@ -112,6 +113,82 @@ fn convert_assistant_message(
     };
 
     ChatCompletionRequestMessage::Assistant(msg)
+}
+
+pub fn build_openai_messages_value(messages: &[Message]) -> Vec<Value> {
+    let mut converted = Vec::with_capacity(messages.len());
+
+    for message in messages {
+        match message.sender {
+            MessageRole::User => converted.push(convert_user_message_value(message)),
+            MessageRole::Assistant => converted.push(convert_assistant_message_value(message)),
+            MessageRole::System => converted.push(json!({
+                "role": "system",
+                "content": message.text,
+            })),
+            MessageRole::Tool => converted.push(json!({
+                "role": "system",
+                "content": message.text,
+            })),
+        }
+    }
+
+    converted
+}
+
+fn convert_user_message_value(message: &Message) -> Value {
+    if let Some(images) = &message.images {
+        if !images.is_empty() {
+            let mut parts = vec![json!({
+                "type": "text",
+                "text": message.text,
+            })];
+            for image in images {
+                parts.push(json!({
+                    "type": "image_url",
+                    "image_url": {
+                        "url": image.image_url.url,
+                        "detail": "auto",
+                    },
+                }));
+            }
+            return json!({
+                "role": "user",
+                "content": parts,
+            });
+        }
+    }
+    json!({
+        "role": "user",
+        "content": message.text,
+    })
+}
+
+fn convert_assistant_message_value(message: &Message) -> Value {
+    let text = if let Some(raw_calls) = &message.tool_calls {
+        let simplified: Vec<Value> = serde_json::from_str::<Vec<Value>>(raw_calls)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|call| json!({
+                "name": call.get("name"),
+                "arguments": call.get("arguments"),
+            }))
+            .collect();
+
+        let tag = serde_json::to_string(&simplified).unwrap_or_default();
+        if message.text.is_empty() {
+            format!("<|tool_calls|>{tag}<|/tool_calls|>")
+        } else {
+            format!("{}\n<|tool_calls|>{tag}<|/tool_calls|>", message.text)
+        }
+    } else {
+        message.text.clone()
+    };
+
+    json!({
+        "role": "assistant",
+        "content": text,
+    })
 }
 
 /// 格式化 tool call 的结果成 AI 可读的结构化文本（存储到 DB + 构建 system message 用）
@@ -260,5 +337,52 @@ mod tests {
             }
             other => panic!("expected assistant, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn value_assistant_message_is_sent_as_plain_text() {
+        let messages = vec![
+            message(MessageRole::User, "hello", None),
+            message(MessageRole::Assistant, "hi there", None),
+        ];
+        let converted = build_openai_messages_value(&messages);
+        assert_eq!(converted.len(), 2);
+        assert_eq!(converted[0]["role"], "user");
+        assert_eq!(converted[1]["role"], "assistant");
+        assert_eq!(converted[1]["content"], "hi there");
+    }
+
+    #[test]
+    fn value_tool_message_becomes_system_message() {
+        let messages = vec![
+            message(MessageRole::Tool, "[Tool: search]\n[Result]\nfound", None),
+        ];
+        let converted = build_openai_messages_value(&messages);
+        assert_eq!(converted.len(), 1);
+        assert_eq!(converted[0]["role"], "system");
+        assert!(converted[0]["content"].as_str().unwrap().contains("[Tool: search]"));
+    }
+
+    #[test]
+    fn value_builds_multimodal_user_message_for_images() {
+        let mut msg = message(MessageRole::User, "describe", None);
+        msg.images = Some(vec![ImageContent {
+            content_type: "image_url".to_string(),
+            image_url: ImageUrl {
+                url: "data:image/png;base64,abc".to_string(),
+            },
+        }]);
+        let converted = build_openai_messages_value(&[msg]);
+        let content = converted[0]["content"].as_array().unwrap();
+        assert_eq!(content.len(), 2);
+        assert_eq!(content[0]["type"], "text");
+        assert_eq!(content[1]["type"], "image_url");
+    }
+
+    #[test]
+    fn value_keeps_normal_assistant_text_as_text_content() {
+        let converted = build_openai_messages_value(&[message(MessageRole::Assistant, "hello", None)]);
+        assert_eq!(converted[0]["role"], "assistant");
+        assert_eq!(converted[0]["content"], "hello");
     }
 }
