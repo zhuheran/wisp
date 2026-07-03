@@ -5,7 +5,7 @@ use futures::StreamExt;
 use serde_json::{json, Value};
 use wisp_keyring::KeyManager;
 
-use crate::backend::{LlmBackend, StreamOutcome, StreamRequest, ToolChoice};
+use crate::backend::{LlmBackend, ReasoningConfig, ReasoningPassback, StreamCallbacks, StreamOutcome, StreamRequest, ToolChoice};
 use crate::error::LlmError;
 use crate::sse;
 
@@ -13,173 +13,192 @@ pub struct OpenAiCompatBackend;
 
 #[async_trait]
 impl LlmBackend for OpenAiCompatBackend {
+    fn reasoning_config(&self) -> ReasoningConfig {
+        ReasoningConfig {
+            field_name: "reasoning_content",
+            policy: ReasoningPassback::Always,
+        }
+    }
+
     async fn stream(&self, req: StreamRequest) -> Result<StreamOutcome, LlmError> {
-        let base_url = req.provider.base_url.trim_end_matches('/').to_string();
-        let url = format!("{base_url}/chat/completions");
+        let body = build_chat_body(&req);
+        stream_with_body(req, body).await
+    }
+}
 
-        let key_manager = KeyManager::new("wisp".to_string());
-        let api_key = key_manager
-            .get_api_key(&req.provider.name)
-            .or_else(|_| std::env::var("OPENAI_API_KEY"))
-            .map_err(|e| LlmError::Other(format!("API key not found: {e}")))?;
+pub(crate) fn build_chat_body(req: &StreamRequest) -> Value {
+    let mut body = json!({
+        "model": req.model,
+        "messages": req.messages,
+        "stream": true,
+    });
 
-        let mut body = json!({
-            "model": req.model,
-            "messages": req.messages,
-            "stream": true,
-        });
+    if let Some(params) = &req.parameters {
+        apply_parameters(&mut body, params);
+    } else {
+        body["max_tokens"] = json!(1024);
+    }
 
-        if let Some(params) = &req.parameters {
-            apply_parameters(&mut body, params);
-        } else {
-            body["max_tokens"] = json!(1024);
-        }
-
-        if !req.tools.is_empty() {
-            let tools_json: Vec<Value> = req
-                .tools
-                .iter()
-                .map(|t| {
-                    json!({
-                        "type": "function",
-                        "function": {
-                            "name": t.name,
-                            "description": t.description,
-                            "parameters": t.parameters,
-                        }
-                    })
+    if !req.tools.is_empty() {
+        let tools_json: Vec<Value> = req
+            .tools
+            .iter()
+            .map(|t| {
+                json!({
+                    "type": "function",
+                    "function": {
+                        "name": t.name,
+                        "description": t.description,
+                        "parameters": t.parameters,
+                    }
                 })
-                .collect();
-            body["tools"] = json!(tools_json);
-            body["tool_choice"] = match &req.tool_choice {
-                ToolChoice::Auto => json!("auto"),
-                ToolChoice::None => json!("none"),
-                ToolChoice::Required => json!("required"),
-                ToolChoice::Specific(name) => {
-                    json!({"type": "function", "function": {"name": name}})
-                }
-            };
-        }
-
-        let client = reqwest::Client::new();
-        let response = client
-            .post(&url)
-            .header("Authorization", format!("Bearer {api_key}"))
-            .header("Content-Type", "application/json")
-            .json(&body)
-            .send()
-            .await?;
-
-        if !response.status().is_success() {
-            let status = response.status().as_u16();
-            let body = response.text().await.unwrap_or_default();
-            return Err(LlmError::Api { status, body });
-        }
-
-        let mut byte_stream = response.bytes_stream();
-        let mut outcome = StreamOutcome::default();
-        let mut buf: Vec<u8> = Vec::new();
-        let mut data_acc: String = String::new();
-        let mut done = false;
-
-        while !done {
-            if req.cancel.is_cancelled() {
-                return Err(LlmError::Cancelled);
+            })
+            .collect();
+        body["tools"] = json!(tools_json);
+        body["tool_choice"] = match &req.tool_choice {
+            ToolChoice::Auto => json!("auto"),
+            ToolChoice::None => json!("none"),
+            ToolChoice::Required => json!("required"),
+            ToolChoice::Specific(name) => {
+                json!({"type": "function", "function": {"name": name}})
             }
+        };
+    }
 
-            loop {
-                if buf.iter().any(|&b| b == b'\n') {
+    body
+}
+
+pub(crate) async fn stream_with_body(
+    req: StreamRequest,
+    body: Value,
+) -> Result<StreamOutcome, LlmError> {
+    let base_url = req.provider.base_url.trim_end_matches('/').to_string();
+    let url = format!("{base_url}/chat/completions");
+
+    let key_manager = KeyManager::new("wisp".to_string());
+    let api_key = key_manager
+        .get_api_key(&req.provider.name)
+        .or_else(|_| std::env::var("OPENAI_API_KEY"))
+        .map_err(|e| LlmError::Other(format!("API key not found: {e}")))?;
+
+    let client = reqwest::Client::new();
+    let response = client
+        .post(&url)
+        .header("Authorization", format!("Bearer {api_key}"))
+        .header("Content-Type", "application/json")
+        .json(&body)
+        .send()
+        .await?;
+
+    if !response.status().is_success() {
+        let status = response.status().as_u16();
+        let body = response.text().await.unwrap_or_default();
+        return Err(LlmError::Api { status, body });
+    }
+
+    let mut byte_stream = response.bytes_stream();
+    let mut outcome = StreamOutcome::default();
+    let mut buf: Vec<u8> = Vec::new();
+    let mut data_acc: String = String::new();
+    let mut done = false;
+
+    while !done {
+        if req.cancel.is_cancelled() {
+            return Err(LlmError::Cancelled);
+        }
+
+        loop {
+            if buf.iter().any(|&b| b == b'\n') {
+                break;
+            }
+            match byte_stream.next().await {
+                Some(Ok(chunk)) => buf.extend_from_slice(&chunk),
+                Some(Err(e)) => return Err(LlmError::Http(e)),
+                None => break,
+            }
+        }
+
+        let nl = match buf.iter().position(|&b| b == b'\n') {
+            Some(i) => i,
+            None => {
+                if buf.is_empty() && data_acc.is_empty() {
                     break;
                 }
-                match byte_stream.next().await {
-                    Some(Ok(chunk)) => buf.extend_from_slice(&chunk),
-                    Some(Err(e)) => return Err(LlmError::Http(e)),
-                    None => break,
-                }
+                buf.push(b'\n');
+                buf.len() - 1
             }
+        };
+        let line = {
+            let bytes = buf.drain(..=nl).collect::<Vec<u8>>();
+            let s = std::str::from_utf8(&bytes).unwrap_or("");
+            s.strip_suffix('\r').unwrap_or(s).to_string()
+        };
 
-            let nl = match buf.iter().position(|&b| b == b'\n') {
-                Some(i) => i,
-                None => {
-                    if buf.is_empty() && data_acc.is_empty() {
-                        break;
-                    }
-                    buf.push(b'\n');
-                    buf.len() - 1
-                }
+        if line.is_empty() {
+            if data_acc.is_empty() {
+                continue;
+            }
+            let event = reqwest_sse::Event {
+                event_type: "message".to_string(),
+                data: std::mem::take(&mut data_acc),
+                last_event_id: None,
+                retry: None,
             };
-            let line = {
-                let bytes = buf.drain(..=nl).collect::<Vec<u8>>();
-                let s = std::str::from_utf8(&bytes).unwrap_or("");
-                s.strip_suffix('\r').unwrap_or(s).to_string()
-            };
-
-            if line.is_empty() {
-                if data_acc.is_empty() {
-                    continue;
-                }
-                let event = reqwest_sse::Event {
-                    event_type: "message".to_string(),
-                    data: std::mem::take(&mut data_acc),
-                    last_event_id: None,
-                    retry: None,
-                };
-                if sse::is_done(&event) {
-                    done = true;
-                    continue;
-                }
-                let parsed = sse::parse_data_json(&event)?;
-                if !parsed.is_null() {
-                    if let Some(choices) = parsed.get("choices").and_then(|c| c.as_array()) {
-                        for choice in choices {
-                            if let Some(delta) = choice.get("delta") {
-                                if let Some(content) =
-                                    delta.get("content").and_then(|c| c.as_str())
-                                {
-                                    outcome.text.push_str(content);
-                                    (req.callbacks.on_content)(content);
-                                }
-                                if let Some(reasoning) = delta
-                                    .get("reasoning_content")
-                                    .and_then(|c| c.as_str())
-                                {
-                                    outcome.reasoning.push_str(reasoning);
-                                    (req.callbacks.on_reasoning)(reasoning);
-                                }
-                                if let Some(reasoning_details) =
-                                    delta.get("reasoning_details").and_then(|c| c.as_array())
-                                {
-                                    for detail in reasoning_details {
-                                        if let Some(text) =
-                                            detail.get("text").and_then(|t| t.as_str())
-                                        {
-                                            outcome.reasoning.push_str(text);
-                                            (req.callbacks.on_reasoning)(text);
-                                        }
+            if sse::is_done(&event) {
+                done = true;
+                continue;
+            }
+            let parsed = sse::parse_data_json(&event)?;
+            if !parsed.is_null() {
+                if let Some(choices) = parsed.get("choices").and_then(|c| c.as_array()) {
+                    for choice in choices {
+                        if let Some(delta) = choice.get("delta") {
+                            if let Some(content) =
+                                delta.get("content").and_then(|c| c.as_str())
+                            {
+                                outcome.text.push_str(content);
+                                (req.callbacks.on_content)(content);
+                            }
+                            if let Some(reasoning) = delta
+                                .get("reasoning_content")
+                                .and_then(|c| c.as_str())
+                            {
+                                outcome.reasoning.push_str(reasoning);
+                                (req.callbacks.on_reasoning)(reasoning);
+                            }
+                            if let Some(reasoning_details) =
+                                delta.get("reasoning_details").and_then(|c| c.as_array())
+                            {
+                                for detail in reasoning_details {
+                                    if let Some(text) =
+                                        detail.get("text").and_then(|t| t.as_str())
+                                    {
+                                        outcome.reasoning.push_str(text);
+                                        (req.callbacks.on_reasoning)(text);
                                     }
                                 }
-                                if let Some(tool_calls) =
-                                    delta.get("tool_calls").and_then(|c| c.as_array())
-                                {
-                                    for tc in tool_calls {
-                                        outcome.tool_call_deltas.push(tc.clone());
-                                    }
+                            }
+                            if let Some(tool_calls) =
+                                delta.get("tool_calls").and_then(|c| c.as_array())
+                            {
+                                for tc in tool_calls {
+                                    outcome.tool_call_deltas.push(tc.clone());
                                 }
                             }
                         }
                     }
                 }
-            } else if let Some(data) = line.strip_prefix("data:") {
-                let data = data.strip_prefix(' ').unwrap_or(data);
-                if !data_acc.is_empty() {
-                    data_acc.push('\n');
-                }
-                data_acc.push_str(data);
             }
+        } else if let Some(data) = line.strip_prefix("data:") {
+            let data = data.strip_prefix(' ').unwrap_or(data);
+            if !data_acc.is_empty() {
+                data_acc.push('\n');
+            }
+            data_acc.push_str(data);
         }
-
-        Ok(outcome)
     }
+
+    Ok(outcome)
 }
 
 fn apply_parameters(body: &mut Value, params: &HashMap<String, Value>) {

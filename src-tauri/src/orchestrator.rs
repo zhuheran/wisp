@@ -273,7 +273,7 @@ async fn call_llm_with_pal_config<R: tauri::Runtime>(
     use wisp_llm::{backend_for, StreamCallbacks, StreamRequest, ToolChoice};
 
     let api_messages: Vec<serde_json::Value> =
-        wisp_conversation::payload::build_openai_messages_value(messages);
+        wisp_conversation::payload::build_openai_messages(messages);
 
     let callbacks = StreamCallbacks {
         on_content: Arc::new(|_| {}),

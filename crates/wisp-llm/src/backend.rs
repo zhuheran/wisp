@@ -36,6 +36,28 @@ impl Default for ToolChoice {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ReasoningPassback {
+    Never,
+    Always,
+    ToolTurnsOnly,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct ReasoningConfig {
+    pub field_name: &'static str,
+    pub policy: ReasoningPassback,
+}
+
+impl Default for ReasoningConfig {
+    fn default() -> Self {
+        ReasoningConfig {
+            field_name: "reasoning_content",
+            policy: ReasoningPassback::Never,
+        }
+    }
+}
+
 pub struct StreamRequest {
     pub messages: Vec<Value>,
     pub model: String,
@@ -57,4 +79,8 @@ pub struct StreamOutcome {
 #[async_trait::async_trait]
 pub trait LlmBackend: Send + Sync {
     async fn stream(&self, req: StreamRequest) -> Result<StreamOutcome, LlmError>;
+
+    fn reasoning_config(&self) -> ReasoningConfig {
+        ReasoningConfig::default()
+    }
 }

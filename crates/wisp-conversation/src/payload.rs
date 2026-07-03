@@ -1,15 +1,25 @@
 use serde_json::{json, Value};
 
 use wisp_db::types::{Message, MessageRole};
+use wisp_llm::{ReasoningConfig, ReasoningPassback};
 use crate::types::{ConversationToolCall, ConversationToolContent};
 
-pub fn build_openai_messages_value(messages: &[Message]) -> Vec<Value> {
+pub fn build_openai_messages(messages: &[Message]) -> Vec<Value> {
+    build_openai_messages_with_reasoning(messages, &ReasoningConfig::default())
+}
+
+pub fn build_openai_messages_with_reasoning(
+    messages: &[Message],
+    config: &ReasoningConfig,
+) -> Vec<Value> {
     let mut converted = Vec::with_capacity(messages.len());
 
     for message in messages {
         match message.sender {
-            MessageRole::User => converted.push(convert_user_message_value(message)),
-            MessageRole::Assistant => converted.push(convert_assistant_message_value(message)),
+            MessageRole::User => converted.push(convert_user_message(message)),
+            MessageRole::Assistant => {
+                converted.push(convert_assistant_message_with_policy(message, config));
+            }
             MessageRole::System => converted.push(json!({
                 "role": "system",
                 "content": message.text,
@@ -24,7 +34,7 @@ pub fn build_openai_messages_value(messages: &[Message]) -> Vec<Value> {
     converted
 }
 
-fn convert_user_message_value(message: &Message) -> Value {
+fn convert_user_message(message: &Message) -> Value {
     if let Some(images) = &message.images {
         if !images.is_empty() {
             let mut parts = vec![json!({
@@ -52,13 +62,25 @@ fn convert_user_message_value(message: &Message) -> Value {
     })
 }
 
-fn convert_assistant_message_value(message: &Message) -> Value {
+fn convert_assistant_message_with_policy(message: &Message, config: &ReasoningConfig) -> Value {
     let text = reconstruct_tool_call_text(message);
 
-    json!({
-        "role": "assistant",
-        "content": text,
-    })
+    let mut msg = serde_json::Map::new();
+    msg.insert("role".to_string(), json!("assistant"));
+    msg.insert("content".to_string(), json!(text));
+
+    let include_reasoning = match config.policy {
+        ReasoningPassback::Never => false,
+        ReasoningPassback::Always => message.reasoning.as_deref().map(|r| !r.is_empty()).unwrap_or(false),
+        ReasoningPassback::ToolTurnsOnly => message.tool_calls.is_some(),
+    };
+
+    if include_reasoning {
+        let reasoning = message.reasoning.as_deref().unwrap_or("");
+        msg.insert(config.field_name.to_string(), json!(reasoning));
+    }
+
+    Value::Object(msg)
 }
 
 fn reconstruct_tool_call_text(message: &Message) -> String {
@@ -83,90 +105,6 @@ fn reconstruct_tool_call_text(message: &Message) -> String {
     }
 }
 
-pub fn build_openai_messages_with_reasoning(
-    messages: &[Message],
-    include_reasoning_on_tool_turns: bool,
-) -> Vec<Value> {
-    let mut converted = Vec::with_capacity(messages.len());
-
-    for message in messages {
-        match message.sender {
-            MessageRole::User => converted.push(convert_user_message_value(message)),
-            MessageRole::Assistant => {
-                if include_reasoning_on_tool_turns {
-                    converted.push(convert_assistant_message_deepseek(message));
-                } else {
-                    converted.push(convert_assistant_message_value(message));
-                }
-            }
-            MessageRole::System => converted.push(json!({
-                "role": "system",
-                "content": message.text,
-            })),
-            MessageRole::Tool => converted.push(json!({
-                "role": "system",
-                "content": message.text,
-            })),
-        }
-    }
-
-    converted
-}
-
-fn convert_assistant_message_deepseek(message: &Message) -> Value {
-    let mut msg = serde_json::Map::new();
-    msg.insert("role".to_string(), json!("assistant"));
-
-    let text = reconstruct_tool_call_text(message);
-    msg.insert("content".to_string(), json!(text));
-
-    if message.tool_calls.is_some() {
-        let reasoning = message.reasoning.as_deref().unwrap_or("");
-        msg.insert("reasoning_content".to_string(), json!(reasoning));
-    }
-
-    Value::Object(msg)
-}
-
-pub fn build_openai_messages_compat_reasoning(messages: &[Message]) -> Vec<Value> {
-    let mut converted = Vec::with_capacity(messages.len());
-
-    for message in messages {
-        match message.sender {
-            MessageRole::User => converted.push(convert_user_message_value(message)),
-            MessageRole::Assistant => {
-                converted.push(convert_assistant_message_compat(message));
-            }
-            MessageRole::System => converted.push(json!({
-                "role": "system",
-                "content": message.text,
-            })),
-            MessageRole::Tool => converted.push(json!({
-                "role": "system",
-                "content": message.text,
-            })),
-        }
-    }
-
-    converted
-}
-
-fn convert_assistant_message_compat(message: &Message) -> Value {
-    let mut msg = serde_json::Map::new();
-    msg.insert("role".to_string(), json!("assistant"));
-    let text = reconstruct_tool_call_text(message);
-    msg.insert("content".to_string(), json!(text));
-
-    if let Some(reasoning) = &message.reasoning {
-        if !reasoning.is_empty() {
-            msg.insert("reasoning_content".to_string(), json!(reasoning));
-        }
-    }
-
-    Value::Object(msg)
-}
-
-/// 格式化 tool call 的结果成 AI 可读的结构化文本（存储到 DB + 构建 system message 用）
 pub fn format_tool_result(call: &ConversationToolCall) -> String {
     let result = match &call.result {
         Some(r) => r,
@@ -212,6 +150,7 @@ pub fn format_tool_result(call: &ConversationToolCall) -> String {
 mod tests {
     use super::*;
     use wisp_db::types::{ImageContent, ImageUrl};
+    use wisp_llm::{ReasoningConfig, ReasoningPassback};
 
     fn message(role: MessageRole, text: &str, tool_calls: Option<String>) -> Message {
         Message {
@@ -241,12 +180,12 @@ mod tests {
     }
 
     #[test]
-    fn value_assistant_message_is_sent_as_plain_text() {
+    fn assistant_message_is_sent_as_plain_text() {
         let messages = vec![
             message(MessageRole::User, "hello", None),
             message(MessageRole::Assistant, "hi there", None),
         ];
-        let converted = build_openai_messages_value(&messages);
+        let converted = build_openai_messages(&messages);
         assert_eq!(converted.len(), 2);
         assert_eq!(converted[0]["role"], "user");
         assert_eq!(converted[1]["role"], "assistant");
@@ -254,18 +193,18 @@ mod tests {
     }
 
     #[test]
-    fn value_tool_message_becomes_system_message() {
+    fn tool_message_becomes_system_message() {
         let messages = vec![
             message(MessageRole::Tool, "[Tool: search]\n[Result]\nfound", None),
         ];
-        let converted = build_openai_messages_value(&messages);
+        let converted = build_openai_messages(&messages);
         assert_eq!(converted.len(), 1);
         assert_eq!(converted[0]["role"], "system");
         assert!(converted[0]["content"].as_str().unwrap().contains("[Tool: search]"));
     }
 
     #[test]
-    fn value_builds_multimodal_user_message_for_images() {
+    fn builds_multimodal_user_message_for_images() {
         let mut msg = message(MessageRole::User, "describe", None);
         msg.images = Some(vec![ImageContent {
             content_type: "image_url".to_string(),
@@ -273,7 +212,7 @@ mod tests {
                 url: "data:image/png;base64,abc".to_string(),
             },
         }]);
-        let converted = build_openai_messages_value(&[msg]);
+        let converted = build_openai_messages(&[msg]);
         let content = converted[0]["content"].as_array().unwrap();
         assert_eq!(content.len(), 2);
         assert_eq!(content[0]["type"], "text");
@@ -281,10 +220,10 @@ mod tests {
     }
 
     #[test]
-    fn value_keeps_normal_assistant_text_as_text_content() {
-        let converted = build_openai_messages_value(&[message(MessageRole::Assistant, "hello", None)]);
-        assert_eq!(converted[0]["role"], "assistant");
-        assert_eq!(converted[0]["content"], "hello");
+    fn default_config_never_includes_reasoning() {
+        let msg = message_with_reasoning_and_tools("answer", Some("thinking..."), None);
+        let converted = build_openai_messages(&[msg]);
+        assert!(converted[0].get("reasoning_content").is_none());
     }
 
     #[test]
@@ -294,15 +233,22 @@ mod tests {
             Some("thinking..."),
             Some(r#"[{"name":"x","arguments":{}}]"#),
         );
-        let converted = build_openai_messages_with_reasoning(&[msg], true);
-        assert_eq!(converted[0]["role"], "assistant");
+        let config = ReasoningConfig {
+            field_name: "reasoning_content",
+            policy: ReasoningPassback::ToolTurnsOnly,
+        };
+        let converted = build_openai_messages_with_reasoning(&[msg], &config);
         assert_eq!(converted[0]["reasoning_content"], "thinking...");
     }
 
     #[test]
     fn deepseek_omits_reasoning_on_plain_turns() {
         let msg = message_with_reasoning_and_tools("answer", Some("thinking..."), None);
-        let converted = build_openai_messages_with_reasoning(&[msg], true);
+        let config = ReasoningConfig {
+            field_name: "reasoning_content",
+            policy: ReasoningPassback::ToolTurnsOnly,
+        };
+        let converted = build_openai_messages_with_reasoning(&[msg], &config);
         assert!(converted[0].get("reasoning_content").is_none());
     }
 
@@ -313,7 +259,11 @@ mod tests {
             None,
             Some(r#"[{"name":"x","arguments":{}}]"#),
         );
-        let converted = build_openai_messages_with_reasoning(&[msg], true);
+        let config = ReasoningConfig {
+            field_name: "reasoning_content",
+            policy: ReasoningPassback::ToolTurnsOnly,
+        };
+        let converted = build_openai_messages_with_reasoning(&[msg], &config);
         assert_eq!(converted[0]["reasoning_content"], "");
     }
 
@@ -324,14 +274,22 @@ mod tests {
             Some("thinking..."),
             Some(r#"[{"name":"x","arguments":{}}]"#),
         );
-        let converted = build_openai_messages_compat_reasoning(&[msg]);
+        let config = ReasoningConfig {
+            field_name: "reasoning_content",
+            policy: ReasoningPassback::Always,
+        };
+        let converted = build_openai_messages_with_reasoning(&[msg], &config);
         assert_eq!(converted[0]["reasoning_content"], "thinking...");
     }
 
     #[test]
     fn compat_omits_reasoning_when_empty() {
         let msg = message_with_reasoning_and_tools("answer", Some(""), None);
-        let converted = build_openai_messages_compat_reasoning(&[msg]);
+        let config = ReasoningConfig {
+            field_name: "reasoning_content",
+            policy: ReasoningPassback::Always,
+        };
+        let converted = build_openai_messages_with_reasoning(&[msg], &config);
         assert!(converted[0].get("reasoning_content").is_none());
     }
 }

@@ -4,8 +4,8 @@ pub mod sse;
 pub mod backends;
 
 pub use backend::{
-    ChunkCallback, LlmBackend, StreamCallbacks, StreamRequest, StreamOutcome, ToolChoice,
-    ToolDefinition,
+    ChunkCallback, LlmBackend, ReasoningConfig, ReasoningPassback, StreamCallbacks, StreamRequest,
+    StreamOutcome, ToolChoice, ToolDefinition,
 };
 pub use error::LlmError;
 
