@@ -44,11 +44,11 @@ impl NativeTool for JsExec {
             let output = ctx
                 .with(|ctx| -> std::result::Result<String, String> {
                     let wrapper = format!(
-                        "(function() {{\nvar __wisp_r = (function() {{\n{code}\n}})();\nif (typeof __wisp_r === 'object' && __wisp_r !== null) return JSON.stringify(__wisp_r);\nreturn String(__wisp_r);\n}})()",
+                        "(function() {{\ntry {{\nvar __wisp_r = (function() {{\n{code}\n}})();\nif (typeof __wisp_r === 'object' && __wisp_r !== null) return JSON.stringify(__wisp_r);\nreturn String(__wisp_r);\n}} catch(e) {{\nreturn '__wisp_error__:' + (e && e.message ? e.message : String(e));\n}}\n}})()",
                     );
                     let result: String = ctx
                         .eval(wrapper)
-                        .map_err(|e| format!("{e}"))?;
+                        .map_err(|e| format!("syntax/runtime error: {e}"))?;
                     Ok(result)
                 })?;
             Ok(output)
@@ -57,9 +57,14 @@ impl NativeTool for JsExec {
         .map_err(|e| ToolError::ExecutionFailed(format!("task join error: {e}")))
         .and_then(|r| r.map_err(|e| ToolError::ExecutionFailed(format!("JS error: {e}"))))?;
 
+        let (text, is_error) = match result.strip_prefix("__wisp_error__:") {
+            Some(msg) => (msg.to_string(), true),
+            None => (result, false),
+        };
+
         Ok(ToolResult {
-            content: vec![ToolContent::Text { text: result }],
-            is_error: false,
+            content: vec![ToolContent::Text { text }],
+            is_error,
         })
     }
 }
@@ -125,6 +130,32 @@ mod tests {
         let args = serde_json::json!({"code": "return function({"});
         let result = tool.run(args).await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_js_exec_runtime_error_returns_specific_message() {
+        let tool = JsExec;
+        let args = serde_json::json!({"code": "return undefinedVar;"});
+        let result = tool.run(args).await.unwrap();
+        assert!(result.is_error);
+        let text = match &result.content[0] {
+            ToolContent::Text { text } => text.as_str(),
+            _ => panic!("expected text"),
+        };
+        assert!(text.contains("undefinedVar"), "error should mention the undefined variable, got: {text}");
+    }
+
+    #[tokio::test]
+    async fn test_js_exec_type_error_message() {
+        let tool = JsExec;
+        let args = serde_json::json!({"code": "return null.foo;"});
+        let result = tool.run(args).await.unwrap();
+        assert!(result.is_error);
+        let text = match &result.content[0] {
+            ToolContent::Text { text } => text.as_str(),
+            _ => panic!("expected text"),
+        };
+        assert!(text.contains("null") || text.contains("Cannot read"), "error should explain the type error, got: {text}");
     }
 
     #[tokio::test]
