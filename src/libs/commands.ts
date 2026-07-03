@@ -70,6 +70,10 @@ export async function conversationEditAndRegenerate(request: ConversationDeriveR
 	return invoke<string>('conversation_edit_and_regenerate', { request })
 }
 
+export async function conversationAbort(streamId: string) {
+	return invoke<boolean>('conversation_abort', { streamId })
+}
+
 export interface DiagramCacheEntry {
 	svg: string;
 	height: number;

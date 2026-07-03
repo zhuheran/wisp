@@ -1,3 +1,4 @@
+mod abort;
 mod cache;
 mod commands;
 mod chore;
@@ -12,6 +13,8 @@ mod mcp_stdio_commands;
 mod registry_commands;
 
 use tauri::{Builder, Manager};
+
+use crate::abort::AbortRegistry;
 
 use wisp_db::chat::Chat;
 use crate::cache::DiagramCache;
@@ -56,16 +59,18 @@ pub fn run() {
 			        ));
 
 			                app.manage(Mutex::new(AppData {
-			            chat: Chat::new(app.handle())?,
-			            diagram_cache: DiagramCache::new()?,
-			            key_manager: KeyManager::new("wisp".to_string()),
-			            config_manager,
-			            mcp_config_manager,
-			            mcp_stdio_manager,
-			            mcp_http_manager,
-			            tool_registry,
-			            unlocked_pals: HashMap::new(),
-			        }));
+		            chat: Chat::new(app.handle())?,
+		            diagram_cache: DiagramCache::new()?,
+		            key_manager: KeyManager::new("wisp".to_string()),
+		            config_manager,
+		            mcp_config_manager,
+		            mcp_stdio_manager,
+		            mcp_http_manager,
+		            tool_registry,
+		            unlocked_pals: HashMap::new(),
+		        }));
+
+			app.manage(AbortRegistry::new());
 
 			{
 				let state = app.state::<Mutex<AppData>>();
@@ -173,6 +178,7 @@ pub fn run() {
 			conversation_commands::conversation_regenerate_message,
 			conversation_commands::conversation_derive_message,
 			conversation_commands::conversation_edit_and_regenerate,
+			abort::conversation_abort,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

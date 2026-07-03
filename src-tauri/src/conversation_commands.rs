@@ -2,12 +2,12 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 use tauri::{AppHandle, Emitter, Manager};
-use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use wisp_llm::{backend_for, StreamCallbacks, StreamRequest};
 use wisp_configs::character::Character;
 use wisp_configs::provider::Provider;
+use crate::abort::AbortRegistry;
 use crate::orchestrator;
 use wisp_conversation::payload::{build_openai_messages_value, format_tool_result};
 use wisp_conversation::tool_parser::parse_tool_calls;
@@ -266,12 +266,37 @@ async fn resolve_enabled_mcp_tools<R: tauri::Runtime>(
 async fn run_conversation_rounds<R: tauri::Runtime>(
     app_handle: tauri::AppHandle<R>,
     conversation_id: String,
-    mut current_leaf_id: String,
+    current_leaf_id: String,
     model: String,
     provider: Provider,
     parameters: Option<HashMap<String, serde_json::Value>>,
     character: Option<Character>,
     stream_id: String,
+) -> Result<String, String> {
+    let result = run_conversation_rounds_inner(
+        &app_handle,
+        conversation_id,
+        current_leaf_id,
+        model,
+        provider,
+        parameters,
+        character,
+        &stream_id,
+    )
+    .await;
+    app_handle.state::<AbortRegistry>().unregister(&stream_id);
+    result
+}
+
+async fn run_conversation_rounds_inner<R: tauri::Runtime>(
+    app_handle: &tauri::AppHandle<R>,
+    conversation_id: String,
+    mut current_leaf_id: String,
+    model: String,
+    provider: Provider,
+    parameters: Option<HashMap<String, serde_json::Value>>,
+    character: Option<Character>,
+    stream_id: &str,
 ) -> Result<String, String> {
     let pal_id = character.as_ref().map(|c| c.id.clone());
     let pal_name = character.as_ref().map(|c| c.name.clone());
@@ -289,7 +314,7 @@ async fn run_conversation_rounds<R: tauri::Runtime>(
 
         let mut openai_messages = build_openai_messages_value(&path);
 
-        let enabled_tools = resolve_enabled_mcp_tools(&app_handle).await?;
+        let enabled_tools = resolve_enabled_mcp_tools(app_handle).await?;
         let tools_prompt = build_enabled_tools_prompt(&enabled_tools);
 
         let mut system_prompt_sections = Vec::new();
@@ -330,7 +355,7 @@ async fn run_conversation_rounds<R: tauri::Runtime>(
             let state_mutex = app_handle.state::<Mutex<AppData>>();
             let mut state = state_mutex.lock().map_err(|error| error.to_string())?;
             insert_message_and_emit(
-                &app_handle,
+                app_handle,
                 &mut state,
                 &conversation_id,
                 draft_message,
@@ -338,9 +363,10 @@ async fn run_conversation_rounds<R: tauri::Runtime>(
             )?;
         }
 
-        let cancel = CancellationToken::new();
+        let registry = app_handle.state::<AbortRegistry>();
+        let cancel = registry.register(stream_id);
         let assistant_msg_id = assistant_message_id.clone();
-        let sid = stream_id.clone();
+        let sid = stream_id.to_string();
         let ah = app_handle.clone();
         let callbacks = StreamCallbacks {
             on_content: Arc::new(move |chunk: &str| {
@@ -355,7 +381,7 @@ async fn run_conversation_rounds<R: tauri::Runtime>(
             }),
             on_reasoning: Arc::new({
                 let assistant_msg_id = assistant_message_id.clone();
-                let sid = stream_id.clone();
+                let sid = stream_id.to_string();
                 let ah = app_handle.clone();
                 move |chunk: &str| {
                     let _ = ah.emit(
@@ -435,7 +461,7 @@ async fn run_conversation_rounds<R: tauri::Runtime>(
             }
         }
         emit_event(
-            &app_handle,
+            app_handle,
             ConversationEventPayload::MessageUpdated {
                 message_id: assistant_message_id.clone(),
                 text: assistant_message.text.clone(),
@@ -448,7 +474,7 @@ async fn run_conversation_rounds<R: tauri::Runtime>(
 
         if calls.is_empty() {
             emit_event(
-                &app_handle,
+                app_handle,
                 ConversationEventPayload::Completed {
                     leaf_message_id: current_leaf_id.clone(),
                 },
@@ -458,7 +484,7 @@ async fn run_conversation_rounds<R: tauri::Runtime>(
 
         if round == 9 {
             emit_event(
-                &app_handle,
+                app_handle,
                 ConversationEventPayload::Failed {
                     error: "Max tool rounds reached".to_string(),
                 },
@@ -468,7 +494,7 @@ async fn run_conversation_rounds<R: tauri::Runtime>(
 
         let mut completed_calls = Vec::new();
         for call in calls {
-            completed_calls.push(execute_tool_call(&app_handle, call).await?);
+            completed_calls.push(execute_tool_call(app_handle, call).await?);
         }
         let completed_calls_json = serde_json::to_string(&completed_calls)
             .map_err(|error| format!("Failed to serialize completed tool calls for conversation '{}': {}", conversation_id, error))?;
@@ -483,7 +509,7 @@ async fn run_conversation_rounds<R: tauri::Runtime>(
                 .map_err(|error| error.to_string())?;
         }
         emit_event(
-            &app_handle,
+            app_handle,
             ConversationEventPayload::MessageUpdated {
                 message_id: assistant_message_id.clone(),
                 text: parsed.clean_text,
@@ -515,7 +541,7 @@ async fn run_conversation_rounds<R: tauri::Runtime>(
                 let state_mutex = app_handle.state::<Mutex<AppData>>();
                 let mut state = state_mutex.lock().map_err(|error| error.to_string())?;
                 insert_message_and_emit(
-                    &app_handle,
+                    app_handle,
                     &mut state,
                     &conversation_id,
                     tool_message.clone(),
@@ -905,6 +931,7 @@ mod tests {
         };
 
         handle.manage(Mutex::new(app_data));
+        handle.manage(crate::abort::AbortRegistry::new());
 
         (handle, conversation_id)
     }
