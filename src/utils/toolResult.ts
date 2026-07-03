@@ -5,8 +5,8 @@ function escapeMd(s: string): string {
 }
 
 /** Escape a markdown table cell: pipes must be escaped, newlines removed. */
-function escapeTableCell(s: string): string {
-	return s.replace(/\|/g, "\\|").replace(/\r?\n/g, " ");
+function escapeValue(s: string): string {
+	return s.replace(/\|/g, "\\|").replace(/\r?\n/g, " ").replace(/`/g, "\\`");
 }
 
 /** Render an argument value for a table cell. Objects become inline JSON code. */
@@ -14,9 +14,9 @@ function renderArgValue(value: unknown): string {
 	if (value === null) return "`null`";
 	if (typeof value === "object") {
 		const json = JSON.stringify(value);
-		return "`" + escapeTableCell(json) + "`";
+		return "```json\n" + escapeValue(json) + "\n```";
 	}
-	return escapeTableCell(String(value));
+	return "```json\n" + escapeValue(String(value)) + "\n```";;
 }
 
 /**
@@ -25,7 +25,7 @@ function renderArgValue(value: unknown): string {
  * paragraph break (two newlines).
  */
 function normaliseNewlines(s: string): string {
-	return s.replace(/\r?\n+/g, "\n<br/>\n");
+	return s;
 }
 
 /**
@@ -57,12 +57,11 @@ export function formatToolResultMarkdown(
 	// Arguments table
 	const entries = Object.entries(call.arguments ?? {});
 	if (entries.length > 0) {
-		lines.push("| 参数 | 值 |");
-		lines.push("| --- | --- |");
 		for (const [key, value] of entries) {
-			lines.push(
-				`| ${escapeTableCell(key)} | ${renderArgValue(value)} |`,
-			);
+			lines.push(escapeValue(key));
+			lines.push("");
+			lines.push(renderArgValue(value));
+			lines.push("---");
 		}
 		lines.push("");
 	}
@@ -94,7 +93,7 @@ export function formatToolResultMarkdown(
 
 	lines.push(isError ? "> **Error**" : "**Result**");
 	lines.push("<br/>");
-	lines.push(pieces.join("\n<br/>\n"));
+	lines.push(pieces.join("\n\n"));
 
 	console.log(lines.join("\n"))
 
