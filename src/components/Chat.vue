@@ -14,7 +14,7 @@ import {
   useMessage,
   type SelectOption,
 } from "naive-ui";
-import { Chat48Regular, Send20Regular, Toolbox24Regular } from "@vicons/fluent";
+import { Chat48Regular, Send20Regular, Stop24Regular, Toolbox24Regular } from "@vicons/fluent";
 import MessageBubble from "./MessageBubble.vue";
 import AutoScrollWrapper from "./AutoScrollWrapper.vue";
 import ImageInput from "./ImageInput.vue";
@@ -494,6 +494,19 @@ onMounted(() => {
               </n-popover>
             </n-space>
             <n-button
+              v-if="chatStore.isStreaming"
+              type="error"
+              @click="chatStore.abortStreaming"
+              circle
+            >
+              <template #icon>
+                <n-icon :size="20">
+                  <Stop24Regular />
+                </n-icon>
+              </template>
+            </n-button>
+            <n-button
+              v-else
               type="primary"
               @click="sendMessage"
               circle

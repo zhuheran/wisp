@@ -45,8 +45,16 @@ export const useChatStore = defineStore('chat', () => {
 
 	const threadTreeDecisions = ref<number[]>([])
 	const isStreaming = ref(false)
+	const activeStreamId = ref<string | null>(null)
 
 	const mentionedPalIds = ref<Set<string>>(new Set())
+
+	const abortStreaming = async () => {
+		if (activeStreamId.value) {
+			await Commands.conversationAbort(activeStreamId.value)
+			activeStreamId.value = null
+		}
+	}
 
 	type SendMessageCallbacks = {
 		beforeSend: (botMessageId: string) => void;
@@ -140,6 +148,7 @@ export const useChatStore = defineStore('chat', () => {
 			}
 		})
 		const streamId = crypto.randomUUID();
+		activeStreamId.value = streamId
 		const unlistenContent = await listen<ConversationStreamChunkEvent>('conversation_stream_chunk', (event) => {
 			if (event.payload.stream_id && event.payload.stream_id !== streamId) return;
 			const mid = event.payload.message_id
@@ -201,6 +210,7 @@ export const useChatStore = defineStore('chat', () => {
 			await unlistenContent()
 			await unlistenReasoning()
 			isStreaming.value = false
+			activeStreamId.value = null
 		}
 	}
 
@@ -237,6 +247,7 @@ export const useChatStore = defineStore('chat', () => {
 			}
 		})
 		const streamId = crypto.randomUUID();
+		activeStreamId.value = streamId
 		const unlistenContent = await listen<ConversationStreamChunkEvent>('conversation_stream_chunk', (event) => {
 			if (event.payload.stream_id && event.payload.stream_id !== streamId) return;
 			const mid = event.payload.message_id
@@ -290,6 +301,7 @@ export const useChatStore = defineStore('chat', () => {
 			await unlistenContent()
 			await unlistenReasoning()
 			isStreaming.value = false
+			activeStreamId.value = null
 		}
 	}
 
@@ -323,6 +335,7 @@ export const useChatStore = defineStore('chat', () => {
 			}
 		})
 		const streamId = crypto.randomUUID();
+		activeStreamId.value = streamId
 		const unlistenContent = await listen<ConversationStreamChunkEvent>('conversation_stream_chunk', (event) => {
 			if (event.payload.stream_id && event.payload.stream_id !== streamId) return;
 			const mid = event.payload.message_id
@@ -376,6 +389,7 @@ export const useChatStore = defineStore('chat', () => {
 			await unlistenContent()
 			await unlistenReasoning()
 			isStreaming.value = false
+			activeStreamId.value = null
 		}
 	}
 
@@ -409,6 +423,7 @@ export const useChatStore = defineStore('chat', () => {
 			}
 		})
 		const streamId = crypto.randomUUID();
+		activeStreamId.value = streamId
 		const unlistenContent = await listen<ConversationStreamChunkEvent>('conversation_stream_chunk', (event) => {
 			if (event.payload.stream_id && event.payload.stream_id !== streamId) return;
 			const mid = event.payload.message_id
@@ -462,6 +477,7 @@ export const useChatStore = defineStore('chat', () => {
 			await unlistenContent()
 			await unlistenReasoning()
 			isStreaming.value = false
+			activeStreamId.value = null
 		}
 	}
 
@@ -808,6 +824,8 @@ export const useChatStore = defineStore('chat', () => {
 		threadTree,
 		userInput,
 		isStreaming,
+		activeStreamId,
+		abortStreaming,
 		chosenModel,
 		chosenProvider,
 		enabledMcpServers,
