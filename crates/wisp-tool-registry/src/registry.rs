@@ -137,6 +137,20 @@ impl ToolRegistry {
         }
     }
 
+    /// Execute the tool named `name` with the given `args`.
+    ///
+    /// # Pal authorization contract
+    ///
+    /// `pal_id` controls the per-tool `allowed_pals` check:
+    /// - `Some(pid)`: the tool is only executed if `pid` is in the tool's
+    ///   `allowed_pals` list (when that list is non-empty).
+    /// - `None`: **bypasses** the `allowed_pals` check entirely. This is the
+    ///   "system/trusted context" path and is currently intentional — callers
+    ///   in `conversation_commands` and `registry_commands` pass `None`
+    ///   because tool execution always originates from a trusted internal
+    ///   path. This contract WILL change once native tools with pal
+    ///   restrictions ship; at that point callers must thread the actual
+    ///   pal id from the conversation context.
     pub async fn execute(
         &self,
         name: &str,
