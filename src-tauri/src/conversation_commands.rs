@@ -300,6 +300,8 @@ async fn run_conversation_rounds_inner<R: tauri::Runtime>(
 ) -> Result<String, String> {
     let pal_id = character.as_ref().map(|c| c.id.clone());
     let pal_name = character.as_ref().map(|c| c.name.clone());
+    let registry = app_handle.state::<AbortRegistry>();
+    let cancel = registry.register(stream_id);
     for round in 0..10 {
         let path = {
             let state_mutex = app_handle.state::<Mutex<AppData>>();
@@ -363,8 +365,6 @@ async fn run_conversation_rounds_inner<R: tauri::Runtime>(
             )?;
         }
 
-        let registry = app_handle.state::<AbortRegistry>();
-        let cancel = registry.register(stream_id);
         let assistant_msg_id = assistant_message_id.clone();
         let sid = stream_id.to_string();
         let ah = app_handle.clone();
@@ -404,7 +404,7 @@ async fn run_conversation_rounds_inner<R: tauri::Runtime>(
                 provider: provider.clone(),
                 parameters: parameters.clone(),
                 callbacks,
-                cancel,
+                cancel: cancel.clone(),
             })
             .await
             .map_err(|error| format!(
