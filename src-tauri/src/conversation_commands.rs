@@ -130,39 +130,48 @@ async fn execute_tool_call<R: tauri::Runtime>(
         std::sync::Arc::clone(&state.tool_registry)
     };
 
-    let result = registry
+    let (content, is_error) = match registry
         .execute(&call.name, call.arguments.clone(), None)
         .await
-        .map_err(|error| format!("Tool '{}' failed: {}", call.name, error))?;
+    {
+        Ok(result) => {
+            let content = result
+                .content
+                .into_iter()
+                .map(|c| match c {
+                    ToolContent::Text { text } => {
+                        wisp_conversation::ConversationToolContent::Text { text }
+                    }
+                    ToolContent::Image { data, mime_type } => {
+                        wisp_conversation::ConversationToolContent::Image {
+                            data,
+                            mime_type,
+                        }
+                    }
+                    ToolContent::Resource {
+                        uri,
+                        mime_type,
+                        text,
+                        blob,
+                    } => wisp_conversation::ConversationToolContent::Resource {
+                        uri,
+                        mime_type,
+                        text,
+                        blob,
+                    },
+                })
+                .collect::<Vec<_>>();
+            (content, result.is_error)
+        }
+        Err(error) => {
+            let text = format!("Tool '{}' failed: {}", call.name, error);
+            (vec![wisp_conversation::ConversationToolContent::Text { text }], true)
+        }
+    };
 
     let tool_result = wisp_conversation::ConversationToolResult {
-        content: result
-            .content
-            .into_iter()
-            .map(|c| match c {
-                ToolContent::Text { text } => {
-                    wisp_conversation::ConversationToolContent::Text { text }
-                }
-                ToolContent::Image { data, mime_type } => {
-                    wisp_conversation::ConversationToolContent::Image {
-                        data,
-                        mime_type,
-                    }
-                }
-                ToolContent::Resource {
-                    uri,
-                    mime_type,
-                    text,
-                    blob,
-                } => wisp_conversation::ConversationToolContent::Resource {
-                    uri,
-                    mime_type,
-                    text,
-                    blob,
-                },
-            })
-            .collect(),
-        is_error: result.is_error,
+        content,
+        is_error,
     };
 
     Ok(ConversationToolCall {
