@@ -1,14 +1,15 @@
 use std::collections::{HashMap, HashSet};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use tauri::{AppHandle, Emitter, Manager};
+use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-use wisp_llm::{stream_openai_messages, OpenAiStreamEvents};
+use wisp_llm::{backend_for, StreamCallbacks, StreamRequest};
 use wisp_configs::character::Character;
 use wisp_configs::provider::Provider;
 use crate::orchestrator;
-use wisp_conversation::payload::{build_openai_messages, format_tool_result};
+use wisp_conversation::payload::{build_openai_messages_value, format_tool_result};
 use wisp_conversation::tool_parser::parse_tool_calls;
 use wisp_conversation::{ConversationToolCall, ConversationToolContent, ConversationToolResult};
 use wisp_common::MessageSource;
@@ -279,7 +280,7 @@ async fn run_conversation_rounds<R: tauri::Runtime>(
                 .map_err(|error| format!("Failed to build message path for conversation '{}' from leaf '{}': {}", conversation_id, current_leaf_id, error))?
         };
 
-        let mut openai_messages = build_openai_messages(&path);
+        let mut openai_messages = build_openai_messages_value(&path);
 
         let enabled_tools = resolve_enabled_mcp_tools(&app_handle).await?;
         let tools_prompt = build_enabled_tools_prompt(&enabled_tools);
@@ -294,17 +295,10 @@ async fn run_conversation_rounds<R: tauri::Runtime>(
             system_prompt_sections.push(tools_prompt);
         }
         if !system_prompt_sections.is_empty() {
-            openai_messages.insert(
-                0,
-                async_openai::types::ChatCompletionRequestMessage::System(
-                    async_openai::types::ChatCompletionRequestSystemMessage {
-                        content: async_openai::types::ChatCompletionRequestSystemMessageContent::Text(
-                            system_prompt_sections.join("\n\n"),
-                        ),
-                        ..Default::default()
-                    },
-                ),
-            );
+            openai_messages.insert(0, serde_json::json!({
+                "role": "system",
+                "content": system_prompt_sections.join("\n\n"),
+            }));
         }
 
         let assistant_message_id = Uuid::new_v4().to_string();
@@ -337,19 +331,49 @@ async fn run_conversation_rounds<R: tauri::Runtime>(
             )?;
         }
 
-        let outcome = stream_openai_messages(
-            app_handle.clone(),
-            openai_messages,
-            model.clone(),
-            provider.clone(),
-            parameters.clone(),
-            OpenAiStreamEvents {
-                message_id: Some(assistant_message_id.clone()),
-                ..OpenAiStreamEvents::CONVERSATION
-            },
-        )
-        .await
-        .map_err(|error| format!("Model '{}' failed while streaming conversation '{}': {}", model, conversation_id, error))?;
+        let cancel = CancellationToken::new();
+        let assistant_msg_id = assistant_message_id.clone();
+        let ah = app_handle.clone();
+        let callbacks = StreamCallbacks {
+            on_content: Arc::new(move |chunk: &str| {
+                let _ = ah.emit(
+                    "conversation_stream_chunk",
+                    serde_json::json!({
+                        "message_id": &assistant_msg_id,
+                        "chunk": chunk,
+                    }),
+                );
+            }),
+            on_reasoning: Arc::new({
+                let assistant_msg_id = assistant_message_id.clone();
+                let ah = app_handle.clone();
+                move |chunk: &str| {
+                    let _ = ah.emit(
+                        "conversation_stream_reasoning",
+                        serde_json::json!({
+                            "message_id": &assistant_msg_id,
+                            "chunk": chunk,
+                        }),
+                    );
+                }
+            }),
+        };
+
+        let backend = backend_for(&provider);
+        let outcome = backend
+            .stream(StreamRequest {
+                messages: openai_messages,
+                model: model.clone(),
+                provider: provider.clone(),
+                parameters: parameters.clone(),
+                callbacks,
+                cancel,
+            })
+            .await
+            .map_err(|error| format!(
+                "Model '{}' failed while streaming conversation '{}': {}",
+                model, conversation_id, error
+            ))?;
 
         let parsed = parse_tool_calls(&outcome.text);
         let calls = parsed
@@ -875,6 +899,7 @@ mod tests {
             name: "test-provider".to_string(),
             display_name: "Test Provider".to_string(),
             base_url: "http://localhost:9999".to_string(),
+            api_type: Default::default(),
             models: vec![ProviderModel {
                 metadata: ModelMetadata {
                     name: "gpt-4".to_string(),

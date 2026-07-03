@@ -1,5 +1,4 @@
 use std::collections::{HashMap, HashSet};
-use std::error::Error;
 use std::sync::Mutex;
 
 use serde_json::Value;
@@ -263,34 +262,35 @@ pub async fn run_director_check<R: tauri::Runtime>(
 
 /// Call the LLM with a character's configuration.
 async fn call_llm_with_pal_config<R: tauri::Runtime>(
-    app_handle: &tauri::AppHandle<R>,
+    _app_handle: &tauri::AppHandle<R>,
     messages: &[Message],
     pal: &Character,
     provider: &Provider,
     parameters: Option<&HashMap<String, Value>>,
 ) -> Result<String, String> {
-    use async_openai::types::ChatCompletionRequestMessage;
+    use std::sync::Arc;
+    use tokio_util::sync::CancellationToken;
+    use wisp_llm::{backend_for, StreamCallbacks, StreamRequest};
 
-    use wisp_llm::{stream_openai_messages, OpenAiStreamEvents};
+    let api_messages: Vec<serde_json::Value> =
+        wisp_conversation::payload::build_openai_messages_value(messages);
 
-    // Convert Messages to ChatCompletionRequestMessage
-    let api_messages: Vec<ChatCompletionRequestMessage> =
-        wisp_conversation::payload::build_openai_messages(messages);
-
-    let outcome = stream_openai_messages(
-        app_handle.clone(),
-        api_messages,
-        pal.model_id.clone(),
-        provider.clone(),
-        parameters.cloned(),
-        OpenAiStreamEvents {
-            content_chunk: "",
-            reasoning_chunk: "",
-            message_id: None,
-        },
-    )
-    .await
-    .map_err(|e: Box<dyn Error>| format!("LLM call failed: {}", e))?;
+    let callbacks = StreamCallbacks {
+        on_content: Arc::new(|_| {}),
+        on_reasoning: Arc::new(|_| {}),
+    };
+    let backend = backend_for(provider);
+    let outcome = backend
+        .stream(StreamRequest {
+            messages: api_messages,
+            model: pal.model_id.clone(),
+            provider: provider.clone(),
+            parameters: parameters.cloned(),
+            callbacks,
+            cancel: CancellationToken::new(),
+        })
+        .await
+        .map_err(|e: wisp_llm::LlmError| format!("LLM call failed: {}", e))?;
 
     Ok(outcome.text)
 }
@@ -502,6 +502,7 @@ mod tests {
             name: "test-provider".to_string(),
             display_name: "Test Provider".to_string(),
             base_url: "http://localhost:9999".to_string(),
+            api_type: Default::default(),
             models: vec![ProviderModel {
                 metadata: ModelMetadata {
                     name: "gpt-4".to_string(),
