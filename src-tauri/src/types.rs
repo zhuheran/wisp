@@ -15,7 +15,7 @@ pub struct AppData {
     pub chat: Chat,
     pub diagram_cache: DiagramCache,
     pub key_manager: KeyManager,
-    pub config_manager: ConfigManager,
+    pub config_manager: Arc<ConfigManager>,
     pub mcp_config_manager: McpConfigManager,
     pub mcp_stdio_manager: Arc<McpStdioManager>,
     pub mcp_http_manager: Arc<McpHttpManager>,

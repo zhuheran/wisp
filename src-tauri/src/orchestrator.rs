@@ -366,7 +366,7 @@ mod tests {
             chat,
             diagram_cache,
             key_manager,
-            config_manager,
+            config_manager: std::sync::Arc::new(config_manager),
             mcp_config_manager,
             mcp_stdio_manager: stdio_manager,
             mcp_http_manager: http_manager,

@@ -4,6 +4,7 @@ mod commands;
 mod chore;
 mod image;
 mod inet;
+mod native_tools;
 mod types;
 mod conversation_commands;
 mod orchestrator;
@@ -27,7 +28,7 @@ use wisp_mcp::McpHttpManager;
 use wisp_tool_registry::ToolRegistry;
 use wisp_software_tools::SoftwareToolRegistry;
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use crate::types::AppData;
 
 
@@ -42,7 +43,7 @@ pub fn run() {
 			#[cfg(target_os = "macos")]
 			apply_vibrancy(&window, NSVisualEffectMaterial::Sidebar, None, None).expect("Unsupported platform! 'apply_vibrancy' is only supported on macOS");
 
-			let config_manager = ConfigManager::new(app.handle())?;
+			let config_manager = Arc::new(ConfigManager::new(app.handle())?);
 			let mcp_config_manager = McpConfigManager::new(app.handle())?;
 			let mcp_stdio_manager = std::sync::Arc::new(McpStdioManager::new());
 			let mcp_http_manager = std::sync::Arc::new(McpHttpManager::new());
@@ -57,7 +58,14 @@ pub fn run() {
 	        let tool_registry = std::sync::Arc::new(ToolRegistry::new());
 
 	        {
-	            let software_registry = SoftwareToolRegistry::new();
+	            let mut software_registry = SoftwareToolRegistry::new();
+	            software_registry.register(
+	                native_tools::ConfigRead::new(std::sync::Arc::clone(&config_manager))
+	            );
+	            software_registry.register(
+	                native_tools::ConfigWrite::new(std::sync::Arc::clone(&config_manager))
+	            );
+	            software_registry.register(wisp_software_tools::JsExec);
 	            software_registry.register_into(&tool_registry);
 	        }
 
