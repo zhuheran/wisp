@@ -69,7 +69,7 @@ pub async fn chore_complete<R: Runtime>(
 ) -> Result<String, String> {
     use std::sync::Mutex;
     use crate::types::AppData;
-    use crate::key_manager::KeyManager;
+    use wisp_keyring::KeyManager;
 
     let (provider, model, base_url) = {
         let state = app_handle.state::<Mutex<AppData>>();

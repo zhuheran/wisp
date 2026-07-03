@@ -29,6 +29,7 @@ import MarkdownRenderer from "./MarkdownRenderer.vue";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { MessageRole, type ImageContent, type ToolCallItem } from "../libs/types";
 import { useChatStore } from "../stores/chat";
+import { useMcpStore } from "../stores/mcp";
 import { ref, computed, useTemplateRef, watch } from "vue";
 import { mixColours } from "../utils/colour";
 import { useElementSize, useElementVisibility } from "@vueuse/core";
@@ -36,6 +37,7 @@ import { debounce } from "lodash";
 import { Menu, MenuItem, PredefinedMenuItem } from "@tauri-apps/api/menu";
 
 const chatStore = useChatStore();
+const mcpStore = useMcpStore();
 const dialog = useDialog();
 const theme = useThemeVars();
 
@@ -58,6 +60,7 @@ export interface GroupMessageBlock {
   reasoning?: string;
   toolCalls?: ToolCallItem[];
   images?: ImageContent[];
+  sender: MessageRole;
 }
 
 const props = defineProps<{
@@ -211,6 +214,29 @@ const formatToolResult = (call: ToolCallItem): string => {
     })
     .join('\n\n');
 };
+
+const getToolDisplayName = (toolName: string): string => {
+  const registered = mcpStore.tools.find(t => t.name === toolName);
+  return registered?.displayName || toolName;
+};
+
+const isToolRelatedBlock = (block: GroupMessageBlock): boolean => {
+  return block.sender === MessageRole.Tool || (block.toolCalls?.length ?? 0) > 0;
+};
+
+const showDivider = (blockIdx: number): boolean => {
+  if (!props.groupMessages) return false;
+  if (blockIdx >= props.groupMessages.length - 1) return false;
+  const current = props.groupMessages[blockIdx];
+  const next = props.groupMessages[blockIdx + 1];
+  // No divider if both adjacent blocks are tool-related (e.g., tool call round -> tool result -> next round)
+  if (isToolRelatedBlock(current) && isToolRelatedBlock(next)) return false;
+  // No divider if current block has toolCalls (transitioning from tool call to result)
+  if ((current.toolCalls?.length ?? 0) > 0) return false;
+  // No divider if next block is a tool result (transitioning from assistant to tool result)
+  if (next.sender === MessageRole.Tool) return false;
+  return true;
+};
 </script>
 
 <template>
@@ -259,7 +285,7 @@ const formatToolResult = (call: ToolCallItem): string => {
           >
             <div class="content">
               <template v-if="groupMessages && groupMessages.length > 0">
-                <div v-for="(block, blockIdx) in groupMessages" :key="blockIdx" class="group-block" :class="blockIdx < groupMessages.length - 1 ? 'group-block-divider' : ''">
+                <div v-for="(block, blockIdx) in groupMessages" :key="blockIdx" class="group-block" :class="showDivider(blockIdx) ? 'group-block-divider' : ''">
                   <div v-if="block.images && block.images.length > 0" class="images-container">
                     <n-flex :wrap="true" size="small">
                       <n-image
@@ -296,7 +322,7 @@ const formatToolResult = (call: ToolCallItem): string => {
                           <template #header>
                             <n-flex align="center" :wrap="false" style="flex: 1;">
                               <n-icon :component="Toolbox24Regular" />
-                              <n-tag size="small" :type="call.result?.isError ? 'error' : 'success'">{{ call.name }}</n-tag>
+                              <n-tag size="small" :type="call.result?.isError ? 'error' : 'success'">{{ getToolDisplayName(call.name) }}</n-tag>
                               <n-tag size="tiny" :type="call.result?.isError ? 'error' : 'info'" round>{{ call.result?.isError ? 'Error' : 'OK' }}</n-tag>
                             </n-flex>
                           </template>
@@ -383,7 +409,7 @@ const formatToolResult = (call: ToolCallItem): string => {
                             <n-flex align="center" :wrap="false" style="flex: 1;">
                               <n-icon :component="Toolbox24Regular" />
                               <n-tag size="small" :type="call.result?.isError ? 'error' : 'success'">
-                                {{ call.name }}
+                                {{ getToolDisplayName(call.name) }}
                               </n-tag>
                               <n-tag size="tiny" :type="call.result?.isError ? 'error' : 'info'" round>
                                 {{ call.result?.isError ? 'Error' : 'OK' }}

@@ -1,0 +1,17 @@
+[package]
+name = "wisp-conversation"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+wisp-common.workspace = true
+wisp-db.workspace = true
+wisp-configs.workspace = true
+wisp-llm.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+async-openai.workspace = true
+
+[dev-dependencies]
+wisp-db = { workspace = true }

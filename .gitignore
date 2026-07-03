@@ -26,3 +26,6 @@ dist-ssr
 *.db
 
 .VSCodeCounter
+
+/target/
+Cargo.lock

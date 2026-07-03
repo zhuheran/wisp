@@ -1,0 +1,13 @@
+[package]
+name = "wisp-llm"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+wisp-configs.workspace = true
+wisp-keyring.workspace = true
+async-openai.workspace = true
+futures.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tauri.workspace = true

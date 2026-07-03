@@ -1,0 +1,15 @@
+[package]
+name = "wisp-keyring"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+thiserror.workspace = true
+serde.workspace = true
+keyring = { version = "3.6.2", features = [
+    "apple-native",
+    "windows-native",
+    "linux-native-async-persistent",
+    "crypto-rust",
+    "tokio",
+] }

@@ -1,33 +1,30 @@
-mod api;
 mod cache;
 mod commands;
-mod configs;
-mod db;
-mod utils;
-mod inet;
-mod key_manager;
-mod mcp;
-mod mcp_stdio;
-mod mcp_http;
-mod image;
-mod conversation;
-mod tool_registry;
 mod chore;
+mod image;
+mod inet;
+mod types;
+mod conversation_commands;
+mod orchestrator;
+mod mcp_commands;
+mod mcp_http_commands;
+mod mcp_stdio_commands;
+mod registry_commands;
+
 use tauri::{Builder, Manager};
 
-use db::chat::Chat;
-use cache::DiagramCache;
-use key_manager::KeyManager;
-use configs::ConfigManager;
-use mcp::commands::McpConfigManager;
-use mcp::types::TransportConfig;
-use mcp_stdio::McpStdioManager;
-use mcp_http::McpHttpManager;
+use wisp_db::chat::Chat;
+use crate::cache::DiagramCache;
+use wisp_keyring::KeyManager;
+use wisp_configs::ConfigManager;
+use wisp_mcp::McpConfigManager;
+use wisp_mcp::TransportConfig;
+use wisp_mcp::McpStdioManager;
+use wisp_mcp::McpHttpManager;
+use wisp_mcp::ToolRegistry;
 use std::collections::HashMap;
 use std::sync::Mutex;
-use tool_registry::ToolRegistry;
-mod types;
-use types::AppData;
+use crate::types::AppData;
 
 
 #[cfg(target_os = "macos")]
@@ -94,7 +91,6 @@ pub fn run() {
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
-            // commands::get_cached_render,
             commands::hash_content,
             commands::put_cached_diagram,
 			commands::get_cached_diagram,
@@ -135,48 +131,48 @@ pub fn run() {
 			commands::configs_get_chore_llm,
 			commands::configs_set_chore_llm,
 			// MCP commands
-			mcp::mcp_get_servers,
-			mcp::mcp_get_server,
-			mcp::mcp_add_server,
-			mcp::mcp_update_server,
-			mcp::mcp_remove_server,
-			mcp::mcp_get_pipeline_config,
-			mcp::mcp_update_pipeline_config,
-			mcp::mcp_get_conversation_config,
-			mcp::mcp_update_conversation_config,
-			mcp::mcp_save_session,
-			mcp::mcp_load_session,
-			mcp::mcp_delete_session,
-			mcp::mcp_list_sessions,
+			mcp_commands::mcp_get_servers,
+			mcp_commands::mcp_get_server,
+			mcp_commands::mcp_add_server,
+			mcp_commands::mcp_update_server,
+			mcp_commands::mcp_remove_server,
+			mcp_commands::mcp_get_pipeline_config,
+			mcp_commands::mcp_update_pipeline_config,
+			mcp_commands::mcp_get_conversation_config,
+			mcp_commands::mcp_update_conversation_config,
+			mcp_commands::mcp_save_session,
+			mcp_commands::mcp_load_session,
+			mcp_commands::mcp_delete_session,
+			mcp_commands::mcp_list_sessions,
 			            // Registry commands
-			            tool_registry::registry_list_tools,
-			            tool_registry::registry_execute,
-			            tool_registry::registry_set_enabled,
-			            tool_registry::registry_refresh,
+			            registry_commands::registry_list_tools,
+			            registry_commands::registry_execute,
+			            registry_commands::registry_set_enabled,
+			            registry_commands::registry_refresh,
 			chore::mcp_generate_tool_display_names,
 			// Image commands
 			image::compress_image,
 			image::get_image_info,
 			// MCP stdio commands
-			mcp_stdio::mcp_stdio_connect,
-			mcp_stdio::mcp_stdio_disconnect,
-			mcp_stdio::mcp_stdio_get_status,
-			mcp_stdio::mcp_stdio_get_all_statuses,
-			mcp_stdio::mcp_stdio_list_tools,
-			mcp_stdio::mcp_stdio_call_tool,
-			mcp_stdio::mcp_stdio_is_connected,
+			mcp_stdio_commands::mcp_stdio_connect,
+			mcp_stdio_commands::mcp_stdio_disconnect,
+			mcp_stdio_commands::mcp_stdio_get_status,
+			mcp_stdio_commands::mcp_stdio_get_all_statuses,
+			mcp_stdio_commands::mcp_stdio_list_tools,
+			mcp_stdio_commands::mcp_stdio_call_tool,
+			mcp_stdio_commands::mcp_stdio_is_connected,
 			// MCP http commands
-			mcp_http::mcp_http_connect,
-			mcp_http::mcp_http_disconnect,
-			mcp_http::mcp_http_get_status,
-			mcp_http::mcp_http_get_all_statuses,
-			mcp_http::mcp_http_list_tools,
-			mcp_http::mcp_http_call_tool,
-			mcp_http::mcp_http_is_connected,
-			conversation::commands::conversation_send_message,
-			conversation::commands::conversation_regenerate_message,
-			conversation::commands::conversation_derive_message,
-			conversation::commands::conversation_edit_and_regenerate,
+			mcp_http_commands::mcp_http_connect,
+			mcp_http_commands::mcp_http_disconnect,
+			mcp_http_commands::mcp_http_get_status,
+			mcp_http_commands::mcp_http_get_all_statuses,
+			mcp_http_commands::mcp_http_list_tools,
+			mcp_http_commands::mcp_http_call_tool,
+			mcp_http_commands::mcp_http_is_connected,
+			conversation_commands::conversation_send_message,
+			conversation_commands::conversation_regenerate_message,
+			conversation_commands::conversation_derive_message,
+			conversation_commands::conversation_edit_and_regenerate,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

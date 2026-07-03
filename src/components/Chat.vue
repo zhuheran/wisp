@@ -411,7 +411,7 @@ onMounted(() => {
                 :pal_id="group.messages[0].pal_id"
                 :pal_name="group.messages[0].pal_name"
                 :source="group.messages[0].source"
-                :groupMessages="group.messages.map(m => ({ text: m.text, reasoning: m.reasoning, toolCalls: m.toolCalls, images: m.images }))"
+                :groupMessages="group.messages.map(m => ({ text: m.text, reasoning: m.reasoning, toolCalls: m.toolCalls, images: m.images, sender: m.sender }))"
                 @previous="() => navigateToSibling(group.messages[0].id, -1)"
                 @next="() => navigateToSibling(group.messages[0].id, 1)"
                 @edit="() => showEditor(group.messages[0].id)"
@@ -458,20 +458,6 @@ onMounted(() => {
                 :disabled="!chatStore.chosenProvider"
                 style="min-width: 12em;"
               />
-              <template v-if="mentionedPalIds.size > 0">
-                <n-tag
-                  v-for="palId in mentionedPalIds"
-                  :key="palId"
-                  :bordered="false"
-                  closable
-                  @close="removePal(palId)"
-                >
-                  {{ getPalName(palId) }}
-                </n-tag>
-              </template>
-              <n-text v-else depth="3" style="font-size: 12px">
-                Type @ to invite a pal
-              </n-text>
               <n-popover
                 v-if="mcpConnectedServers.length > 0"
                 trigger="click"
@@ -480,6 +466,7 @@ onMounted(() => {
                 <template #trigger>
                   <n-button
                     size="small"
+
                     :type="mcpEnabledServerCount > 0 ? 'success' : 'default'"
                   >
                     <template #icon>

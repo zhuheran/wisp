@@ -1,0 +1,14 @@
+[package]
+name = "wisp-mcp"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+wisp-common.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tauri.workspace = true
+tokio.workspace = true
+reqwest.workspace = true
+futures.workspace = true
+anyhow.workspace = true

@@ -3,16 +3,16 @@ use std::sync::Mutex;
 
 use crate::{
     cache::DiagramCacheEntry,
-    configs::{model, character, provider::{self, Provider}},
-	db::types::{Conversation, Message, ThreadTreeItem},
     inet::HttpClient,
     types::AppData,
-    utils::compute_content_hash,
 };
+use wisp_configs::{model, character, provider::{self, Provider}};
+use wisp_db::types::{Conversation, Message, ThreadTreeItem};
+use wisp_common::compute_content_hash;
 use serde_json::Value;
 use tauri::{AppHandle, Manager};
 
-use crate::utils::get_uuid_v4;
+use wisp_common::get_uuid_v4;
 
 // Content utilities
 #[tauri::command]
@@ -523,7 +523,7 @@ pub async fn configs_set_default_responder(
 #[tauri::command]
 pub async fn configs_get_chore_llm(
     app_handle: AppHandle,
-) -> Result<Option<crate::configs::ChoreLlmRef>, String> {
+) -> Result<Option<wisp_configs::ChoreLlmRef>, String> {
     let state = app_handle.state::<Mutex<AppData>>();
     let state = state.lock().unwrap();
     Ok(state.config_manager.get_chore_llm())
@@ -532,7 +532,7 @@ pub async fn configs_get_chore_llm(
 #[tauri::command]
 pub async fn configs_set_chore_llm(
     app_handle: AppHandle,
-    chore_llm: Option<crate::configs::ChoreLlmRef>,
+    chore_llm: Option<wisp_configs::ChoreLlmRef>,
 ) -> Result<(), String> {
     let state = app_handle.state::<Mutex<AppData>>();
     let state = state.lock().unwrap();

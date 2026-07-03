@@ -1,0 +1,12 @@
+[package]
+name = "wisp-configs"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+wisp-keyring.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tauri.workspace = true
+thiserror.workspace = true
+toml = "0.8.23"
