@@ -1,14 +1,10 @@
-use async_openai::{
-    config::OpenAIConfig,
-    types::{
-        ChatCompletionRequestMessage, CreateChatCompletionRequestArgs,
-    },
-    Client,
-};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
+use std::sync::Arc;
 use tauri::{AppHandle, Manager, Runtime};
+use tokio_util::sync::CancellationToken;
+use wisp_llm::{backend_for, StreamCallbacks, StreamRequest};
 
 pub fn parse_display_names(raw: &str) -> HashMap<String, String> {
     let trimmed = raw
@@ -69,9 +65,8 @@ pub async fn chore_complete<R: Runtime>(
 ) -> Result<String, String> {
     use std::sync::Mutex;
     use crate::types::AppData;
-    use wisp_keyring::KeyManager;
 
-    let (provider, model, base_url) = {
+    let (provider, model) = {
         let state = app_handle.state::<Mutex<AppData>>();
         let state = state.lock().map_err(|e| e.to_string())?;
         let chore = state
@@ -82,52 +77,37 @@ pub async fn chore_complete<R: Runtime>(
             .config_manager
             .get_provider(&chore.provider)
             .ok_or_else(|| format!("Provider '{}' not found", chore.provider))?;
-        let base_url = provider.base_url.clone();
-        (provider, chore.model, base_url)
+        (provider, chore.model)
     };
 
-    let key_manager = KeyManager::new("wisp".to_string());
-    let api_key = key_manager
-        .get_api_key(&provider.name)
-        .or_else(|_| std::env::var("OPENAI_API_KEY"))
-        .map_err(|e| format!("Failed to resolve API key: {e}"))?;
+    let noop = Arc::new(|_chunk: &str| {}) as Arc<dyn Fn(&str) + Send + Sync>;
+    let callbacks = StreamCallbacks {
+        on_content: noop.clone(),
+        on_reasoning: noop,
+    };
 
-    let config = OpenAIConfig::new()
-        .with_api_base(base_url)
-        .with_api_key(api_key);
-    let client = Client::with_config(config);
-
-    let messages: Vec<ChatCompletionRequestMessage> = vec![
-        serde_json::from_value(serde_json::json!({
-            "role": "system", "content": system
-        }))
-        .map_err(|e| format!("message build error: {e}"))?,
-        serde_json::from_value(serde_json::json!({
-            "role": "user", "content": user
-        }))
-        .map_err(|e| format!("message build error: {e}"))?,
+    let messages: Vec<Value> = vec![
+        serde_json::json!({ "role": "system", "content": system }),
+        serde_json::json!({ "role": "user", "content": user }),
     ];
 
-    let request = CreateChatCompletionRequestArgs::default()
-        .model(model.clone())
-        .messages(messages)
-        .temperature(0.0)
-        .max_tokens(2048_u32)
-        .build()
-        .map_err(|e| format!("request build error: {e}"))?;
-
-    let response = client
-        .chat()
-        .create(request)
+    let backend = backend_for(&provider);
+    let outcome = backend
+        .stream(StreamRequest {
+            messages,
+            model: model.clone(),
+            provider: provider.clone(),
+            parameters: Some(HashMap::from([
+                ("temperature".to_string(), serde_json::json!(0.0)),
+                ("max_tokens".to_string(), serde_json::json!(2048)),
+            ])),
+            callbacks,
+            cancel: CancellationToken::new(),
+        })
         .await
         .map_err(|e| format!("chore completion failed for model '{model}': {e}"))?;
 
-    let text = response
-        .choices
-        .first()
-        .and_then(|c| c.message.content.clone())
-        .unwrap_or_default();
-    Ok(text)
+    Ok(outcome.text)
 }
 
 const DISPLAY_NAME_SYSTEM: &str = "You generate concise, human-friendly display names for MCP tools. Reply ONLY with a JSON array, no prose. Each element: {\"name\": <original tool name>, \"display_name\": <string>}. The display_name MUST follow the structure: `<ServerName> <Verb> <Noun>` where ServerName is the provided server name (one word, Title Case), Verb is one word (Title Case), and Noun may be one or more words (Title Case). Example inputs server='filesystem', name='read_file' -> 'Filesystem Read File'.";

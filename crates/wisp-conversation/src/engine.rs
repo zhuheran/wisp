@@ -4,7 +4,7 @@ use std::fmt;
 use wisp_db::chat::Chat;
 use wisp_db::types::{ImageContent, Message, MessageRole};
 
-use crate::payload::{build_openai_messages, format_tool_result};
+use crate::payload::format_tool_result;
 use crate::tool_parser::parse_tool_calls;
 use crate::types::{ConversationToolCall, ConversationToolContent, ConversationToolResult};
 
@@ -125,7 +125,6 @@ where
         let mut current_leaf_id = leaf_message_id.to_string();
         for round in 0..=self.config.max_tool_rounds {
             let path = self.chat.get_message_path_to(conversation_id, &current_leaf_id)?;
-            build_openai_messages(&path);
 
             let assistant = self.llm.next_round(&path)?;
             let parsed = parse_tool_calls(&assistant.text);

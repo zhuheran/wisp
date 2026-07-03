@@ -6,7 +6,6 @@ edition.workspace = true
 [dependencies]
 wisp-configs.workspace = true
 wisp-keyring.workspace = true
-async-openai.workspace = true
 reqwest.workspace = true
 reqwest-sse.workspace = true
 tokio-util.workspace = true

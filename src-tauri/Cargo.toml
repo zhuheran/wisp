@@ -31,7 +31,6 @@ tokio-util.workspace = true
 rusqlite = { version = "0.35.0", features = ["bundled"] }
 window-vibrancy = "0.6.0"
 uuid = "1.16.0"
-async-openai = { git = "https://github.com/Anson2251/async-openai.git", version = "0.28.2" }
 reqwest = { version = "0.13", features = ["stream", "json"] }
 image = "0.25"
 base64 = "0.22"
