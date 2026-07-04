@@ -7,6 +7,7 @@ use serde_json::Value;
 use wisp_common::{ToolContent, ToolError, ToolResult};
 use wisp_configs::ConfigManager;
 use wisp_software_tools::NativeTool;
+use wisp_software_tools::format_result::first_text;
 
 #[derive(Deserialize, JsonSchema)]
 pub struct ConfigReadArgs {
@@ -37,6 +38,45 @@ impl NativeTool for ConfigRead {
     fn schema(&self) -> Value {
         let schema = schemars::schema_for!(ConfigReadArgs);
         serde_json::to_value(&schema).unwrap_or_default()
+    }
+
+    /// Config values are JSON; fence them as a ```json block so they render
+    /// cleanly. Non-JSON values (e.g. a plain default_responder id) fall back
+    /// to plain text.
+    fn format_to_markdown(
+        &self,
+        _name: &str,
+        _arguments: &Value,
+        result: Option<&ToolResult>,
+    ) -> String {
+        let mut lines: Vec<String> = Vec::new();
+        let result = match result {
+            Some(r) => r,
+            None => {
+                lines.push("> No result".to_string());
+                return lines.join("\n");
+            }
+        };
+        let text = match first_text(result) {
+            Some(t) => t,
+            None => return lines.join("\n"),
+        };
+        if result.is_error {
+            lines.push("> **Error**".to_string());
+        } else {
+            lines.push("**Result**".to_string());
+        }
+        lines.push(String::new());
+        match serde_json::from_str::<Value>(text) {
+            Ok(parsed) => {
+                let pretty = serde_json::to_string_pretty(&parsed).unwrap_or_else(|_| text.to_string());
+                lines.push(format!("```json\n{pretty}\n```"));
+            }
+            Err(_) => {
+                lines.push(text.to_string());
+            }
+        }
+        lines.join("\n")
     }
 
     async fn run(&self, args: Value) -> Result<ToolResult, ToolError> {

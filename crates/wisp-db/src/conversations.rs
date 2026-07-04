@@ -35,6 +35,14 @@ impl Conversations {
             [],
         );
 
+        // Migration: add thread_decisions column (JSON-encoded positional
+        // child indices recording the user's selected branch path). Stored
+        // alongside messages so the selection survives reloads.
+        let _ = conn.execute(
+            &format!("ALTER TABLE {} ADD COLUMN thread_decisions TEXT", Self::TABLE_NAME),
+            [],
+        );
+
         Ok(Self { pool })
     }
 
@@ -187,7 +195,55 @@ impl Conversations {
 				})?
 				.collect::<Result<Vec<_>, rusqlite::Error>>()?;
 
-			Ok(conversations)
+		Ok(conversations)
+	}
+
+	/// Returns the persisted branch-selection indices for a conversation, or
+	/// `None` if none have been saved (e.g. a fresh conversation). Invalid /
+	/// unparseable payloads are treated as absent so the caller can fall back
+	/// to the default path.
+	pub fn get_thread_decisions(&mut self, id: &str) -> Result<Option<Vec<i64>>, ConversationError> {
+		let conn = self.pool.get()?;
+		let mut stmt = conn.prepare(&format!(
+			"SELECT thread_decisions FROM {} WHERE id = ?1",
+			Self::TABLE_NAME
+		))?;
+		let raw: Option<String> = stmt.query_row(params![id], |row| row.get(0))?;
+		match raw {
+			None => Ok(None),
+			Some(s) => match serde_json::from_str::<Vec<i64>>(&s) {
+				Ok(v) if v.iter().all(|n| *n >= 0) => Ok(Some(v)),
+				_ => Ok(None),
+			},
 		}
+	}
+
+	/// Persists the branch-selection indices for a conversation. `None`
+	/// clears the stored value.
+	pub fn update_thread_decisions(
+		&mut self,
+		id: &str,
+		decisions: Option<&[i64]>,
+	) -> Result<(), ConversationError> {
+		let conn = self.pool.get()?;
+		let payload: rusqlite::types::Value = match decisions {
+			Some(d) => serde_json::to_string(d)
+				.map_err(|e| {
+					ConversationError::Database(rusqlite::Error::ToSqlConversionFailure(
+						Box::new(e),
+					))
+				})?
+				.into(),
+			None => rusqlite::types::Null.into(),
+		};
+		conn.execute(
+			&format!(
+				"UPDATE {} SET thread_decisions = ?2 WHERE id = ?1",
+				Self::TABLE_NAME
+			),
+			params![id, payload],
+		)?;
+		Ok(())
+	}
 
 }

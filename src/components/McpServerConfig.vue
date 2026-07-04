@@ -35,6 +35,20 @@ const formValue = ref<ServerConfig>({
   protocolVersion: undefined,
 })
 
+type Pair = { key: string; value: string }
+const envPairs = ref<Pair[]>([])
+const headerPairs = ref<Pair[]>([])
+
+const syncPairsFromTransport = () => {
+  const transport = formValue.value.transport as any
+  envPairs.value = transport && 'env' in transport
+    ? Object.entries(transport.env || {}).map(([key, value]) => ({ key, value: String(value) }))
+    : []
+  headerPairs.value = transport && 'headers' in transport
+    ? Object.entries(transport.headers || {}).map(([key, value]) => ({ key, value: String(value) }))
+    : []
+}
+
 watch(
   () => props.server,
   (newServer) => {
@@ -52,6 +66,7 @@ watch(
         protocolVersion: undefined,
       }
     }
+    syncPairsFromTransport()
   },
   { immediate: true }
 )
@@ -78,59 +93,27 @@ const handleTransportKindChange = (kind: 'stdio' | 'sse' | 'http') => {
       formValue.value.transport = { kind: 'http', url: '', headers: {} }
       break
   }
+  syncPairsFromTransport()
+}
+
+const stripEmptyKeys = (pairs: Pair[]): Record<string, string> => {
+  const result: Record<string, string> = {}
+  for (const { key, value } of pairs) {
+    if (key) result[key] = value
+  }
+  return result
 }
 
 const handleSubmit = () => {
+  const transport = formValue.value.transport as any
+  if (transport && 'env' in transport) {
+    transport.env = stripEmptyKeys(envPairs.value)
+  }
+  if (transport && 'headers' in transport) {
+    transport.headers = stripEmptyKeys(headerPairs.value)
+  }
   emit('save', formValue.value)
 }
-
-const envPairs = computed({
-  get: () => {
-    if (isStdio.value && 'env' in formValue.value.transport) {
-      return Object.entries(formValue.value.transport.env || {}).map(([key, value]) => ({
-        key,
-        value,
-      }))
-    }
-    return []
-  },
-  set: (pairs: { key: string; value: string }[]) => {
-    if (isStdio.value && 'env' in formValue.value.transport) {
-      formValue.value.transport.env = pairs.reduce(
-        (acc, { key, value }) => {
-          if (key) acc[key] = value
-          return acc
-        },
-        {} as Record<string, string>
-      )
-    }
-  },
-})
-
-const headerPairs = computed({
-  get: () => {
-    const transport = formValue.value.transport
-    if (('headers' in transport) && transport.headers) {
-      return Object.entries(transport.headers).map(([key, value]) => ({
-        key,
-        value,
-      }))
-    }
-    return []
-  },
-  set: (pairs: { key: string; value: string }[]) => {
-    const transport = formValue.value.transport as any
-    if ('headers' in transport) {
-      transport.headers = pairs.reduce(
-        (acc, { key, value }) => {
-          if (key) acc[key] = value
-          return acc
-        },
-        {} as Record<string, string>
-      )
-    }
-  },
-})
 </script>
 
 <template>
@@ -152,6 +135,7 @@ const headerPairs = computed({
         <n-input
           v-model:value="(formValue.transport as any).command"
           placeholder="可执行文件路径"
+          :spellcheck="false"
         />
       </n-form-item>
       <n-form-item label="参数" path="transport.args">

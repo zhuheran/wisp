@@ -1,7 +1,6 @@
 <script lang="ts" setup>
 import {
   NButton,
-  NInput,
   NModal,
   NCard,
   NDrawer,
@@ -15,6 +14,7 @@ import { useMcpStore } from '../stores/mcp'
 import type { ServerConfig } from '../libs/types'
 import McpPipelineConfig from './McpPipelineConfig.vue'
 import McpConversationConfig from './McpConversationConfig.vue'
+import McpServerConfig from './McpServerConfig.vue'
 
 const props = defineProps<{
   selected: string | null
@@ -31,43 +31,25 @@ const mcpStore = useMcpStore()
 
 const showAddServer = ref(false)
 const showConfigDrawer = ref<'pipeline' | 'conversation' | null>(null)
-const newServer = ref<ServerConfig>({
-  id: '',
-  name: '',
-  transport: { kind: 'stdio', command: '', args: [], env: {} },
-  autoReconnect: true,
-  reconnectIntervalMs: 5000,
-  maxReconnectAttempts: 5,
-  heartbeatIntervalMs: 30000,
-})
 
 const selectedServerId = computed({
   get: () => props.selected,
   set: (val) => emit('update:selected', val),
 })
 
-const handleAddServer = async () => {
+const handleAddServer = async (server: ServerConfig) => {
   try {
-    const server: ServerConfig = {
-      ...newServer.value,
+    const newServer: ServerConfig = {
+      ...server,
       id: crypto.randomUUID(),
     }
-    if (!server.name) {
+    if (!newServer.name) {
       throw new Error('服务器名称不能为空')
     }
-    await mcpStore.addServer(server)
+    await mcpStore.addServer(newServer)
     message.success('MCP server added')
     showAddServer.value = false
-    selectedServerId.value = server.id
-    newServer.value = {
-      id: '',
-      name: '',
-      transport: { kind: 'stdio', command: '', args: [], env: {} },
-      autoReconnect: true,
-      reconnectIntervalMs: 5000,
-      maxReconnectAttempts: 5,
-      heartbeatIntervalMs: 30000,
-    }
+    selectedServerId.value = newServer.id
   } catch (e) {
     message.error(`Failed to add server: ${e}`)
   }
@@ -173,23 +155,11 @@ const handleDeleteServer = async (server: ServerConfig) => {
 
     <n-modal v-model:show="showAddServer">
       <n-card style="width: 600px" title="Add MCP Server">
-        <div style="display: flex; flex-direction: column; gap: 12px">
-          <n-input
-            v-model:value="newServer.name"
-            placeholder="Server name"
-          />
-          <n-input
-            v-model:value="(newServer.transport as any).command"
-            placeholder="Command (for stdio transport)"
-          />
-          <n-input
-            v-model:value="(newServer.transport as any).url"
-            placeholder="URL (for SSE / HTTP transport)"
-          />
-          <n-button type="primary" @click="handleAddServer">
-            Add Server
-          </n-button>
-        </div>
+        <McpServerConfig
+          :server="null"
+          @save="handleAddServer"
+          @cancel="showAddServer = false"
+        />
       </n-card>
     </n-modal>
 

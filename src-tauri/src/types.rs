@@ -6,6 +6,7 @@ use wisp_configs::ConfigManager;
 use wisp_mcp::McpConfigManager;
 use wisp_mcp::McpStdioManager;
 use wisp_mcp::McpHttpManager;
+use wisp_software_tools::SoftwareToolRegistry;
 use wisp_tool_registry::ToolRegistry;
 
 use crate::cache::DiagramCache;
@@ -20,5 +21,6 @@ pub struct AppData {
     pub mcp_stdio_manager: Arc<McpStdioManager>,
     pub mcp_http_manager: Arc<McpHttpManager>,
     pub tool_registry: Arc<ToolRegistry>,
+    pub software_registry: Arc<SoftwareToolRegistry>,
     pub unlocked_pals: HashMap<String, HashSet<String>>,
 }

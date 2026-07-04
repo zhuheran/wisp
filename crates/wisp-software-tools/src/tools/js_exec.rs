@@ -4,6 +4,7 @@ use schemars::JsonSchema;
 use serde_json::Value;
 use wisp_common::{ToolContent, ToolError, ToolResult};
 
+use crate::format_result::render_result_markdown_section;
 use crate::trait_def::NativeTool;
 
 #[derive(Deserialize, JsonSchema)]
@@ -31,6 +32,26 @@ impl NativeTool for JsExec {
 
     fn requires_confirmation(&self) -> bool {
         true
+    }
+
+    /// Render the `code` argument as a JavaScript block (the generic formatter
+    /// would mislabel it as JSON) and the result underneath.
+    fn format_to_markdown(
+        &self,
+        _name: &str,
+        arguments: &Value,
+        result: Option<&ToolResult>,
+    ) -> String {
+        let code = arguments
+            .get("code")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let mut lines: Vec<String> = Vec::new();
+        lines.push("**code**:".to_string());
+        lines.push(format!("```js\n{code}\n```"));
+        lines.push(String::new());
+        lines.extend(render_result_markdown_section(result));
+        lines.join("\n")
     }
 
     async fn run(&self, args: Value) -> Result<ToolResult, ToolError> {
@@ -72,6 +93,22 @@ impl NativeTool for JsExec {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_js_exec_markdown_renders_code_as_javascript() {
+        let tool = JsExec;
+        let args = serde_json::json!({"code": "return 1 + 2;"});
+        let result = ToolResult {
+            content: vec![ToolContent::Text { text: "3".to_string() }],
+            is_error: false,
+        };
+        let out = tool.format_to_markdown("wisp_js_exec", &args, Some(&result));
+        assert!(out.contains("```js"));
+        assert!(!out.contains("```json"), "code must not be fenced as json");
+        assert!(out.contains("return 1 + 2;"));
+        assert!(out.contains("**Result**"));
+        assert!(out.contains("3"));
+    }
 
     #[tokio::test]
     async fn test_js_exec_simple_arithmetic() {

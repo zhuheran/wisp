@@ -6,7 +6,7 @@ use wisp_db::types::{ImageContent, Message, MessageRole};
 
 use crate::payload::format_tool_result;
 use crate::tool_parser::parse_tool_calls;
-use crate::types::{ConversationToolCall, ConversationToolContent, ConversationToolResult};
+use crate::types::ConversationToolCall;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct AssistantRound {

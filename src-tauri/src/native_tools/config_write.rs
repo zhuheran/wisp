@@ -7,6 +7,7 @@ use serde_json::Value;
 use wisp_common::{ToolContent, ToolError, ToolResult};
 use wisp_configs::ConfigManager;
 use wisp_software_tools::NativeTool;
+use wisp_software_tools::format_result::first_text;
 
 #[derive(Deserialize, JsonSchema)]
 pub struct ConfigWriteArgs {
@@ -43,6 +44,27 @@ impl NativeTool for ConfigWrite {
 
     fn requires_confirmation(&self) -> bool {
         true
+    }
+
+    /// A write tool only needs a compact one-line confirmation; the panel
+    /// header already conveys the tool name and status.
+    fn format_to_markdown(
+        &self,
+        _name: &str,
+        _arguments: &Value,
+        result: Option<&ToolResult>,
+    ) -> String {
+        match result {
+            None => "> No result".to_string(),
+            Some(r) => {
+                let text = first_text(r).unwrap_or("");
+                if r.is_error {
+                    format!("✗ {text}")
+                } else {
+                    format!("✓ {text}")
+                }
+            }
+        }
     }
 
     async fn run(&self, args: Value) -> Result<ToolResult, ToolError> {

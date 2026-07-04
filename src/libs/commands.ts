@@ -5,6 +5,33 @@ export async function hashContent(content: string) {
 	return invoke<string>('hash_content', { content })
 }
 
+export type ToolCallContent =
+	| { type: 'text'; text: string }
+	| { type: 'image'; data: string; mimeType: string }
+	| { type: 'resource'; uri: string; mimeType?: string; text?: string; blob?: string };
+
+export type ToolCallResultPayload = {
+	content: ToolCallContent[];
+	isError?: boolean;
+};
+
+/**
+ * Render a tool call result as markdown on the Rust backend. Tool result
+ * rendering is fully owned by the backend; the frontend does not format
+ * locally.
+ */
+export async function formatToolCallMarkdown(
+	name: string,
+	arguments_: Record<string, unknown>,
+	result: ToolCallResultPayload | undefined,
+) {
+	return invoke<string>('format_tool_call_markdown', {
+		name,
+		arguments: arguments_,
+		result: result ?? null,
+	});
+}
+
 export async function createConversation(name: string, description?: string)  {
 	return invoke<string>('create_conversation', { name, description })
 }
@@ -36,6 +63,14 @@ type GetThreadTreeResponse = {
 }[]
 export async function getThreadTree(conversationId: string) {
 	return invoke<GetThreadTreeResponse>('get_thread_tree', { conversationId })
+}
+
+export async function getThreadDecisions(conversationId: string) {
+	return invoke<number[] | null>('get_thread_decisions', { conversationId })
+}
+
+export async function setThreadDecisions(conversationId: string, decisions: number[]) {
+	return invoke<void>('set_thread_decisions', { conversationId, decisions })
 }
 
 export async function updateConversationEntryId(conversationId: string, newEntryId: string) {

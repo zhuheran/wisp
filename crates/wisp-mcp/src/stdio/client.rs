@@ -18,9 +18,15 @@ pub struct McpStdioClient {
 }
 
 impl McpStdioClient {
-    pub async fn spawn(server_id: String, cmd: &str, args: &[String]) -> Result<Self> {
-        println!("[MCP:{}] Spawning process: {} {:?}", server_id, cmd, args);
-        
+    pub async fn spawn(
+        server_id: String,
+        cmd: &str,
+        args: &[String],
+        env: &HashMap<String, String>,
+        cwd: Option<&str>,
+    ) -> Result<Self> {
+        println!("[MCP:{}] Spawning process: {} {:?} (env keys: {}, cwd: {:?})", server_id, cmd, args, env.len(), cwd);
+
         // 平台分支必须用编译时 #[cfg] 门控：Windows 分支依赖 std::os::windows::process::CommandExt，
         // 该 trait 在 Linux 上不存在，若用运行时 cfg!() 宏仍会被类型检查导致编译失败。
         let mut child = {
@@ -34,6 +40,11 @@ impl McpStdioClient {
                 for arg in args {
                     command.arg(arg);
                 }
+                // UI 配置的环境变量：附加到子进程（继承父进程已有的 env）。
+                command.envs(env);
+                if let Some(dir) = cwd {
+                    command.current_dir(dir);
+                }
                 command
                     .stdin(std::process::Stdio::piped())
                     .stdout(std::process::Stdio::piped())
@@ -43,8 +54,14 @@ impl McpStdioClient {
             }
             #[cfg(not(target_os = "windows"))]
             {
-                Command::new(cmd)
-                    .args(args)
+                let mut command = Command::new(cmd);
+                command.args(args);
+                // UI 配置的环境变量：附加到子进程（继承父进程已有的 env）。
+                command.envs(env);
+                if let Some(dir) = cwd {
+                    command.current_dir(dir);
+                }
+                command
                     .stdin(std::process::Stdio::piped())
                     .stdout(std::process::Stdio::piped())
                     .stderr(std::process::Stdio::piped())

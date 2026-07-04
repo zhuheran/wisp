@@ -376,6 +376,33 @@ pub async fn get_thread_tree(
 }
 
 #[tauri::command]
+pub async fn get_thread_decisions(
+    app_handle: AppHandle,
+    conversation_id: String,
+) -> Result<Option<Vec<i64>>, String> {
+    let state = app_handle.state::<Mutex<AppData>>();
+    let mut state = state.lock().unwrap();
+    state
+        .chat
+        .get_thread_decisions(&conversation_id)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn set_thread_decisions(
+    app_handle: AppHandle,
+    conversation_id: String,
+    decisions: Vec<i64>,
+) -> Result<(), String> {
+    let state = app_handle.state::<Mutex<AppData>>();
+    let mut state = state.lock().unwrap();
+    state
+        .chat
+        .update_thread_decisions(&conversation_id, Some(&decisions))
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub async fn update_conversation_entry_id(
     app_handle: AppHandle,
     conversation_id: String,

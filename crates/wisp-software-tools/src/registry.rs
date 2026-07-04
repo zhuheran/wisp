@@ -40,6 +40,36 @@ impl SoftwareToolRegistry {
         self.tools.get(name).cloned()
     }
 
+    /// Format a tool call result as frontend markdown. If the tool is a
+    /// registered native tool, its `format_to_markdown` override is used;
+    /// otherwise (e.g. MCP tools) the default algorithm is used.
+    pub fn format_to_markdown(
+        &self,
+        name: &str,
+        arguments: &Value,
+        result: Option<&ToolResult>,
+    ) -> String {
+        match self.tools.get(name) {
+            Some(tool) => tool.format_to_markdown(name, arguments, result),
+            None => crate::format_result::default_format_to_markdown(name, arguments, result),
+        }
+    }
+
+    /// Format a tool call result as LLM-friendly text. If the tool is a
+    /// registered native tool, its `format_to_text` override is used;
+    /// otherwise (e.g. MCP tools) the default algorithm is used.
+    pub fn format_to_text(
+        &self,
+        name: &str,
+        arguments: &Value,
+        result: Option<&ToolResult>,
+    ) -> String {
+        match self.tools.get(name) {
+            Some(tool) => tool.format_to_text(name, arguments, result),
+            None => crate::format_result::default_format_to_text(name, arguments, result),
+        }
+    }
+
     pub fn list_definitions(&self) -> Vec<ToolDefinition> {
         self.tools.values().map(|t| build_definition(t)).collect()
     }

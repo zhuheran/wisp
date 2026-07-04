@@ -1,9 +1,24 @@
 use std::sync::Mutex;
+use serde::Serialize;
 use tauri::{AppHandle, Manager};
 use crate::types::AppData;
 use wisp_mcp::{NormalizedTool, TransportConfig, register_mcp_tools};
 use wisp_tool_registry::ToolDefinition;
 use wisp_common::ToolResult;
+
+/// A tool definition paired with its runtime `enabled` flag.
+///
+/// The registry stores enabled state separately from `ToolDefinition`
+/// (which is purely descriptive), but the frontend needs the flag to render
+/// the per-server toggle in the chat UI. Without it, `tool.enabled` arrives
+/// as `undefined` and the toggle always reads "disabled" — making the UI
+/// control a no-op.
+#[derive(Serialize)]
+pub struct ListedTool {
+    #[serde(flatten)]
+    pub definition: ToolDefinition,
+    pub enabled: bool,
+}
 
 /// Refresh the registry by fetching tools from all connected MCP servers.
 #[tauri::command]
@@ -101,11 +116,20 @@ pub async fn registry_refresh(app_handle: AppHandle) -> Result<(), String> {
 
 /// List all registered tool definitions (for frontend display).
 #[tauri::command]
-pub async fn registry_list_tools(app_handle: AppHandle) -> Result<Vec<ToolDefinition>, String> {
+pub async fn registry_list_tools(app_handle: AppHandle) -> Result<Vec<ListedTool>, String> {
     let state = app_handle.state::<Mutex<AppData>>();
     let state = state.lock().map_err(|e| e.to_string())?;
-    let mut tools: Vec<ToolDefinition> = state.tool_registry.list_tools();
-    tools.sort_by(|a, b| a.name.cmp(&b.name));
+    let enabled_set = state.tool_registry.enabled_set();
+    let mut tools: Vec<ListedTool> = state
+        .tool_registry
+        .list_tools()
+        .into_iter()
+        .map(|definition| {
+            let enabled = enabled_set.contains(&definition.name);
+            ListedTool { definition, enabled }
+        })
+        .collect();
+    tools.sort_by(|a, b| a.definition.name.cmp(&b.definition.name));
     Ok(tools)
 }
 

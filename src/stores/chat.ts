@@ -114,6 +114,27 @@ export function createThrottledMessagePatcher(
 
 
 
+async function loadThreadTreeDecisions(conversationId: string): Promise<number[] | null> {
+	try {
+		return await Commands.getThreadDecisions(conversationId)
+	} catch (e) {
+		console.warn('[ChatStore] Failed to load thread tree decisions:', e)
+		return null
+	}
+}
+
+let saveThreadTreeDecisionsToken = 0
+function saveThreadTreeDecisions(conversationId: string, decisions: number[]) {
+	const token = ++saveThreadTreeDecisionsToken
+	const payload = [...decisions]
+	// Fire-and-forget; ignore failures (latest token wins on resolve).
+	void Commands.setThreadDecisions(conversationId, payload).catch((e) => {
+		if (token === saveThreadTreeDecisionsToken) {
+			console.warn('[ChatStore] Failed to persist thread tree decisions:', e)
+		}
+	})
+}
+
 export const useChatStore = defineStore('chat', () => {
 	const userInput = ref('')
 	const currentConversationId = ref<string | null>(null)
@@ -650,6 +671,16 @@ export const useChatStore = defineStore('chat', () => {
 		console.timeEnd(timingIdentifier)
 	})
 
+	// Persist the per-conversation branch selection whenever it changes
+	// (user clicking prev/next, focus/mention jumps, or a newly generated
+	// message extending the active path). Guarded on currentConversationId
+	// and rootMessageId so the reset that happens inside unmount (which
+	// clears both) doesn't wipe the incoming conversation's saved state.
+	watch(threadTreeDecisions, (decisions) => {
+		if (!currentConversationId.value || !rootMessageId.value) return
+		saveThreadTreeDecisions(currentConversationId.value, [...decisions])
+	})
+
 	const loadThreadTree = async (conversationId: string) => {
 		return new Promise<void>((resolve, reject) => {
 			Commands.getThreadTree(conversationId)
@@ -714,8 +745,16 @@ export const useChatStore = defineStore('chat', () => {
 			await loadMessages(conversationId)
 			await loadThreadTree(conversationId)
 
-			// root message has been set in loadThreadTree
-			threadTreeDecisions.value = getDefaultThreadTreeDecisions(rootMessageId.value!, threadTreeDecisions.value)
+			// root message has been set in loadThreadTree.
+			// Restore the persisted branch selection for this conversation
+			// (positional child indices); getDefaultThreadTreeDecisions clamps
+			// each index against the current tree, so stale entries degrade
+			// gracefully to the default path instead of going out of range.
+			const savedDecisions = await loadThreadTreeDecisions(conversationId)
+			threadTreeDecisions.value = getDefaultThreadTreeDecisions(
+				rootMessageId.value!,
+				savedDecisions ?? threadTreeDecisions.value,
+			)
 			console.timeEnd(identifier)
 		}
 		catch (err) {

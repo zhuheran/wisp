@@ -2,7 +2,7 @@ use serde_json::{json, Value};
 
 use wisp_db::types::{Message, MessageRole};
 use wisp_llm::{ReasoningConfig, ReasoningPassback};
-use crate::types::{ConversationToolCall, ConversationToolContent, ConversationToolResult};
+use crate::types::{ConversationToolCall, ConversationToolContent};
 
 pub fn build_openai_messages(messages: &[Message]) -> Vec<Value> {
     build_openai_messages_with_reasoning(messages, &ReasoningConfig::default(), false)
@@ -139,64 +139,30 @@ fn reconstruct_tool_call_text(message: &Message, native_tools: bool) -> String {
 }
 
 pub fn format_tool_result(call: &ConversationToolCall) -> String {
-    let result = match &call.result {
-        Some(r) => r,
-        None => {
-            return format!(
-                "**🧰 {}**\n\n> _No result_",
-                escape_md(&call.name)
-            );
-        }
-    };
-
-    let status_emoji = if result.is_error { "❌" } else { "✅" };
-    let status_label = if result.is_error { "error" } else { "success" };
-
-    let args_str = serde_json::to_string_pretty(&call.arguments).unwrap_or_default();
-
-    let mut lines: Vec<String> = Vec::new();
-    lines.push(format!("**🧰 {}** · {} {}", escape_md(&call.name), status_emoji, status_label));
-    lines.push(String::new());
-    lines.push("```json".to_string());
-    lines.push(args_str.trim().to_string());
-    lines.push("```".to_string());
-
-    let has_text = result.content.iter().any(|c| matches!(c, ConversationToolContent::Text { text } if !text.is_empty()));
-    if has_text {
-        lines.push(String::new());
-        if result.is_error {
-            lines.push("> **Error**".to_string());
-            lines.push(String::new());
-            lines.push("> ".to_string());
-        } else {
-            lines.push("**Result**".to_string());
-            lines.push(String::new());
-        }
-        for content in &result.content {
-            match content {
-                ConversationToolContent::Text { text } if !text.is_empty() => {
-                    lines.push(text.clone());
-                }
-                ConversationToolContent::Image { .. } => {
-                    lines.push("_[image]_".to_string());
-                }
-                ConversationToolContent::Resource { uri, text, .. } => {
-                    lines.push(text.clone().unwrap_or_else(|| format!("_[resource: {uri}]_")));
-                }
-                _ => {}
-            }
-        }
-    }
-
-    lines.join("\n")
+    result_text(call).unwrap_or_else(|| format!("**{}**\n\n> _No result_", call.name))
 }
 
-fn escape_md(s: &str) -> String {
-    s.replace('_', "\\_")
-        .replace('*', "\\*")
-        .replace('`', "\\`")
-        .replace('[', "\\[")
-        .replace(']', "\\]")
+/// Extract the concatenated text content of a tool call result. Used by the
+/// conversation engine to persist a minimal tool message; full markdown/LLM
+/// rendering is owned by the integration layer (see `wisp_software_tools`).
+fn result_text(call: &ConversationToolCall) -> Option<String> {
+    let result = call.result.as_ref()?;
+    let mut parts: Vec<String> = Vec::new();
+    for content in &result.content {
+        match content {
+            ConversationToolContent::Text { text } if !text.is_empty() => parts.push(text.clone()),
+            ConversationToolContent::Image { .. } => parts.push("[image]".to_string()),
+            ConversationToolContent::Resource { uri, text, .. } => {
+                parts.push(text.clone().unwrap_or_else(|| format!("[resource: {uri}]")));
+            }
+            _ => {}
+        }
+    }
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join("\n"))
+    }
 }
 
 #[cfg(test)]
@@ -204,6 +170,7 @@ mod tests {
     use super::*;
     use wisp_db::types::{ImageContent, ImageUrl};
     use wisp_llm::{ReasoningConfig, ReasoningPassback};
+    use crate::types::ConversationToolResult;
 
     fn message(role: MessageRole, text: &str, tool_calls: Option<String>) -> Message {
         Message {
@@ -273,7 +240,7 @@ mod tests {
     }
 
     #[test]
-    fn formats_successful_tool_result_as_markdown() {
+    fn format_tool_result_extracts_result_text() {
         let call = tool_call(
             "get_weather",
             serde_json::json!({"location": "Hangzhou"}),
@@ -281,30 +248,11 @@ mod tests {
             false,
         );
         let out = format_tool_result(&call);
-        assert!(out.contains("**🧰 get\\_weather**"));
-        assert!(out.contains("✅ success"));
-        assert!(out.contains("```json"));
-        assert!(out.contains("\"location\": \"Hangzhou\""));
-        assert!(out.contains("**Result**"));
         assert!(out.contains("Sunny, 28°C"));
     }
 
     #[test]
-    fn formats_error_tool_result_as_blockquote() {
-        let call = tool_call(
-            "broken_tool",
-            serde_json::json!({"x": 1}),
-            Some("boom"),
-            true,
-        );
-        let out = format_tool_result(&call);
-        assert!(out.contains("❌ error"));
-        assert!(out.contains("> **Error**"));
-        assert!(out.contains("boom"));
-    }
-
-    #[test]
-    fn formats_missing_result_as_no_result() {
+    fn format_tool_result_missing_result_shows_placeholder() {
         let call = ConversationToolCall {
             id: "c".to_string(),
             name: "noop".to_string(),
@@ -313,15 +261,7 @@ mod tests {
             result: None,
         };
         let out = format_tool_result(&call);
-        assert!(out.contains("**🧰 noop**"));
         assert!(out.contains("_No result_"));
-    }
-
-    #[test]
-    fn escapes_markdown_special_chars_in_tool_name() {
-        let call = tool_call("my_tool_name", serde_json::json!({}), Some("ok"), false);
-        let out = format_tool_result(&call);
-        assert!(out.contains("**🧰 my\\_tool\\_name**"));
     }
 
     #[test]

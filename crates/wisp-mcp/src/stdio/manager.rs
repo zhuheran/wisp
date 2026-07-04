@@ -58,12 +58,16 @@ pub async fn connect_server(&self, config: &ServerConfig) -> Result<()> {
 
         // 根据传输类型创建客户端
         match &config.transport {
-            crate::types::TransportConfig::Stdio { command, args, env: _, cwd: _ } => {
+            crate::types::TransportConfig::Stdio { command, args, env, cwd } => {
                 let args = args.clone();
+                let env = env.clone();
+                let cwd = cwd.clone();
                 let connect_result = McpStdioClient::spawn(
                     config.id.clone(),
                     command,
                     &args,
+                    &env,
+                    cwd.as_deref(),
                 ).await;
 
                 let mut client = match connect_result {

@@ -34,6 +34,10 @@ vi.mock("naive-ui", async (importOriginal) => {
       const warning = vi.fn();
       return { warning, info: vi.fn(), error: vi.fn(), success: vi.fn() };
     },
+    useMessage: () => {
+      const fn = vi.fn();
+      return { info: fn, success: fn, warning: fn, error: fn };
+    },
     useThemeVars: () =>
       ref({
         borderColor: "#ddd",

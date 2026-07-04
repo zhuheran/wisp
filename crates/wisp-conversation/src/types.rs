@@ -1,6 +1,7 @@
 pub use wisp_common::MessageSource;
 
 use serde::{Deserialize, Serialize};
+use wisp_common::{ToolContent, ToolResult};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ConversationToolCall {
@@ -43,6 +44,38 @@ pub enum ConversationToolContent {
         #[serde(default)]
         blob: Option<String>,
     },
+}
+
+impl From<&ConversationToolContent> for ToolContent {
+    fn from(content: &ConversationToolContent) -> Self {
+        match content {
+            ConversationToolContent::Text { text } => ToolContent::Text { text: text.clone() },
+            ConversationToolContent::Image { data, mime_type } => ToolContent::Image {
+                data: data.clone(),
+                mime_type: mime_type.clone(),
+            },
+            ConversationToolContent::Resource {
+                uri,
+                mime_type,
+                text,
+                blob,
+            } => ToolContent::Resource {
+                uri: uri.clone(),
+                mime_type: mime_type.clone(),
+                text: text.clone(),
+                blob: blob.clone(),
+            },
+        }
+    }
+}
+
+impl From<&ConversationToolResult> for ToolResult {
+    fn from(result: &ConversationToolResult) -> Self {
+        ToolResult {
+            content: result.content.iter().map(ToolContent::from).collect(),
+            is_error: result.is_error,
+        }
+    }
 }
 
 #[cfg(test)]

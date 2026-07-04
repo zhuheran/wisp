@@ -11,7 +11,7 @@ import { NCode, NH1, NH2, NH3, NH4, NH5, NH6, NA, NBlockquote, NUl, NOl, NLi, NT
 import CodeMermaidRenderer from '../components/CodeMermaidRenderer.vue'
 import KatexRenderer from '../components/KatexRenderer.vue'
 import { toVNode } from '../libs/to-vnode'
-import { Code, InlineCode, Root, Html, Heading, List } from 'mdast'
+import { Code, InlineCode, Root, Html, Heading, List, Paragraph } from 'mdast'
 
 
 function createMarkdownProcessor() {
@@ -59,6 +59,11 @@ export function useVNodeRenderer() {
 	return async (text: string, enableLastMermaid: boolean = false, mermaidCallback?: (success: boolean) => void, parseCallback?: (containMermaid: boolean) => void) => {
 		try {
 			const tree = processor.parse(text)
+
+			if (text.trim().startsWith("**code")) {
+				console.log(text)
+				console.log(tree)
+			}
 
 			const disableLastMermaidRc = (node: Root) => {
 				if (!node) return
@@ -114,11 +119,12 @@ export function useVNodeRenderer() {
 					blockquote: NBlockquote,
 					list: (node: List) => node.ordered ? NOl : NUl,
 					listItem: NLi,
-					paragraph: NText,
-					strong: h(NText, { strong: true }),
+					paragraph: (node: Paragraph) => h('div', { style: "display: block" }, h(NText, { text: node.data, depth: 2 })),
+					strong: h(NText, { strong: true, style: "filter: contrast(1.6)" }),
 					emphasis: h(NText, { italic: true }),
 					table: h(NTable, { bordered: true, singleLine: false }),
 					thematicBreak: NDivider,
+					break: h('br')
 				}
 			})
 			return vNode

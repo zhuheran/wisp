@@ -1,15 +1,16 @@
 use std::collections::{HashMap, HashSet};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use serde_json::Value;
 
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 use wisp_configs::character::Character;
 use wisp_configs::provider::Provider;
 use wisp_conversation::director::{assemble_director_prompt, parse_director_response};
 use wisp_common::MessageSource;
-use wisp_db::types::Message;
+use wisp_db::types::{Message, MessageRole};
+use crate::conversation_commands::{emit_event, insert_message_and_emit, ConversationEventPayload};
 use crate::types::AppData;
 
 #[derive(Debug, Clone)]
@@ -34,6 +35,7 @@ pub async fn orchestrate_multi_pal_round<R: tauri::Runtime>(
     all_characters: &[Character],
     provider: &Provider,
     parameters: Option<&HashMap<String, Value>>,
+    stream_id: &str,
 ) -> Result<Vec<PalReply>, String> {
     // Load conversation history from DB so all pals see prior messages
     let conversation_history = {
@@ -61,19 +63,81 @@ pub async fn orchestrate_multi_pal_round<R: tauri::Runtime>(
         // Build context: existing conversation + previous pal replies in this round
         let context = build_context_for_pal(pal, &replies, &conversation_history)?;
 
-        // Call LLM with pal's model, prompt, params
-        let reply_text =
-            call_llm_with_pal_config(app_handle, &context, pal, provider, parameters).await?;
+        let message_id = format!("pal-{}-{}", pal_id, user_message_id);
 
-        // Store reply
-        let reply = PalReply {
-            message_id: format!("pal-{}-{}", pal_id, user_message_id),
-            pal_id: pal_id.clone(),
+        // Insert a draft assistant message + emit message_created BEFORE the LLM
+        // call so the frontend has a message entry to patch with stream chunks.
+        {
+            let draft = Message {
+                id: message_id.clone(),
+                text: String::new(),
+                reasoning: None,
+                sender: MessageRole::Assistant,
+                timestamp: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs() as i64,
+                tokens: None,
+                embedding: None,
+                images: None,
+                tool_calls: None,
+                tool_call_id: None,
+                source: MessageSource::UserPrompted,
+                pal_id: Some(pal.id.clone()),
+                pal_name: Some(pal.name.clone()),
+            };
+            let state_mutex = app_handle.state::<Mutex<AppData>>();
+            let mut state = state_mutex
+                .lock()
+                .map_err(|e| format!("Failed to acquire app state: {}", e))?;
+            insert_message_and_emit(
+                app_handle,
+                &mut state,
+                conversation_id,
+                draft,
+                Some(user_message_id),
+            )?;
+        }
+
+        // Call LLM with streaming callbacks attributed to this message
+        let reply_text = call_llm_with_pal_config(
+            app_handle,
+            &context,
+            pal,
+            provider,
+            parameters,
+            Some((stream_id, &message_id)),
+        )
+        .await?;
+
+        // Persist final text + emit MessageUpdated
+        {
+            let state_mutex = app_handle.state::<Mutex<AppData>>();
+            let mut state = state_mutex
+                .lock()
+                .map_err(|e| format!("Failed to acquire app state: {}", e))?;
+            state
+                .chat
+                .update_message(&message_id, &reply_text)
+                .map_err(|e| format!("Failed to update message: {}", e))?;
+        }
+        emit_event(
+            app_handle,
+            ConversationEventPayload::MessageUpdated {
+                message_id: message_id.clone(),
+                text: reply_text.clone(),
+                reasoning: None,
+                tool_calls: None,
+            },
+        )?;
+
+        replies.push(PalReply {
+            message_id,
+            pal_id: pal.id.clone(),
             pal_name: pal.name.clone(),
             text: reply_text,
             source: MessageSource::UserPrompted,
-        };
-        replies.push(reply);
+        });
     }
 
     // Director check (after all pal replies)
@@ -86,6 +150,7 @@ pub async fn orchestrate_multi_pal_round<R: tauri::Runtime>(
         &unlocked_pal_ids,
         provider,
         parameters,
+        stream_id,
     )
     .await?;
     if let Some(reply) = director_reply {
@@ -163,6 +228,7 @@ pub async fn run_director_check<R: tauri::Runtime>(
     unlocked_pal_ids: &HashSet<String>,
     provider: &Provider,
     parameters: Option<&HashMap<String, Value>>,
+    stream_id: &str,
 ) -> Result<Option<PalReply>, String> {
     // 1. Filter unlocked pal IDs to actual Character objects
     let available_pals: Vec<Character> = all_characters
@@ -208,10 +274,12 @@ pub async fn run_director_check<R: tauri::Runtime>(
     let outcome = call_llm_with_pal_config(
         app_handle,
         &messages,
-        // Use first available pal's config for the director LLM call
+        // Use first available pal's config for the director LLM call.
+        // No streaming: this is an internal JSON decision never shown to the user.
         &available_pals[0],
         provider,
         parameters,
+        None,
     )
     .await?;
 
@@ -243,11 +311,75 @@ pub async fn run_director_check<R: tauri::Runtime>(
             // Existing conversation history + previous pal replies as context
             let context = build_context_for_pal(pal, pal_replies, &conversation_history)?;
 
-            let reply_text =
-                call_llm_with_pal_config(app_handle, &context, pal, provider, parameters).await?;
+            let message_id = format!("directed-{}-{}", pal_id, user_message_id);
+
+            // Insert draft + emit message_created so the frontend can patch
+            // stream chunks for this director-invoked reply.
+            {
+                let draft = Message {
+                    id: message_id.clone(),
+                    text: String::new(),
+                    reasoning: None,
+                    sender: MessageRole::Assistant,
+                    timestamp: std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs() as i64,
+                    tokens: None,
+                    embedding: None,
+                    images: None,
+                    tool_calls: None,
+                    tool_call_id: None,
+                    source: MessageSource::Directed,
+                    pal_id: Some(pal.id.clone()),
+                    pal_name: Some(pal.name.clone()),
+                };
+                let state_mutex = app_handle.state::<Mutex<AppData>>();
+                let mut state = state_mutex
+                    .lock()
+                    .map_err(|e| format!("Failed to acquire app state: {}", e))?;
+                insert_message_and_emit(
+                    app_handle,
+                    &mut state,
+                    conversation_id,
+                    draft,
+                    Some(user_message_id),
+                )?;
+            }
+
+            let reply_text = call_llm_with_pal_config(
+                app_handle,
+                &context,
+                pal,
+                provider,
+                parameters,
+                Some((stream_id, &message_id)),
+            )
+            .await?;
+
+            // Persist final text + emit MessageUpdated
+            {
+                let state_mutex = app_handle.state::<Mutex<AppData>>();
+                let mut state = state_mutex
+                    .lock()
+                    .map_err(|e| format!("Failed to acquire app state: {}", e))?;
+                state
+                    .chat
+                    .update_message(&message_id, &reply_text)
+                    .map_err(|e| format!("Failed to update message: {}", e))?;
+            }
+            emit_event(
+                app_handle,
+                ConversationEventPayload::MessageUpdated {
+                    message_id: message_id.clone(),
+                    text: reply_text.clone(),
+                    reasoning: None,
+                    tool_calls: None,
+                },
+            )?;
 
             return Ok(Some(PalReply {
-                message_id: format!("directed-{}-{}", pal_id, user_message_id),
+                message_id,
                 pal_id: pal.id.clone(),
                 pal_name: pal.name.clone(),
                 text: reply_text,
@@ -264,24 +396,67 @@ pub async fn run_director_check<R: tauri::Runtime>(
 }
 
 /// Call the LLM with a character's configuration.
+///
+/// When `stream_target` is `Some((stream_id, message_id))`, streaming chunks
+/// are emitted to the frontend via `conversation_stream_chunk` /
+/// `conversation_stream_reasoning` events attributed to `message_id`. When
+/// `None`, chunks are dropped (used for internal calls whose text is never
+/// shown to the user, e.g. the director's JSON decision).
 async fn call_llm_with_pal_config<R: tauri::Runtime>(
-    _app_handle: &tauri::AppHandle<R>,
+    app_handle: &tauri::AppHandle<R>,
     messages: &[Message],
     pal: &Character,
     provider: &Provider,
     parameters: Option<&HashMap<String, Value>>,
+    stream_target: Option<(&str, &str)>,
 ) -> Result<String, String> {
-    use std::sync::Arc;
     use tokio_util::sync::CancellationToken;
     use wisp_llm::{backend_for, StreamCallbacks, StreamRequest, ToolChoice};
 
     let api_messages: Vec<serde_json::Value> =
         wisp_conversation::payload::build_openai_messages(messages);
 
-    let callbacks = StreamCallbacks {
-        on_content: Arc::new(|_| {}),
-        on_reasoning: Arc::new(|_| {}),
+    let callbacks = match stream_target {
+        Some((sid, mid)) => {
+            let sid_c = sid.to_string();
+            let mid_c = mid.to_string();
+            let ah_c = app_handle.clone();
+            let on_content = Arc::new(move |chunk: &str| {
+                let _ = ah_c.emit(
+                    "conversation_stream_chunk",
+                    serde_json::json!({
+                        "stream_id": &sid_c,
+                        "message_id": &mid_c,
+                        "chunk": chunk,
+                    }),
+                );
+            });
+
+            let sid_r = sid.to_string();
+            let mid_r = mid.to_string();
+            let ah_r = app_handle.clone();
+            let on_reasoning = Arc::new(move |chunk: &str| {
+                let _ = ah_r.emit(
+                    "conversation_stream_reasoning",
+                    serde_json::json!({
+                        "stream_id": &sid_r,
+                        "message_id": &mid_r,
+                        "chunk": chunk,
+                    }),
+                );
+            });
+
+            StreamCallbacks {
+                on_content,
+                on_reasoning,
+            }
+        }
+        None => StreamCallbacks {
+            on_content: Arc::new(|_| {}),
+            on_reasoning: Arc::new(|_| {}),
+        },
     };
+
     let backend = backend_for(provider);
     let outcome = backend
         .stream(StreamRequest {
@@ -316,6 +491,7 @@ mod tests {
     use wisp_mcp::McpHttpManager;
     use wisp_mcp::McpStdioManager;
     use wisp_mcp::ToolRegistry;
+    use wisp_software_tools::SoftwareToolRegistry;
 
     fn test_character(id: &str, name: &str, system_prompt: &str, role_bio: &str) -> Character {
         Character {
@@ -361,6 +537,7 @@ mod tests {
         let stdio_manager = Arc::new(McpStdioManager::new());
         let http_manager = Arc::new(McpHttpManager::new());
         let tool_registry = Arc::new(ToolRegistry::new());
+        let software_registry = Arc::new(SoftwareToolRegistry::new());
 
         let app_data = AppData {
             chat,
@@ -371,6 +548,7 @@ mod tests {
             mcp_stdio_manager: stdio_manager,
             mcp_http_manager: http_manager,
             tool_registry,
+            software_registry,
             unlocked_pals: HashMap::new(),
         };
 
@@ -545,6 +723,7 @@ mod tests {
             &characters,
             &provider,
             None,
+            "test-stream",
         )
         .await;
 
@@ -569,6 +748,7 @@ mod tests {
             &characters,
             &provider,
             None,
+            "test-stream",
         )
         .await;
 

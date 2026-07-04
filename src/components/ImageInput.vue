@@ -58,7 +58,7 @@ const handleFileSelect = async (event: Event) => {
 
       // Read file as base64
       const base64 = await readFileAsBase64(file)
-      
+
       // Compress image using backend
       try {
         const compressed = await compressImage(

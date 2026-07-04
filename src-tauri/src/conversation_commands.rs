@@ -12,11 +12,11 @@ use wisp_configs::model::{ModelInfo, TextModelCapability};
 use crate::abort::AbortRegistry;
 use crate::orchestrator;
 use wisp_conversation::payload::{
-    build_openai_messages, build_openai_messages_with_reasoning, format_tool_result,
+    build_openai_messages, build_openai_messages_with_reasoning,
 };
 use wisp_conversation::tool_parser::parse_tool_calls;
-use wisp_conversation::{ConversationToolCall, ConversationToolContent, ConversationToolResult};
-use wisp_common::{ToolContent, MessageSource};
+use wisp_conversation::{ConversationToolCall, ConversationToolResult};
+use wisp_common::{ToolContent, ToolResult, MessageSource};
 use wisp_db::types::{ImageContent, Message, MessageRole};
 use wisp_tool_registry::ToolDefinition;
 use crate::types::AppData;
@@ -74,13 +74,13 @@ pub enum ConversationEventPayload {
     Failed { error: String },
 }
 
-fn emit_event<R: tauri::Runtime>(app_handle: &tauri::AppHandle<R>, payload: ConversationEventPayload) -> Result<(), String> {
+pub(crate) fn emit_event<R: tauri::Runtime>(app_handle: &tauri::AppHandle<R>, payload: ConversationEventPayload) -> Result<(), String> {
     app_handle
         .emit("conversation_event", payload)
         .map_err(|error| error.to_string())
 }
 
-fn insert_message_and_emit<R: tauri::Runtime>(
+pub(crate) fn insert_message_and_emit<R: tauri::Runtime>(
     app_handle: &tauri::AppHandle<R>,
     state: &mut AppData,
     conversation_id: &str,
@@ -178,6 +178,63 @@ async fn execute_tool_call<R: tauri::Runtime>(
         result: Some(tool_result),
         ..call
     })
+}
+
+/// Render a completed tool call as LLM-friendly text via the software tool
+/// registry (native tools may override; MCP/unknown tools fall back to the
+/// default algorithm). Used for the persisted tool message that is fed back
+/// into the model context.
+fn format_call_to_text<R: tauri::Runtime>(
+    app_handle: &tauri::AppHandle<R>,
+    call: &ConversationToolCall,
+) -> Result<String, String> {
+    let software_registry = {
+        let state = app_handle.state::<Mutex<AppData>>();
+        let state = state
+            .lock()
+            .map_err(|error| format!("Failed to acquire app state: {}", error))?;
+        std::sync::Arc::clone(&state.software_registry)
+    };
+    let result = call.result.as_ref().map(ToolResult::from);
+    Ok(software_registry.format_to_text(&call.name, &call.arguments, result.as_ref()))
+}
+
+/// Render a completed tool call as frontend markdown via the software tool
+/// registry. Native tools may override; MCP/unknown tools fall back to the
+/// default algorithm.
+fn format_call_to_markdown<R: tauri::Runtime>(
+    app_handle: &tauri::AppHandle<R>,
+    call: &ConversationToolCall,
+) -> Result<String, String> {
+    let software_registry = {
+        let state = app_handle.state::<Mutex<AppData>>();
+        let state = state
+            .lock()
+            .map_err(|error| format!("Failed to acquire app state: {}", error))?;
+        std::sync::Arc::clone(&state.software_registry)
+    };
+    let result = call.result.as_ref().map(ToolResult::from);
+    Ok(software_registry.format_to_markdown(&call.name, &call.arguments, result.as_ref()))
+}
+
+/// Frontend-facing command: render a tool call result as markdown. The
+/// frontend invokes this instead of formatting locally, so all tool result
+/// rendering is owned by the Rust backend.
+#[tauri::command]
+pub async fn format_tool_call_markdown<R: tauri::Runtime>(
+    app_handle: tauri::AppHandle<R>,
+    name: String,
+    arguments: serde_json::Value,
+    result: Option<ToolResult>,
+) -> Result<String, String> {
+    let software_registry = {
+        let state = app_handle.state::<Mutex<AppData>>();
+        let state = state
+            .lock()
+            .map_err(|error| format!("Failed to acquire app state: {}", error))?;
+        std::sync::Arc::clone(&state.software_registry)
+    };
+    Ok(software_registry.format_to_markdown(&name, &arguments, result.as_ref()))
 }
 
 fn format_tool_parameter_line(name: &str, property: &serde_json::Value) -> String {
@@ -573,7 +630,7 @@ async fn run_conversation_rounds_inner<R: tauri::Runtime>(
         for call in &completed_calls {
             let tool_message = Message {
                 id: Uuid::new_v4().to_string(),
-                text: format_tool_result(call),
+                text: format_call_to_text(app_handle, call)?,
                 reasoning: None,
                 sender: MessageRole::Tool,
                 timestamp: std::time::SystemTime::now()
@@ -671,6 +728,9 @@ pub async fn conversation_send_message_inner<R: tauri::Runtime>(
                 state.config_manager.get_characters()
             };
 
+            // The orchestrator owns the full per-pal message lifecycle:
+            // draft insert + message_created emit → stream chunks →
+            // update_message + MessageUpdated emit.
             let replies = orchestrator::orchestrate_multi_pal_round(
                 &app_handle,
                 &request.conversation_id,
@@ -679,41 +739,9 @@ pub async fn conversation_send_message_inner<R: tauri::Runtime>(
                 &characters,
                 &request.provider,
                 request.parameters.as_ref(),
+                &stream_id,
             )
             .await?;
-
-            for reply in &replies {
-                let message = Message {
-                    id: reply.message_id.clone(),
-                    text: reply.text.clone(),
-                    reasoning: None,
-                    sender: MessageRole::Assistant,
-                    timestamp: std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_secs() as i64,
-                    tokens: None,
-                    embedding: None,
-                    images: None,
-                    tool_calls: None,
-                    tool_call_id: None,
-                    source: reply.source.clone(),
-                    pal_id: Some(reply.pal_id.clone()),
-                    pal_name: Some(reply.pal_name.clone()),
-                };
-
-                {
-                    let state_mutex = app_handle.state::<Mutex<AppData>>();
-                        let mut state = state_mutex.lock().map_err(|error| error.to_string())?;
-                        insert_message_and_emit(
-                            app_handle,
-                            &mut state,
-                            &request.conversation_id,
-                            message,
-                            Some(&user_message_id),
-                        )?;
-                }
-            }
 
             emit_event(
                 app_handle,
@@ -774,41 +802,13 @@ pub async fn conversation_send_message_inner<R: tauri::Runtime>(
             &unlocked_pal_ids,
             &request.provider,
             request.parameters.as_ref(),
+            &stream_id,
         )
         .await?;
 
         if let Some(reply) = director_reply {
-            let message = Message {
-                id: reply.message_id.clone(),
-                text: reply.text.clone(),
-                reasoning: None,
-                sender: MessageRole::Assistant,
-                timestamp: std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_secs() as i64,
-                tokens: None,
-                embedding: None,
-                images: None,
-                tool_calls: None,
-                tool_call_id: None,
-                source: reply.source.clone(),
-                pal_id: Some(reply.pal_id.clone()),
-                pal_name: Some(reply.pal_name.clone()),
-            };
-
-            {
-                let state_mutex = app_handle.state::<Mutex<AppData>>();
-                let mut state = state_mutex.lock().map_err(|error| error.to_string())?;
-                insert_message_and_emit(
-                    app_handle,
-                    &mut state,
-                    &request.conversation_id,
-                    message,
-                    Some(&assistant_message_id),
-                )?;
-            }
-
+            // run_director_check already inserted/updated the message and
+            // emitted message_created/message_updated; just emit completion.
             emit_event(
                 app_handle,
                 ConversationEventPayload::Completed {
@@ -980,6 +980,7 @@ mod tests {
         let stdio_manager = Arc::new(McpStdioManager::new());
         let http_manager = Arc::new(McpHttpManager::new());
         let tool_registry = Arc::new(ToolRegistry::new());
+        let software_registry = Arc::new(wisp_software_tools::SoftwareToolRegistry::new());
 
         let app_data = AppData {
             chat,
@@ -990,6 +991,7 @@ mod tests {
             mcp_stdio_manager: stdio_manager,
             mcp_http_manager: http_manager,
             tool_registry,
+            software_registry,
             unlocked_pals: HashMap::new(),
         };
 

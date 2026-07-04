@@ -11,6 +11,7 @@ import {
   NTag,
   NImage,
   useDialog,
+  useMessage,
   useThemeVars,
 } from "naive-ui";
 import {
@@ -30,7 +31,8 @@ import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { MessageRole, type ImageContent, type ToolCallItem } from "../libs/types";
 import { useChatStore } from "../stores/chat";
 import { useMcpStore } from "../stores/mcp";
-import { formatToolResultMarkdown } from "../utils/toolResult";
+import { formatToolCallMarkdown } from "../libs/commands";
+import { errorMessage } from "../utils/error";
 import { ref, computed, useTemplateRef, watch } from "vue";
 import { mixColours } from "../utils/colour";
 import { useElementSize, useElementVisibility } from "@vueuse/core";
@@ -42,6 +44,7 @@ const {height: windowHeight, width: windowWidth} = useWindowSize()
 const chatStore = useChatStore();
 const mcpStore = useMcpStore();
 const dialog = useDialog();
+const message = useMessage();
 const theme = useThemeVars();
 
 const borderColor = computed(() =>
@@ -128,8 +131,13 @@ const removeMessage = () => {
     positiveText: "Delete",
     negativeText: "Cancel",
     onPositiveClick: async () => {
-      await chatStore.deleteMessage(props.id);
-      console.log("Message deleted:", props.id);
+      try {
+        await chatStore.deleteMessage(props.id);
+        console.log("Message deleted:", props.id);
+      } catch (e) {
+        message.error(errorMessage(e));
+        console.error("Failed to delete message:", e);
+      }
     },
   });
 };
@@ -217,10 +225,42 @@ const hasToolCalls = computed(() => props.toolCalls && props.toolCalls.length > 
 const isToolMessage = computed(() => props.sender === MessageRole.Tool);
 
 const formatToolResult = (call: ToolCallItem): string => {
-  // Inline panel header already shows the tool name + status, so the body
-  // only needs the arguments block + result content.
-  return formatToolResultMarkdown(call, { includeHeader: false });
+  // Tool result rendering is owned by the Rust backend. The markdown is
+  // fetched asynchronously and cached per tool call id; until it resolves the
+  // panel renders nothing. Tool results are atomic (not streamed), so caching
+  // by id is safe — only calls that already carry a result are fetched.
+  return toolResultMarkdown(call);
 };
+
+// Reactive cache of backend-rendered markdown keyed by tool call id.
+const toolMarkdownCache = ref<Record<string, string>>({});
+const toolMarkdownLoading = new Set<string>();
+
+async function ensureToolMarkdown(call: ToolCallItem) {
+  const key = call.id;
+  if (!key) return;
+  if (toolMarkdownCache.value[key] !== undefined) return;
+  if (toolMarkdownLoading.has(key)) return;
+  toolMarkdownLoading.add(key);
+  try {
+    const md = await formatToolCallMarkdown(call.name, call.arguments ?? {}, call.result);
+    toolMarkdownCache.value = { ...toolMarkdownCache.value, [key]: md };
+  } catch (error) {
+    console.error(errorMessage(error));
+    toolMarkdownCache.value = { ...toolMarkdownCache.value, [key]: "" };
+  } finally {
+    toolMarkdownLoading.delete(key);
+  }
+}
+
+function toolResultMarkdown(call: ToolCallItem): string {
+  if (!call.result) return "";
+  const cached = toolMarkdownCache.value[call.id];
+  if (cached === undefined) {
+    ensureToolMarkdown(call);
+  }
+  return cached ?? "";
+}
 
 const getToolDisplayName = (toolName: string): string => {
   const registered = mcpStore.tools.find(t => t.name === toolName);
@@ -463,6 +503,7 @@ const showDivider = (blockIdx: number): boolean => {
                   </template>
                 </n-button>
                 <n-button
+                  v-if="chatStore.threadTree.getParentId(id)"
                   quaternary
                   :onclick="removeMessage"
                   type="error"
@@ -537,7 +578,7 @@ const showDivider = (blockIdx: number): boolean => {
   will-change: var(--property-will-change);
   width: 100%;
   height: v-bind('(rendered || !culling ? "fit-content" : `${height}px`)');
-  animation: fade-in 0.2s v-bind("theme.cubicBezierEaseIn");
+  /*animation: fade-in 0.2s v-bind("theme.cubicBezierEaseIn");*/
 }
 
 .item-layout {
@@ -627,7 +668,6 @@ const showDivider = (blockIdx: number): boolean => {
   padding: 12px 16px;
   margin-left: 12px;
   margin-right: 12px;
-  transition: all 0.2s ease;
   will-change: var(--property-will-change);
 
   background-color: v-bind("backgroundColor");

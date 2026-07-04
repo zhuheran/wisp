@@ -57,7 +57,7 @@ pub fn run() {
 
 	        let tool_registry = std::sync::Arc::new(ToolRegistry::new());
 
-	        {
+	        let software_registry = {
 	            let mut software_registry = SoftwareToolRegistry::new();
 	            software_registry.register(
 	                native_tools::ConfigRead::new(std::sync::Arc::clone(&config_manager))
@@ -67,19 +67,21 @@ pub fn run() {
 	            );
 	            software_registry.register(wisp_software_tools::JsExec);
 	            software_registry.register_into(&tool_registry);
-	        }
+	            std::sync::Arc::new(software_registry)
+	        };
 
-	                app.manage(Mutex::new(AppData {
-		            chat: Chat::new(app.handle())?,
-		            diagram_cache: DiagramCache::new()?,
-		            key_manager: KeyManager::new("wisp".to_string()),
-		            config_manager,
-		            mcp_config_manager,
-		            mcp_stdio_manager,
-		            mcp_http_manager,
-		            tool_registry,
-		            unlocked_pals: HashMap::new(),
-		        }));
+                app.manage(Mutex::new(AppData {
+	            chat: Chat::new(app.handle())?,
+	            diagram_cache: DiagramCache::new()?,
+	            key_manager: KeyManager::new("wisp".to_string()),
+	            config_manager,
+	            mcp_config_manager,
+	            mcp_stdio_manager,
+	            mcp_http_manager,
+	            tool_registry,
+	            software_registry,
+	            unlocked_pals: HashMap::new(),
+	        }));
 
 			app.manage(AbortRegistry::new());
 
@@ -118,6 +120,8 @@ pub fn run() {
 			commands::delete_message,
             commands::get_all_message_involved,
 			commands::get_thread_tree,
+			commands::get_thread_decisions,
+			commands::set_thread_decisions,
             commands::delete_conversation,
             commands::list_conversations,
 			commands::update_conversation_entry_id,
@@ -189,6 +193,7 @@ pub fn run() {
 			conversation_commands::conversation_regenerate_message,
 			conversation_commands::conversation_derive_message,
 			conversation_commands::conversation_edit_and_regenerate,
+			conversation_commands::format_tool_call_markdown,
 			abort::conversation_abort,
         ])
         .run(tauri::generate_context!())

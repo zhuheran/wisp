@@ -40,20 +40,22 @@ const mockCharacters: Character[] = [
 const mockConversationSendMessage = vi.fn()
 
 vi.mock('../../libs/commands', () => ({
-	getAllMessageInvolved: vi.fn(),
-	getThreadTree: vi.fn(),
-	addMessage: vi.fn(),
-	updateMessage: vi.fn(),
-	getMessage: vi.fn(),
-	createConversation: vi.fn(() => Promise.resolve({ id: 'conversation-1' })),
-	listConversations: vi.fn(),
-	updateConversation: vi.fn(),
-	deleteConversation: vi.fn(),
-	deleteMessage: vi.fn(),
-	conversationSendMessage: mockConversationSendMessage,
-	regenerateConversationMessage: vi.fn(),
-	deriveConversationMessage: vi.fn(),
-	editConversationMessage: vi.fn(),
+  getAllMessageInvolved: vi.fn(),
+  getThreadTree: vi.fn(),
+  getThreadDecisions: vi.fn(() => Promise.resolve(null)),
+  setThreadDecisions: vi.fn(() => Promise.resolve()),
+  addMessage: vi.fn(),
+  updateMessage: vi.fn(),
+  getMessage: vi.fn(),
+  createConversation: vi.fn(() => Promise.resolve({ id: 'conversation-1' })),
+  listConversations: vi.fn(),
+  updateConversation: vi.fn(),
+  deleteConversation: vi.fn(),
+  deleteMessage: vi.fn(),
+  conversationSendMessage: mockConversationSendMessage,
+  regenerateConversationMessage: vi.fn(),
+  deriveConversationMessage: vi.fn(),
+  editConversationMessage: vi.fn(),
 }))
 
 describe('useChatStore displayedMessage', () => {
@@ -118,6 +120,71 @@ describe('useChatStore displayedMessage', () => {
 	    ])
 	  })
 	})
+
+describe('chatStore thread tree decision persistence', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    mockConversationSendMessage.mockReset()
+  })
+
+  const seedTree = (getAllMessageInvolved: ReturnType<typeof vi.fn>, getThreadTree: ReturnType<typeof vi.fn>) => {
+    vi.mocked(getAllMessageInvolved).mockResolvedValue([
+      { id: 'u1', sender: MessageRole.User, text: 'q', timestamp: 1, source: 'user_prompted' },
+      { id: 'a1', sender: MessageRole.Assistant, text: 'answer-1', timestamp: 2, source: 'directed' },
+      { id: 'a2', sender: MessageRole.Assistant, text: 'answer-2', timestamp: 3, source: 'directed' },
+    ])
+    vi.mocked(getThreadTree).mockResolvedValue([
+      { key: 'u1', parent: null, children: ['a1', 'a2'] },
+      { key: 'a1', parent: 'u1', children: [] },
+      { key: 'a2', parent: 'u1', children: [] },
+    ])
+  }
+
+  it('restores the saved branch selection when loading a conversation', async () => {
+    const { useChatStore } = await import('../../stores/chat')
+    const { getAllMessageInvolved, getThreadTree, getThreadDecisions } = await import('../../libs/commands')
+
+    seedTree(getAllMessageInvolved as never, getThreadTree as never)
+
+    // Backend reports a previously-saved selection of the second branch (a2).
+    vi.mocked(getThreadDecisions).mockResolvedValue([1])
+
+    const store = useChatStore()
+    store.currentConversationId = 'conv-1'
+    await store.loadConversation('conv-1')
+    await nextTick()
+
+    // Decision index 1 -> a2 must be restored, not reset to the default a1.
+    expect(store.threadTreeDecisions).toEqual([1])
+    expect(store.displayedMessage.map((m) => m.id)).toEqual(['u1', 'a2'])
+  })
+
+  it('persists the branch selection to the backend when the user switches branches', async () => {
+    const { useChatStore } = await import('../../stores/chat')
+    const { getAllMessageInvolved, getThreadTree, getThreadDecisions, setThreadDecisions } = await import('../../libs/commands')
+
+    seedTree(getAllMessageInvolved as never, getThreadTree as never)
+    // No prior saved selection -> default path (first child).
+    vi.mocked(getThreadDecisions).mockResolvedValue(null)
+    const setMock = vi.mocked(setThreadDecisions)
+
+    const store = useChatStore()
+    store.currentConversationId = 'conv-2'
+    await store.loadConversation('conv-2')
+    await nextTick()
+
+    // Default selects the first child (a1) -> [0].
+    expect(store.threadTreeDecisions).toEqual([0])
+
+    setMock.mockClear()
+    // User clicks "next" to switch to a2.
+    store.changeThreadTreeDecision(0, 1)
+    await nextTick()
+
+    expect(store.threadTreeDecisions).toEqual([1])
+    expect(setMock).toHaveBeenCalledWith('conv-2', [1])
+  })
+})
 
 describe('chatStore pal integration', () => {
   beforeEach(() => {

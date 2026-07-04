@@ -245,6 +245,27 @@ impl Chat {
         Ok(convs)
     }
 
+    /// Returns the persisted branch-selection indices for a conversation.
+    pub fn get_thread_decisions(
+        &mut self,
+        conversation_id: &str,
+    ) -> Result<Option<Vec<i64>>, ChatError> {
+        Ok(self
+            .conversation_manager
+            .get_thread_decisions(conversation_id)?)
+    }
+
+    /// Persists the branch-selection indices for a conversation.
+    pub fn update_thread_decisions(
+        &mut self,
+        conversation_id: &str,
+        decisions: Option<&[i64]>,
+    ) -> Result<(), ChatError> {
+        self.conversation_manager
+            .update_thread_decisions(conversation_id, decisions)?;
+        Ok(())
+    }
+
     /// Updates a message's content
     pub fn update_message(&mut self, message_id: &str, new_text: &str) -> Result<(), ChatError> {
         self.messages_manager.update_text(message_id, new_text)?;
@@ -448,5 +469,29 @@ mod tests {
             err,
             ChatError::Conversation(ConversationError::InvalidOperation(_))
         ));
+    }
+
+    #[test]
+    fn thread_decisions_round_trip_persists_and_reads_back() {
+        let pool = create_memory_pool();
+        let mut chat = Chat::new_with_pool(pool).expect("chat created");
+        chat.create_conversation("c1", "Conversation", "desc")
+            .expect("conversation created");
+
+        // A fresh conversation has no saved branch selection.
+        assert_eq!(chat.get_thread_decisions("c1").unwrap(), None);
+
+        // Persist a selection and read it back.
+        chat.update_thread_decisions("c1", Some(&[0, 1, 0]))
+            .expect("saved");
+        assert_eq!(
+            chat.get_thread_decisions("c1").unwrap(),
+            Some(vec![0, 1, 0])
+        );
+
+        // Overwriting replaces, not appends.
+        chat.update_thread_decisions("c1", Some(&[2]))
+            .expect("overwritten");
+        assert_eq!(chat.get_thread_decisions("c1").unwrap(), Some(vec![2]));
     }
 }

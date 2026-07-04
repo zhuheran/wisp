@@ -41,8 +41,15 @@ impl ToolRegistry {
     ) {
         let mut inner = self.inner.lock().unwrap();
         let name = definition.name.clone();
+        // Preserve the existing enabled/allowed_pals state for re-registrations
+        // (e.g. when `registry_refresh` re-publishes MCP tools). Only newly
+        // registered tools default to enabled; otherwise the user's UI
+        // selection would be silently wiped on every refresh.
+        let is_new = !inner.entries.contains_key(&name);
         inner.entries.insert(name.clone(), ToolEntry { definition, handler });
-        inner.enabled.insert(name.clone());
+        if is_new {
+            inner.enabled.insert(name.clone());
+        }
         if !allowed_pals.is_empty() {
             inner.allowed_pals.insert(name, allowed_pals);
         }
@@ -389,5 +396,23 @@ mod tests {
     fn test_build_tools_prompt_empty_when_no_tools() {
         let reg = ToolRegistry::new();
         assert!(reg.build_tools_prompt().is_empty());
+    }
+
+    #[test]
+    fn test_reregister_preserves_disabled_state() {
+        let reg = ToolRegistry::new();
+        reg.register(make_definition("t"), Arc::new(EchoHandler), vec![]);
+        // User disables the tool via UI.
+        reg.set_tool_enabled("t", false);
+        assert!(!reg.enabled_set().contains("t"));
+
+        // A `registry_refresh` re-registers the same tool; the disabled
+        // state must be preserved, otherwise the UI selection is wiped.
+        reg.register(make_definition("t"), Arc::new(EchoHandler), vec![]);
+        assert!(reg.get_tool("t").is_some());
+        assert!(
+            !reg.enabled_set().contains("t"),
+            "re-registering must not re-enable a tool the user disabled"
+        );
     }
 }
