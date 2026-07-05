@@ -8,6 +8,7 @@ wisp-common.workspace = true
 wisp-db.workspace = true
 wisp-configs.workspace = true
 wisp-llm.workspace = true
+tokio = { workspace = true }
 serde.workspace = true
 serde_json.workspace = true
 uuid.workspace = true
