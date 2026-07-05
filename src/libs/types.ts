@@ -335,7 +335,6 @@ export interface ConversationLoopConfig {
 	context_window_sliding_ratio: number;
 	retry_attempts: number;
 	retry_delay_ms: number;
-	enable_vision_injection: boolean;
 }
 
 export interface SessionState {

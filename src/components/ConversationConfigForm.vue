@@ -4,11 +4,9 @@ import {
   NForm,
   NFormItem,
   NInputNumber,
-  NSwitch,
   NButton,
   NSpace,
   NSlider,
-  NText,
 } from 'naive-ui'
 import { useSettingsStore } from '../stores/settings'
 import type { ConversationLoopConfig } from '../libs/types'
@@ -20,7 +18,6 @@ const formValue = ref<ConversationLoopConfig>({
   context_window_sliding_ratio: 0.7,
   retry_attempts: 2,
   retry_delay_ms: 1000,
-  enable_vision_injection: true,
 })
 
 watch(
@@ -77,13 +74,6 @@ const handleSave = async () => {
           :step="100"
           style="width: 200px"
         />
-      </n-form-item>
-
-      <n-form-item label="启用视觉注入">
-        <n-switch v-model:value="formValue.enable_vision_injection" />
-        <n-text depth="3" style="margin-left: 12px; font-size: 0.85em">
-          （即将支持）
-        </n-text>
       </n-form-item>
 
       <n-space justify="end" style="margin-top: 16px">

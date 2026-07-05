@@ -107,8 +107,6 @@ pub struct ConversationLoopConfig {
     pub retry_attempts: u32,
     #[serde(default = "default_retry_delay_ms")]
     pub retry_delay_ms: u64,
-    #[serde(default = "default_enable_vision_injection")]
-    pub enable_vision_injection: bool,
 }
 
 fn default_max_tool_rounds() -> u32 {
@@ -127,9 +125,6 @@ fn default_retry_delay_ms() -> u64 {
     1000
 }
 
-fn default_enable_vision_injection() -> bool {
-    true
-}
 
 impl ConversationLoopConfig {
     pub fn normalize(self) -> Self {
@@ -143,7 +138,6 @@ impl ConversationLoopConfig {
             },
             retry_attempts: self.retry_attempts.min(10),
             retry_delay_ms: if self.retry_delay_ms >= 100 { self.retry_delay_ms } else { d.retry_delay_ms },
-            enable_vision_injection: self.enable_vision_injection,
         }
     }
 }
@@ -155,7 +149,6 @@ impl Default for ConversationLoopConfig {
             context_window_sliding_ratio: default_context_window_sliding_ratio(),
             retry_attempts: default_retry_attempts(),
             retry_delay_ms: default_retry_delay_ms(),
-            enable_vision_injection: default_enable_vision_injection(),
         }
     }
 }
@@ -184,7 +177,6 @@ mod tests {
         assert!((config.context_window_sliding_ratio - 0.7).abs() < f32::EPSILON);
         assert_eq!(config.retry_attempts, 2);
         assert_eq!(config.retry_delay_ms, 1000);
-        assert!(config.enable_vision_injection);
     }
 
     #[test]
@@ -275,7 +267,6 @@ mod tests {
             context_window_sliding_ratio: 5.0,
             retry_attempts: 100,
             retry_delay_ms: 10,
-            enable_vision_injection: false,
         };
         let normalized = bad.normalize();
         let d = ConversationLoopConfig::default();
@@ -283,7 +274,6 @@ mod tests {
         assert_eq!(normalized.context_window_sliding_ratio, d.context_window_sliding_ratio);
         assert_eq!(normalized.retry_attempts, 10);
         assert_eq!(normalized.retry_delay_ms, d.retry_delay_ms);
-        assert!(!normalized.enable_vision_injection);
     }
 
     #[test]
@@ -293,7 +283,6 @@ mod tests {
             context_window_sliding_ratio: 0.5,
             retry_attempts: 3,
             retry_delay_ms: 500,
-            enable_vision_injection: false,
         };
         let normalized = good.normalize();
         assert_eq!(normalized.max_tool_rounds, 5);
