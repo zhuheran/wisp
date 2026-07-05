@@ -36,7 +36,7 @@ export async function routeToVision(
       }
 
       if (result.type === 'text' && result.text) {
-        if (detection.sizeBytes > config.maxPayloadBytes) {
+        if (detection.sizeBytes > config.max_payload_bytes) {
           const tempUrl = await generateTempUrl(item, config)
           if (tempUrl) {
             return {
@@ -105,11 +105,11 @@ export async function routeBatchToVision(
 }
 
 async function generateTempUrl(_item: PayloadItem, config: PipelineConfig): Promise<string | null> {
-  if (!config.tempUrlEndpoint) return null
+  if (!config.temp_url_endpoint) return null
 
   // Simulated temp URL generation - in production this would upload to a storage service
   const id = crypto.randomUUID()
-  return `${config.tempUrlEndpoint}/${id}`
+  return `${config.temp_url_endpoint}/${id}`
 }
 
 function formatBytes(bytes: number): string {

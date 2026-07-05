@@ -236,13 +236,13 @@ export const useMcpStore = defineStore('mcp', () => {
 
     const settingsStore = useSettingsStore()
     const config = settingsStore.pipelineConfig ? {
-      compressionThresholdBytes: settingsStore.pipelineConfig.compressionThresholdBytes,
-      maxPayloadBytes: settingsStore.pipelineConfig.maxPayloadBytes,
-      jpegQuality: settingsStore.pipelineConfig.jpegQuality,
-      maxWidth: settingsStore.pipelineConfig.maxWidth,
-      maxHeight: settingsStore.pipelineConfig.maxHeight,
-      mimeWhitelist: settingsStore.pipelineConfig.mimeWhitelist,
-      enableCompression: settingsStore.pipelineConfig.enableCompression,
+      compression_threshold_bytes: settingsStore.pipelineConfig.compression_threshold_bytes,
+      max_payload_bytes: settingsStore.pipelineConfig.max_payload_bytes,
+      jpeg_quality: settingsStore.pipelineConfig.jpeg_quality,
+      max_width: settingsStore.pipelineConfig.max_width,
+      max_height: settingsStore.pipelineConfig.max_height,
+      mime_whitelist: settingsStore.pipelineConfig.mime_whitelist,
+      enable_compression: settingsStore.pipelineConfig.enable_compression,
     } : DEFAULT_PIPELINE_CONFIG
 
     const processedContent: Array<{ type: string; text?: string; image_url?: { url: string } }> = []

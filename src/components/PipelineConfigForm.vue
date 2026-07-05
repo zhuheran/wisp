@@ -16,12 +16,12 @@ import type { PipelineConfig } from '../libs/types'
 const settingsStore = useSettingsStore()
 
 const formValue = ref<PipelineConfig>({
-  compressionThresholdBytes: 4 * 1024 * 1024,
-  maxPayloadBytes: 20 * 1024 * 1024,
-  jpegQuality: 80,
-  maxWidth: 2048,
-  maxHeight: 2048,
-  mimeWhitelist: [
+  compression_threshold_bytes: 4 * 1024 * 1024,
+  max_payload_bytes: 20 * 1024 * 1024,
+  jpeg_quality: 80,
+  max_width: 2048,
+  max_height: 2048,
+  mime_whitelist: [
     'image/png',
     'image/jpeg',
     'image/gif',
@@ -30,8 +30,8 @@ const formValue = ref<PipelineConfig>({
     'image/bmp',
     'image/tiff',
   ],
-  enableCompression: true,
-  tempUrlEndpoint: undefined,
+  enable_compression: true,
+  temp_url_endpoint: undefined,
 })
 
 watch(
@@ -63,38 +63,38 @@ const formatBytes = (bytes: number): string => {
   <div class="pipeline-config">
     <n-form :model="formValue" label-placement="left" label-width="160">
       <n-form-item label="启用压缩">
-        <n-switch v-model:value="formValue.enableCompression" />
+        <n-switch v-model:value="formValue.enable_compression" />
       </n-form-item>
 
       <n-form-item label="压缩阈值">
         <n-input-number
-          v-model:value="formValue.compressionThresholdBytes"
+          v-model:value="formValue.compression_threshold_bytes"
           :min="1024"
           :step="1024 * 1024"
           style="width: 200px"
         >
           <template #suffix>
-            {{ formatBytes(formValue.compressionThresholdBytes) }}
+            {{ formatBytes(formValue.compression_threshold_bytes) }}
           </template>
         </n-input-number>
       </n-form-item>
 
       <n-form-item label="最大 Payload">
         <n-input-number
-          v-model:value="formValue.maxPayloadBytes"
+          v-model:value="formValue.max_payload_bytes"
           :min="1024 * 1024"
           :step="1024 * 1024"
           style="width: 200px"
         >
           <template #suffix>
-            {{ formatBytes(formValue.maxPayloadBytes) }}
+            {{ formatBytes(formValue.max_payload_bytes) }}
           </template>
         </n-input-number>
       </n-form-item>
 
       <n-form-item label="JPEG 质量">
         <n-input-number
-          v-model:value="formValue.jpegQuality"
+          v-model:value="formValue.jpeg_quality"
           :min="1"
           :max="100"
           style="width: 200px"
@@ -103,7 +103,7 @@ const formatBytes = (bytes: number): string => {
 
       <n-form-item label="最大宽度">
         <n-input-number
-          v-model:value="formValue.maxWidth"
+          v-model:value="formValue.max_width"
           :min="64"
           :step="128"
           style="width: 200px"
@@ -112,7 +112,7 @@ const formatBytes = (bytes: number): string => {
 
       <n-form-item label="最大高度">
         <n-input-number
-          v-model:value="formValue.maxHeight"
+          v-model:value="formValue.max_height"
           :min="64"
           :step="128"
           style="width: 200px"
@@ -120,12 +120,12 @@ const formatBytes = (bytes: number): string => {
       </n-form-item>
 
       <n-form-item label="MIME 白名单">
-        <n-dynamic-tags v-model:value="formValue.mimeWhitelist" />
+        <n-dynamic-tags v-model:value="formValue.mime_whitelist" />
       </n-form-item>
 
       <n-form-item label="临时 URL 端点">
         <n-input
-          v-model:value="formValue.tempUrlEndpoint"
+          v-model:value="formValue.temp_url_endpoint"
           placeholder="可选，用于生成临时 URL"
         />
       </n-form-item>

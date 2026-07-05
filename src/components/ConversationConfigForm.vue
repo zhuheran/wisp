@@ -16,13 +16,13 @@ import type { ConversationLoopConfig } from '../libs/types'
 const settingsStore = useSettingsStore()
 
 const formValue = ref<ConversationLoopConfig>({
-  maxToolRounds: 10,
-  maxContextTokens: 128000,
-  imageTokenCost: 85,
-  contextWindowSlidingRatio: 0.7,
-  retryAttempts: 2,
-  retryDelayMs: 1000,
-  enableVisionInjection: true,
+  max_tool_rounds: 10,
+  max_context_tokens: 128000,
+  image_token_cost: 85,
+  context_window_sliding_ratio: 0.7,
+  retry_attempts: 2,
+  retry_delay_ms: 1000,
+  enable_vision_injection: true,
 })
 
 watch(
@@ -45,7 +45,7 @@ const handleSave = async () => {
     <n-form :model="formValue" label-placement="left" label-width="160">
       <n-form-item label="最大工具轮次">
         <n-input-number
-          v-model:value="formValue.maxToolRounds"
+          v-model:value="formValue.max_tool_rounds"
           :min="1"
           :max="50"
           style="width: 200px"
@@ -54,7 +54,7 @@ const handleSave = async () => {
 
       <n-form-item label="最大上下文 Token">
         <n-input-number
-          v-model:value="formValue.maxContextTokens"
+          v-model:value="formValue.max_context_tokens"
           :min="1000"
           :step="1000"
           style="width: 200px"
@@ -63,7 +63,7 @@ const handleSave = async () => {
 
       <n-form-item label="图片 Token 成本">
         <n-input-number
-          v-model:value="formValue.imageTokenCost"
+          v-model:value="formValue.image_token_cost"
           :min="1"
           style="width: 200px"
         />
@@ -71,18 +71,18 @@ const handleSave = async () => {
 
       <n-form-item label="上下文滑动比例">
         <n-slider
-          v-model:value="formValue.contextWindowSlidingRatio"
+          v-model:value="formValue.context_window_sliding_ratio"
           :min="0.1"
           :max="0.95"
           :step="0.05"
           style="width: 200px"
         />
-        <span style="margin-left: 12px">{{ (formValue.contextWindowSlidingRatio * 100).toFixed(0) }}%</span>
+        <span style="margin-left: 12px">{{ (formValue.context_window_sliding_ratio * 100).toFixed(0) }}%</span>
       </n-form-item>
 
       <n-form-item label="重试次数">
         <n-input-number
-          v-model:value="formValue.retryAttempts"
+          v-model:value="formValue.retry_attempts"
           :min="0"
           :max="10"
           style="width: 200px"
@@ -91,7 +91,7 @@ const handleSave = async () => {
 
       <n-form-item label="重试延迟 (ms)">
         <n-input-number
-          v-model:value="formValue.retryDelayMs"
+          v-model:value="formValue.retry_delay_ms"
           :min="100"
           :step="100"
           style="width: 200px"
@@ -99,7 +99,7 @@ const handleSave = async () => {
       </n-form-item>
 
       <n-form-item label="启用视觉注入">
-        <n-switch v-model:value="formValue.enableVisionInjection" />
+        <n-switch v-model:value="formValue.enable_vision_injection" />
         <n-text depth="3" style="margin-left: 12px; font-size: 0.85em">
           （即将支持）
         </n-text>

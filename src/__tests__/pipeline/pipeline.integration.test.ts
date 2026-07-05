@@ -205,8 +205,8 @@ describe('transformer', () => {
 
       const smallConfig: PipelineConfig = {
         ...DEFAULT_PIPELINE_CONFIG,
-        maxPayloadBytes: 1024,
-        enableCompression: false,
+        max_payload_bytes: 1024,
+        enable_compression: false,
       }
 
       const result = await transformPayload(item, smallConfig)

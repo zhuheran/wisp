@@ -38,23 +38,23 @@ export type VisionContent =
   | { type: 'text'; text: string }
 
 export interface PipelineConfig {
-  compressionThresholdBytes: number
-  maxPayloadBytes: number
-  jpegQuality: number
-  maxWidth: number
-  maxHeight: number
-  mimeWhitelist: string[]
-  enableCompression: boolean
-  tempUrlEndpoint?: string
+  compression_threshold_bytes: number
+  max_payload_bytes: number
+  jpeg_quality: number
+  max_width: number
+  max_height: number
+  mime_whitelist: string[]
+  enable_compression: boolean
+  temp_url_endpoint?: string
 }
 
 export const DEFAULT_PIPELINE_CONFIG: PipelineConfig = {
-  compressionThresholdBytes: 4 * 1024 * 1024,
-  maxPayloadBytes: 20 * 1024 * 1024,
-  jpegQuality: 80,
-  maxWidth: 2048,
-  maxHeight: 2048,
-  mimeWhitelist: [
+  compression_threshold_bytes: 4 * 1024 * 1024,
+  max_payload_bytes: 20 * 1024 * 1024,
+  jpeg_quality: 80,
+  max_width: 2048,
+  max_height: 2048,
+  mime_whitelist: [
     'image/png',
     'image/jpeg',
     'image/gif',
@@ -63,5 +63,5 @@ export const DEFAULT_PIPELINE_CONFIG: PipelineConfig = {
     'image/bmp',
     'image/tiff',
   ],
-  enableCompression: true,
+  enable_compression: true,
 }

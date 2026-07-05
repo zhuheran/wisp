@@ -299,14 +299,14 @@ export type VisionContent =
 	| { type: 'text'; text: string };
 
 export interface PipelineConfig {
-	compressionThresholdBytes: number;
-	maxPayloadBytes: number;
-	jpegQuality: number;
-	maxWidth: number;
-	maxHeight: number;
-	mimeWhitelist: string[];
-	enableCompression: boolean;
-	tempUrlEndpoint?: string;
+	compression_threshold_bytes: number;
+	max_payload_bytes: number;
+	jpeg_quality: number;
+	max_width: number;
+	max_height: number;
+	mime_whitelist: string[];
+	enable_compression: boolean;
+	temp_url_endpoint?: string;
 }
 
 // Engine Types
@@ -331,13 +331,13 @@ export interface ConversationMessage {
 }
 
 export interface ConversationLoopConfig {
-	maxToolRounds: number;
-	maxContextTokens: number;
-	imageTokenCost: number;
-	contextWindowSlidingRatio: number;
-	retryAttempts: number;
-	retryDelayMs: number;
-	enableVisionInjection: boolean;
+	max_tool_rounds: number;
+	max_context_tokens: number;
+	image_token_cost: number;
+	context_window_sliding_ratio: number;
+	retry_attempts: number;
+	retry_delay_ms: number;
+	enable_vision_injection: boolean;
 }
 
 export interface SessionState {

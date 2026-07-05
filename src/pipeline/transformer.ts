@@ -71,7 +71,7 @@ export async function transformPayload(
     let wasCompressed = false
     let mimeType = detection.mimeType ?? 'image/png'
 
-    if (detection.needsCompression && config.enableCompression) {
+    if (detection.needsCompression && config.enable_compression) {
       const compressed = await compressImageViaBackend(base64Data, mimeType, config)
       if (compressed && compressed.was_compressed) {
         base64Data = compressed.data
@@ -80,10 +80,10 @@ export async function transformPayload(
       }
     }
 
-    if (detection.sizeBytes > config.maxPayloadBytes && !wasCompressed) {
+    if (detection.sizeBytes > config.max_payload_bytes && !wasCompressed) {
       return {
         type: 'text',
-        text: `[Image too large: ${formatBytes(detection.sizeBytes)} exceeds ${formatBytes(config.maxPayloadBytes)} limit]`,
+        text: `[Image too large: ${formatBytes(detection.sizeBytes)} exceeds ${formatBytes(config.max_payload_bytes)} limit]`,
         originalSizeBytes: detection.sizeBytes,
         transformedSizeBytes: 0,
         wasCompressed: false,
@@ -135,9 +135,9 @@ async function compressImageViaBackend(
 ): Promise<ImageCompressResult | null> {
   try {
     const compressConfig: ImageCompressConfig = {
-      max_width: config.maxWidth,
-      max_height: config.maxHeight,
-      jpeg_quality: config.jpegQuality,
+      max_width: config.max_width,
+      max_height: config.max_height,
+      jpeg_quality: config.jpeg_quality,
     }
 
     const result = await invoke<ImageCompressResult>('compress_image', {

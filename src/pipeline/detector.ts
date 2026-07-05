@@ -92,7 +92,7 @@ function detectBase64Content(raw: string, declaredMime: string | undefined, conf
     kind: isImage ? 'image_base64' : (isBase64 ? 'binary_resource' : 'unknown'),
     mimeType: detectedMime,
     sizeBytes,
-    needsCompression: sizeBytes > config.compressionThresholdBytes,
+    needsCompression: sizeBytes > config.compression_threshold_bytes,
     needsPrefixFix,
     isBase64,
   }
@@ -114,7 +114,7 @@ function guessMimeTypeFromBase64(data: string): string {
 
 export function isMimeWhitelisted(mimeType: string | null, config: PipelineConfig = DEFAULT_PIPELINE_CONFIG): boolean {
   if (!mimeType) return false
-  return config.mimeWhitelist.includes(mimeType)
+  return config.mime_whitelist.includes(mimeType)
 }
 
 export function estimateBase64DecodedSize(base64Length: number): number {
