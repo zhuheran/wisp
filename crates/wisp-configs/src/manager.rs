@@ -17,12 +17,18 @@ pub struct ChoreLlmRef {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 struct Config {
+    #[serde(default)]
     providers: Vec<crate::provider::Provider>,
+    #[serde(default)]
     characters: Vec<crate::character::Character>,
     #[serde(default)]
     default_responder_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     chore_llm: Option<ChoreLlmRef>,
+    #[serde(default)]
+    pipeline_config: Option<crate::settings::PipelineConfig>,
+    #[serde(default)]
+    conversation_config: Option<crate::settings::ConversationLoopConfig>,
 }
 
 #[derive(Debug, Error)]
@@ -239,5 +245,109 @@ impl ConfigManager {
         std::mem::drop(configs);
         self.save()?;
         Ok(())
+    }
+
+    // ========== Pipeline Config ==========
+
+    /// Get the pipeline config, returning the default if not set.
+    pub fn get_pipeline_config(&self) -> crate::settings::PipelineConfig {
+        self.configs
+            .lock()
+            .unwrap()
+            .pipeline_config
+            .clone()
+            .unwrap_or_default()
+    }
+
+    /// Update the pipeline config.
+    pub fn update_pipeline_config(
+        &self,
+        config: crate::settings::PipelineConfig,
+    ) -> Result<(), ConfigError> {
+        let mut configs = self.configs.lock().unwrap();
+        configs.pipeline_config = Some(config);
+        std::mem::drop(configs);
+        self.save()?;
+        Ok(())
+    }
+
+    // ========== Conversation Config ==========
+
+    /// Get the conversation loop config, returning the default if not set.
+    pub fn get_conversation_config(&self) -> crate::settings::ConversationLoopConfig {
+        self.configs
+            .lock()
+            .unwrap()
+            .conversation_config
+            .clone()
+            .unwrap_or_default()
+    }
+
+    /// Update the conversation loop config.
+    pub fn update_conversation_config(
+        &self,
+        config: crate::settings::ConversationLoopConfig,
+    ) -> Result<(), ConfigError> {
+        let mut configs = self.configs.lock().unwrap();
+        configs.conversation_config = Some(config);
+        std::mem::drop(configs);
+        self.save()?;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn config_with_settings_serializes_to_toml() {
+        let config = Config {
+            providers: vec![],
+            characters: vec![],
+            default_responder_id: None,
+            chore_llm: None,
+            pipeline_config: Some(crate::settings::PipelineConfig {
+                jpeg_quality: 50,
+                ..Default::default()
+            }),
+            conversation_config: Some(crate::settings::ConversationLoopConfig {
+                max_tool_rounds: 7,
+                ..Default::default()
+            }),
+        };
+
+        let toml_str = toml::to_string(&config).unwrap();
+        assert!(toml_str.contains("jpeg_quality = 50"));
+        assert!(toml_str.contains("max_tool_rounds = 7"));
+    }
+
+    #[test]
+    fn config_without_settings_deserializes_from_empty_toml() {
+        let config: Config = toml::from_str("").unwrap();
+        assert!(config.pipeline_config.is_none());
+        assert!(config.conversation_config.is_none());
+    }
+
+    #[test]
+    fn config_with_settings_roundtrips() {
+        let config = Config {
+            providers: vec![],
+            characters: vec![],
+            default_responder_id: None,
+            chore_llm: None,
+            pipeline_config: Some(crate::settings::PipelineConfig::default()),
+            conversation_config: Some(crate::settings::ConversationLoopConfig {
+                retry_attempts: 5,
+                ..Default::default()
+            }),
+        };
+
+        let toml_str = toml::to_string(&config).unwrap();
+        let deserialized: Config = toml::from_str(&toml_str).unwrap();
+        assert_eq!(
+            deserialized.conversation_config.as_ref().unwrap().retry_attempts,
+            5
+        );
     }
 }
