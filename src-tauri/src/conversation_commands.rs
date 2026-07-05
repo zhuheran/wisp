@@ -15,7 +15,9 @@ use wisp_conversation::payload::{
     build_openai_messages, build_openai_messages_with_reasoning,
 };
 use wisp_conversation::tool_parser::parse_tool_calls;
-use wisp_conversation::{ConversationToolCall, ConversationToolResult};
+use wisp_conversation::{
+    retry_with_backoff, trim_context, ConversationToolCall, ConversationToolResult,
+};
 use wisp_common::{ToolContent, ToolResult, MessageSource};
 use wisp_db::types::{ImageContent, Message, MessageRole};
 use wisp_tool_registry::ToolDefinition;
@@ -373,7 +375,13 @@ async fn run_conversation_rounds_inner<R: tauri::Runtime>(
     let pal_name = character.as_ref().map(|c| c.name.clone());
     let registry = app_handle.state::<AbortRegistry>();
     let cancel = registry.register(stream_id);
-    for round in 0..10 {
+    let loop_config = {
+        let state = app_handle.state::<Mutex<AppData>>();
+        let state = state.lock().map_err(|e| e.to_string())?;
+        state.config_manager.get_conversation_config()
+    };
+    let max_rounds = loop_config.max_tool_rounds;
+    for round in 0..max_rounds {
         let path = {
             let state_mutex = app_handle.state::<Mutex<AppData>>();
             let mut state = state_mutex
@@ -384,6 +392,13 @@ async fn run_conversation_rounds_inner<R: tauri::Runtime>(
                 .get_message_path_to(&conversation_id, &current_leaf_id)
                 .map_err(|error| format!("Failed to build message path for conversation '{}' from leaf '{}': {}", conversation_id, current_leaf_id, error))?
         };
+
+        let path = trim_context(
+            path,
+            loop_config.max_context_tokens as usize,
+            loop_config.context_window_sliding_ratio,
+            loop_config.image_token_cost,
+        );
 
         let enabled_tools = resolve_enabled_mcp_tools(app_handle).await?;
         let model_config = provider.get_model(&model);
@@ -468,53 +483,60 @@ async fn run_conversation_rounds_inner<R: tauri::Runtime>(
             )?;
         }
 
-        let assistant_msg_id = assistant_message_id.clone();
-        let sid = stream_id.to_string();
-        let ah = app_handle.clone();
-        let callbacks = StreamCallbacks {
-            on_content: Arc::new(move |chunk: &str| {
-                let _ = ah.emit(
-                    "conversation_stream_chunk",
-                    serde_json::json!({
-                        "stream_id": &sid,
-                        "message_id": &assistant_msg_id,
-                        "chunk": chunk,
-                    }),
-                );
-            }),
-            on_reasoning: Arc::new({
-                let assistant_msg_id = assistant_message_id.clone();
-                let sid = stream_id.to_string();
-                let ah = app_handle.clone();
-                move |chunk: &str| {
-                    let _ = ah.emit(
-                        "conversation_stream_reasoning",
-                        serde_json::json!({
-                            "stream_id": &sid,
-                            "message_id": &assistant_msg_id,
-                            "chunk": chunk,
+        let outcome = retry_with_backoff(
+            || {
+                let backend = &backend;
+                let request = StreamRequest {
+                    messages: openai_messages.clone(),
+                    model: model.clone(),
+                    provider: provider.clone(),
+                    parameters: resolve_parameters(model_config, parameters.as_ref()),
+                    callbacks: StreamCallbacks {
+                        on_content: Arc::new({
+                            let assistant_msg_id = assistant_message_id.clone();
+                            let sid = stream_id.to_string();
+                            let ah = app_handle.clone();
+                            move |chunk: &str| {
+                                let _ = ah.emit(
+                                    "conversation_stream_chunk",
+                                    serde_json::json!({
+                                        "stream_id": &sid,
+                                        "message_id": &assistant_msg_id,
+                                        "chunk": chunk,
+                                    }),
+                                );
+                            }
                         }),
-                    );
-                }
-            }),
-        };
-
-        let outcome = backend
-            .stream(StreamRequest {
-                messages: openai_messages,
-                model: model.clone(),
-                provider: provider.clone(),
-                parameters: resolve_parameters(model_config, parameters.as_ref()),
-                callbacks,
-                cancel: cancel.clone(),
-                tools: tool_defs,
-                tool_choice: ToolChoice::Auto,
-            })
-            .await
-            .map_err(|error| format!(
-                "Model '{}' failed while streaming conversation '{}': {}",
-                model, conversation_id, error
-            ))?;
+                        on_reasoning: Arc::new({
+                            let assistant_msg_id = assistant_message_id.clone();
+                            let sid = stream_id.to_string();
+                            let ah = app_handle.clone();
+                            move |chunk: &str| {
+                                let _ = ah.emit(
+                                    "conversation_stream_reasoning",
+                                    serde_json::json!({
+                                        "stream_id": &sid,
+                                        "message_id": &assistant_msg_id,
+                                        "chunk": chunk,
+                                    }),
+                                );
+                            }
+                        }),
+                    },
+                    cancel: cancel.clone(),
+                    tools: tool_defs.clone(),
+                    tool_choice: ToolChoice::Auto,
+                };
+                async move { backend.stream(request).await }
+            },
+            loop_config.retry_attempts,
+            loop_config.retry_delay_ms,
+        )
+        .await
+        .map_err(|error| format!(
+            "Model '{}' failed while streaming conversation '{}': {}",
+            model, conversation_id, error
+        ))?;
 
         let parsed = parse_tool_calls(&outcome.text);
         let native_calls = wisp_conversation::merge_tool_call_deltas(&outcome.tool_call_deltas);
@@ -591,7 +613,7 @@ async fn run_conversation_rounds_inner<R: tauri::Runtime>(
             return Ok(current_leaf_id);
         }
 
-        if round == 9 {
+        if round == max_rounds.saturating_sub(1) {
             emit_event(
                 app_handle,
                 ConversationEventPayload::Failed {
