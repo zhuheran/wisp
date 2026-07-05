@@ -113,7 +113,7 @@ const handleTypeChange = (type: ModelInfo["type"]) => {
 const ensureModel = () => {
   if (!model.value) {
     model.value = {
-      metadata: { name: "", display_name: "" },
+      metadata: { name: "", display_name: "", context_window: 128000 },
       model_info: defaultModelInfo("text_generation"),
     };
   }
@@ -230,15 +230,10 @@ const hasMultimodal = computed({
 });
 
 const modalitySchemas: Record<keyof MultimodalConfig, ParamSchema[]> = {
-  vision: [
-    { name: "context_window", label: "Context Window", type: "number", min: 0 },
-  ],
+  vision: [],
   audio: [
     { name: "sample_rate", label: "Sample Rate", type: "number", min: 0 },
     { name: "max_duration", label: "Max Duration (s)", type: "number", min: 0 },
-  ],
-  text: [
-    { name: "context_window", label: "Context Window", type: "number", min: 0 },
   ],
 };
 
@@ -248,7 +243,6 @@ const toggleModality = (key: keyof MultimodalConfig, on: boolean) => {
   if (on) {
     if (key === "vision") mm.vision = {};
     else if (key === "audio") mm.audio = {};
-    else if (key === "text") mm.text = { context_window: 0 };
   } else {
     delete mm[key];
   }
@@ -257,12 +251,11 @@ const toggleModality = (key: keyof MultimodalConfig, on: boolean) => {
 const modalityEntries = ref<Record<keyof MultimodalConfig, ParamEntry[]>>({
   vision: [],
   audio: [],
-  text: [],
 });
 
 const loadModalityEntries = () => {
   const mm = tgConfigs.value?.multimodal;
-  (["vision", "audio", "text"] as const).forEach((k) => {
+  (["vision", "audio"] as const).forEach((k) => {
     const sub = (mm?.[k] || {}) as Record<string, unknown>;
     modalityEntries.value[k] = Object.entries(sub)
       .filter(([, v]) => hasValue(v))
@@ -273,7 +266,7 @@ const loadModalityEntries = () => {
 const writeModalityEntries = () => {
   const mm = tgConfigs.value?.multimodal;
   if (!mm) return;
-  (["vision", "audio", "text"] as const).forEach((k) => {
+  (["vision", "audio"] as const).forEach((k) => {
     const target = mm[k];
     if (!target) return;
     const obj: Record<string, unknown> = {};
@@ -281,9 +274,7 @@ const writeModalityEntries = () => {
       if (!e.name || !hasValue(e.value)) continue;
       obj[e.name] = e.value;
     }
-    if (k === "text") {
-      (mm.text as unknown as Record<string, unknown>) = obj;
-    } else if (k === "vision") {
+    if (k === "vision") {
       (mm.vision as unknown as Record<string, unknown>) = obj;
     } else if (k === "audio") {
       (mm.audio as unknown as Record<string, unknown>) = obj;
@@ -294,7 +285,7 @@ const writeModalityEntries = () => {
 watch(modalityEntries, writeModalityEntries, { deep: true });
 watch(hasMultimodal, (on) => {
   if (on) loadModalityEntries();
-});
+}, { immediate: true });
 
 const modalityOptions = (
   key: keyof MultimodalConfig,
@@ -341,6 +332,15 @@ const onModalityCreate = (key: keyof MultimodalConfig): ParamEntry => {
         />
       </n-form-item>
     </n-space>
+    <n-form-item label="Context Window">
+      <n-input-number
+        v-model:value="metadata.context_window"
+        :min="0"
+        :step="1024"
+        placeholder="Model context length in tokens (e.g. 128000)"
+        style="width: 100%"
+      />
+    </n-form-item>
     <n-form-item label="Model Type" required>
       <n-select
         :value="modelType"
@@ -442,7 +442,7 @@ const onModalityCreate = (key: keyof MultimodalConfig): ParamEntry => {
 
         <template v-if="tgConfigs.multimodal">
           <div
-            v-for="key in (['vision', 'audio', 'text'] as const)"
+            v-for="key in (['vision', 'audio'] as const)"
             :key="key"
             class="modality-block"
           >
@@ -454,7 +454,7 @@ const onModalityCreate = (key: keyof MultimodalConfig): ParamEntry => {
                 @update:value="(v: boolean) => toggleModality(key, v)"
               />
             </n-space>
-            <template v-if="tgConfigs.multimodal[key]">
+            <template v-if="tgConfigs.multimodal[key] && modalitySchemas[key].length">
               <n-dynamic-input
                 v-model:value="modalityEntries[key]"
                 :on-create="() => onModalityCreate(key)"

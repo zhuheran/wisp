@@ -5,9 +5,19 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::Mutex;
 use std::{fs, io};
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 use thiserror::Error;
 use toml;
+
+/// Payload for the `settings_updated` event broadcast to the frontend.
+///
+/// `key` identifies which slice of configuration changed so listeners can
+/// decide whether to refresh. `value` carries the new serialised value.
+#[derive(Debug, Clone, Serialize)]
+pub struct SettingsUpdatePayload {
+    pub key: &'static str,
+    pub value: serde_json::Value,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChoreLlmRef {
@@ -52,10 +62,11 @@ pub enum ConfigError {
 pub struct ConfigManager {
     config_path: PathBuf,
     configs: Mutex<Config>,
+    app_handle: AppHandle,
 }
 
 impl ConfigManager {
-    pub fn new<R: tauri::Runtime>(app_handle: &tauri::AppHandle<R>) -> Result<Self, String> {
+    pub fn new(app_handle: &AppHandle) -> Result<Self, String> {
         let config_dir = app_handle
             .path()
             .app_data_dir()
@@ -95,6 +106,7 @@ impl ConfigManager {
         let manager = Self {
             config_path,
             configs: Mutex::new(configs),
+            app_handle: app_handle.clone(),
         };
 
         if needs_save {
@@ -102,6 +114,16 @@ impl ConfigManager {
         }
 
         Ok(manager)
+    }
+
+    /// Broadcast a `settings_updated` event to all frontend listeners.
+    /// Failures are silently ignored — emitting is best-effort and must never
+    /// disrupt the save flow.
+    fn emit_update(&self, key: &'static str, value: serde_json::Value) {
+        let _ = self.app_handle.emit(
+            "settings_updated",
+            SettingsUpdatePayload { key, value },
+        );
     }
 
     /// Add a new provider to the config. If the
@@ -254,9 +276,11 @@ impl ConfigManager {
     /// Set the default responder ID
     pub fn set_default_responder(&self, character_id: Option<String>) -> Result<(), ConfigError> {
         let mut configs = self.configs.lock().unwrap();
-        configs.default_responder_id = character_id;
+        configs.default_responder_id = character_id.clone();
         std::mem::drop(configs);
         self.save()?;
+        let value = serde_json::to_value(&character_id).unwrap_or(serde_json::Value::Null);
+        self.emit_update("default_responder", value);
         Ok(())
     }
 
@@ -270,9 +294,11 @@ impl ConfigManager {
     /// Set the chore LLM reference.
     pub fn set_chore_llm(&self, chore_llm: Option<ChoreLlmRef>) -> Result<(), ConfigError> {
         let mut configs = self.configs.lock().unwrap();
-        configs.chore_llm = chore_llm;
+        configs.chore_llm = chore_llm.clone();
         std::mem::drop(configs);
         self.save()?;
+        let value = serde_json::to_value(&chore_llm).unwrap_or(serde_json::Value::Null);
+        self.emit_update("chore_llm", value);
         Ok(())
     }
 
@@ -294,9 +320,11 @@ impl ConfigManager {
         config: crate::settings::PipelineConfig,
     ) -> Result<(), ConfigError> {
         let mut configs = self.configs.lock().unwrap();
-        configs.pipeline_config = Some(config);
+        configs.pipeline_config = Some(config.clone());
         std::mem::drop(configs);
         self.save()?;
+        let value = serde_json::to_value(&config).unwrap_or(serde_json::Value::Null);
+        self.emit_update("pipeline", value);
         Ok(())
     }
 
@@ -318,9 +346,11 @@ impl ConfigManager {
         config: crate::settings::ConversationLoopConfig,
     ) -> Result<(), ConfigError> {
         let mut configs = self.configs.lock().unwrap();
-        configs.conversation_config = Some(config);
+        configs.conversation_config = Some(config.clone());
         std::mem::drop(configs);
         self.save()?;
+        let value = serde_json::to_value(&config).unwrap_or(serde_json::Value::Null);
+        self.emit_update("conversation", value);
         Ok(())
     }
 }

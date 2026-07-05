@@ -11,7 +11,7 @@ use wisp_software_tools::format_result::first_text;
 
 #[derive(Deserialize, JsonSchema)]
 pub struct ConfigReadArgs {
-    /// One of: "providers", "characters", "default_responder", "chore_llm".
+    /// One of: "providers", "characters", "default_responder", "chore_llm", "pipeline_config", "conversation_config".
     pub key: String,
 }
 
@@ -32,7 +32,7 @@ impl NativeTool for ConfigRead {
     }
 
     fn description(&self) -> &str {
-        "Read application configuration values. Instruction: pass one of the supported keys listed in the key parameter schema below."
+        "Read application configuration values. Instruction: pass one of the supported keys listed in the key parameter schema below. Supported keys: providers, characters, default_responder, chore_llm, pipeline_config, conversation_config."
     }
 
     fn schema(&self) -> Value {
@@ -93,10 +93,16 @@ impl NativeTool for ConfigRead {
             }
             "chore_llm" => serde_json::to_string_pretty(&self.config.get_chore_llm())
                 .map_err(|e| ToolError::ExecutionFailed(e.to_string()))?,
+            "pipeline_config" => serde_json::to_string_pretty(&self.config.get_pipeline_config())
+                .map_err(|e| ToolError::ExecutionFailed(e.to_string()))?,
+            "conversation_config" => {
+                serde_json::to_string_pretty(&self.config.get_conversation_config())
+                    .map_err(|e| ToolError::ExecutionFailed(e.to_string()))?
+            }
             other => {
                 return Ok(ToolResult {
                     content: vec![ToolContent::Text {
-                        text: format!("Unknown key '{other}'. Supported keys: providers, characters, default_responder, chore_llm."),
+                        text: format!("Unknown key '{other}'. Supported keys: providers, characters, default_responder, chore_llm, pipeline_config, conversation_config."),
                     }],
                     is_error: true,
                 });

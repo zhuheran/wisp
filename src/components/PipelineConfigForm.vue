@@ -5,15 +5,16 @@ import {
   NFormItem,
   NInputNumber,
   NSwitch,
-  NButton,
-  NSpace,
   NInput,
   NDynamicTags,
 } from 'naive-ui'
+import { debounce } from 'lodash'
+import { useMessage } from 'naive-ui'
 import { useSettingsStore } from '../stores/settings'
 import type { PipelineConfig } from '../libs/types'
 
 const settingsStore = useSettingsStore()
+const message = useMessage()
 
 const formValue = ref<PipelineConfig>({
   compression_threshold_bytes: 4 * 1024 * 1024,
@@ -34,19 +35,46 @@ const formValue = ref<PipelineConfig>({
   temp_url_endpoint: undefined,
 })
 
+/**
+ * `lastSavedJson` tracks the most recently persisted snapshot. It serves two
+ * purposes: (1) skip no-op saves triggered when the broadcast event bounces
+ * our own write back into the store ref, and (2) suppress the autosave that
+ * would otherwise fire while we are applying a remote snapshot to formValue.
+ */
+let lastSavedJson = ''
+
 watch(
   () => settingsStore.pipelineConfig,
   (newConfig) => {
-    if (newConfig) {
-      formValue.value = { ...newConfig }
-    }
+    if (!newConfig) return
+    const incoming = JSON.stringify(newConfig)
+    if (incoming === JSON.stringify(formValue.value)) return
+    lastSavedJson = incoming
+    formValue.value = { ...newConfig }
   },
   { immediate: true }
 )
 
-const handleSave = async () => {
-  await settingsStore.savePipelineConfig(formValue.value)
-}
+const debouncedSave = debounce(async () => {
+  const json = JSON.stringify(formValue.value)
+  if (json === lastSavedJson) return
+  lastSavedJson = json
+  try {
+    await settingsStore.savePipelineConfig(formValue.value)
+    message.success('Pipeline config saved')
+  } catch (e) {
+    message.error(`Failed to save pipeline config: ${e}`)
+    lastSavedJson = '' // allow retry on next change
+  }
+}, 600)
+
+watch(
+  formValue,
+  () => {
+    debouncedSave()
+  },
+  { deep: true }
+)
 
 const formatBytes = (bytes: number): string => {
   if (bytes >= 1024 * 1024) {
@@ -129,12 +157,6 @@ const formatBytes = (bytes: number): string => {
           placeholder="可选，用于生成临时 URL"
         />
       </n-form-item>
-
-      <n-space justify="end" style="margin-top: 16px">
-        <n-button type="primary" @click="handleSave" :loading="settingsStore.isLoading">
-          保存配置
-        </n-button>
-      </n-space>
     </n-form>
   </div>
 </template>

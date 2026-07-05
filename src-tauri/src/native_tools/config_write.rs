@@ -3,17 +3,33 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use schemars::JsonSchema;
 use serde::Deserialize;
-use serde_json::Value;
+use serde_json::{Map, Value};
 use wisp_common::{ToolContent, ToolError, ToolResult};
 use wisp_configs::ConfigManager;
 use wisp_software_tools::NativeTool;
 use wisp_software_tools::format_result::first_text;
 
+/// Shallowly merge `patch` into `base` at the top level. Only keys present in
+/// `patch` are overwritten; nested sub-objects are replaced wholesale (which
+/// is correct for our flat config sections). Non-object `patch` values leave
+/// `base` unchanged.
+fn merge_object(base: &mut Map<String, Value>, patch: &Value) {
+    let Some(patch_map) = patch.as_object() else {
+        return;
+    };
+    for (key, value) in patch_map {
+        base.insert(key.clone(), value.clone());
+    }
+}
+
 #[derive(Deserialize, JsonSchema)]
 pub struct ConfigWriteArgs {
-    /// One of: "default_responder", "chore_llm".
+    /// One of: "default_responder", "chore_llm", "pipeline_config", "conversation_config".
     pub key: String,
     /// For "default_responder": a pal ID string or null. For "chore_llm": {"provider": "...", "model": "..."} or null.
+    /// For "pipeline_config" / "conversation_config": a partial object — only the fields you want to change.
+    /// Unspecified fields keep their current values (merge semantics), so callers never need to read-then-write
+    /// the full section. Example: {"key":"pipeline_config","value":{"jpeg_quality":50}} updates one field safely.
     pub value: serde_json::Value,
 }
 
@@ -34,7 +50,7 @@ impl NativeTool for ConfigWrite {
     }
 
     fn description(&self) -> &str {
-        "Write application configuration values. Instruction: use the key parameter to select which setting to change, and provide the new value in the value parameter. See the schema below for accepted formats."
+        "Write application configuration values. Instruction: use the key parameter to select which setting to change, and provide the new value in the value parameter. Supported keys: default_responder (string|null), chore_llm ({provider,model}|null), pipeline_config (partial object — only fields you want to change; unspecified fields keep their current values), conversation_config (partial object — same merge semantics). See the value schema below for accepted field formats."
     }
 
     fn schema(&self) -> Value {
@@ -103,10 +119,57 @@ impl NativeTool for ConfigWrite {
                     .map_err(|e| ToolError::ExecutionFailed(e.to_string()))?;
                 "chore_llm updated.".to_string()
             }
+            "pipeline_config" => {
+                if !args.value.is_object() {
+                    return Ok(ToolResult {
+                        content: vec![ToolContent::Text {
+                            text: "pipeline_config expects a JSON object.".to_string(),
+                        }],
+                        is_error: true,
+                    });
+                }
+                // Merge the patch onto the current config so unspecified fields
+                // keep their existing values, then normalise & persist.
+                let mut merged = serde_json::to_value(self.config.get_pipeline_config())
+                    .unwrap_or_else(|_| Value::Object(Map::new()));
+                if let Some(base) = merged.as_object_mut() {
+                    merge_object(base, &args.value);
+                }
+                let pipeline: wisp_configs::PipelineConfig = serde_json::from_value(merged)
+                    .map_err(|e| ToolError::ExecutionFailed(format!("invalid pipeline_config: {e}")))?;
+                let pipeline = pipeline.normalize();
+                self.config
+                    .update_pipeline_config(pipeline)
+                    .map_err(|e| ToolError::ExecutionFailed(e.to_string()))?;
+                "pipeline_config updated.".to_string()
+            }
+            "conversation_config" => {
+                if !args.value.is_object() {
+                    return Ok(ToolResult {
+                        content: vec![ToolContent::Text {
+                            text: "conversation_config expects a JSON object.".to_string(),
+                        }],
+                        is_error: true,
+                    });
+                }
+                let mut merged = serde_json::to_value(self.config.get_conversation_config())
+                    .unwrap_or_else(|_| Value::Object(Map::new()));
+                if let Some(base) = merged.as_object_mut() {
+                    merge_object(base, &args.value);
+                }
+                let conversation: wisp_configs::ConversationLoopConfig =
+                    serde_json::from_value(merged)
+                        .map_err(|e| ToolError::ExecutionFailed(format!("invalid conversation_config: {e}")))?;
+                let conversation = conversation.normalize();
+                self.config
+                    .update_conversation_config(conversation)
+                    .map_err(|e| ToolError::ExecutionFailed(e.to_string()))?;
+                "conversation_config updated.".to_string()
+            }
             other => {
                 return Ok(ToolResult {
                     content: vec![ToolContent::Text {
-                        text: format!("Unknown key '{other}'. Supported keys: default_responder, chore_llm."),
+                        text: format!("Unknown key '{other}'. Supported keys: default_responder, chore_llm, pipeline_config, conversation_config."),
                     }],
                     is_error: true,
                 });

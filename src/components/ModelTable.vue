@@ -51,7 +51,7 @@ function blankModel(): Model {
     },
   };
   return {
-    metadata: { name: "", display_name: "" },
+    metadata: { name: "", display_name: "", context_window: 128000 },
     model_info: modelInfo,
   };
 }

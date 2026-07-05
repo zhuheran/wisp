@@ -103,6 +103,20 @@ const modelOptions = computed<SelectOption[]>(
       })) || []
 );
 
+/**
+ * Whether the currently selected model advertises vision support
+ * (i.e. has `multimodal.vision` set). Image upload is hidden entirely when
+ * the model cannot accept images.
+ */
+const supportsVision = computed(() => {
+  const provider = chatStore.chosenProvider;
+  const modelName = chatStore.chosenModel;
+  if (!provider || !modelName) return false;
+  const model = provider.models.find((m) => m.metadata.name === modelName);
+  if (!model || model.model_info.type !== "text_generation") return false;
+  return !!model.model_info.configs.multimodal?.vision;
+});
+
 const LAST_PROVIDER_KEY = 'wisp_last_provider_id';
 const LAST_MODEL_KEY = 'wisp_last_model';
 
@@ -512,7 +526,7 @@ onMounted(() => {
               </template>
             </n-button>
           </n-space>
-          <image-input ref="imageInputRef" />
+          <image-input v-if="supportsVision" ref="imageInputRef" />
           <n-mention
             v-model:value="chatStore.userInput"
             :options="mentionOptions"

@@ -21,18 +21,14 @@ export function useOpenAI() {
 			metadata: {
 				name: model.id,
 				display_name: model.id,
-				description: model.description || ''
+				description: model.description || '',
+				context_window: model.context_window || undefined,
 			},
 			model_info: {
 				type: 'text_generation',
 				configs: {
 					parameters: {},
 					capabilities: [],
-					multimodal: {
-						text: {
-							context_window: model.context_window || 2048,
-						}
-					}
 				}
 			}
 		}))

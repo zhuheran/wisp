@@ -4,14 +4,15 @@ import {
   NForm,
   NFormItem,
   NInputNumber,
-  NButton,
-  NSpace,
   NSlider,
 } from 'naive-ui'
+import { debounce } from 'lodash'
+import { useMessage } from 'naive-ui'
 import { useSettingsStore } from '../stores/settings'
 import type { ConversationLoopConfig } from '../libs/types'
 
 const settingsStore = useSettingsStore()
+const message = useMessage()
 
 const formValue = ref<ConversationLoopConfig>({
   max_tool_rounds: 10,
@@ -20,19 +21,45 @@ const formValue = ref<ConversationLoopConfig>({
   retry_delay_ms: 1000,
 })
 
+/**
+ * `lastSavedJson` mirrors the persisted snapshot: it prevents redundant
+ * saves when our own write bounces back via the broadcast event, and
+ * suppresses the autosave triggered while applying a remote snapshot.
+ */
+let lastSavedJson = ''
+
 watch(
   () => settingsStore.conversationConfig,
   (newConfig) => {
-    if (newConfig) {
-      formValue.value = { ...newConfig }
-    }
+    if (!newConfig) return
+    const incoming = JSON.stringify(newConfig)
+    if (incoming === JSON.stringify(formValue.value)) return
+    lastSavedJson = incoming
+    formValue.value = { ...newConfig }
   },
   { immediate: true }
 )
 
-const handleSave = async () => {
-  await settingsStore.saveConversationConfig(formValue.value)
-}
+const debouncedSave = debounce(async () => {
+  const json = JSON.stringify(formValue.value)
+  if (json === lastSavedJson) return
+  lastSavedJson = json
+  try {
+    await settingsStore.saveConversationConfig(formValue.value)
+    message.success('Conversation config saved')
+  } catch (e) {
+    message.error(`Failed to save conversation config: ${e}`)
+    lastSavedJson = ''
+  }
+}, 600)
+
+watch(
+  formValue,
+  () => {
+    debouncedSave()
+  },
+  { deep: true }
+)
 </script>
 
 <template>
@@ -75,12 +102,6 @@ const handleSave = async () => {
           style="width: 200px"
         />
       </n-form-item>
-
-      <n-space justify="end" style="margin-top: 16px">
-        <n-button type="primary" @click="handleSave" :loading="settingsStore.isLoading">
-          保存配置
-        </n-button>
-      </n-space>
     </n-form>
   </div>
 </template>

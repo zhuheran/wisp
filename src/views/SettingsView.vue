@@ -1,27 +1,32 @@
 <script setup lang="ts">
-import { computed, onMounted } from 'vue'
-import { NCard, NForm, NFormItem, NSelect, NButton, NSpace, useMessage } from 'naive-ui'
-import { useChoreLlm } from '../composables/useChoreLlm'
+import { computed, onMounted, watch } from 'vue'
+import { NCard, NForm, NFormItem, NSelect, NSpace, NButton, useMessage } from 'naive-ui'
+import { debounce } from 'lodash'
+import { useProviderStore } from '../stores/provider'
 import { useSettingsStore } from '../stores/settings'
+import type { ChoreLlmRef } from '../libs/commands'
 import PipelineConfigForm from '../components/PipelineConfigForm.vue'
 import ConversationConfigForm from '../components/ConversationConfigForm.vue'
 
 const message = useMessage()
-const { choreLlm, providerOptions, modelOptions, save, clear } = useChoreLlm()
+const providerStore = useProviderStore()
 const settingsStore = useSettingsStore()
 
 onMounted(() => {
   settingsStore.init()
 })
 
+const choreLlm = computed<ChoreLlmRef | null>({
+  get: () => settingsStore.choreLlm,
+  set: (val) => {
+    settingsStore.choreLlm = val
+  },
+})
+
 const selectedProvider = computed<string | null>({
   get: () => choreLlm.value?.provider ?? null,
   set: (val) => {
-    if (val) {
-      choreLlm.value = { provider: val, model: '' }
-    } else {
-      choreLlm.value = null
-    }
+    choreLlm.value = val ? { provider: val, model: '' } : null
   },
 })
 
@@ -29,23 +34,57 @@ const selectedModel = computed<string | null>({
   get: () => choreLlm.value?.model ?? null,
   set: (val) => {
     if (choreLlm.value && val) {
-      choreLlm.value.model = val
+      choreLlm.value = { ...choreLlm.value, model: val }
     }
   },
 })
 
-const handleSave = async () => {
+const providerOptions = computed(() =>
+  providerStore.providers.map((p) => ({ label: p.display_name || p.name, value: p.name }))
+)
+
+const modelOptions = computed(() => {
+  const providerName = choreLlm.value?.provider
+  if (!providerName) return []
+  const provider = providerStore.providers.find((p) => p.name === providerName)
+  if (!provider) return []
+  return provider.models
+    .filter((m) => m.model_info.type === 'text_generation')
+    .map((m) => ({ label: m.metadata.display_name || m.metadata.name, value: m.metadata.name }))
+})
+
+/**
+ * Autosave chore LLM. We track the last persisted JSON so that store updates
+ * arriving from the backend broadcast (which mirror our own write back into
+ * the ref) do not trigger a redundant save.
+ */
+let lastSavedJson = JSON.stringify(choreLlm.value)
+
+const debouncedSave = debounce(async () => {
+  const value = settingsStore.choreLlm
+  const json = JSON.stringify(value)
+  if (json === lastSavedJson) return
+  lastSavedJson = json
   try {
-    await save()
+    await settingsStore.saveChoreLlm(value)
     message.success('Chore LLM saved')
   } catch (e) {
     message.error(`Failed to save: ${e}`)
   }
-}
+}, 500)
+
+watch(
+  () => settingsStore.choreLlm,
+  () => {
+    debouncedSave()
+  },
+  { deep: true }
+)
 
 const handleClear = async () => {
+  lastSavedJson = JSON.stringify(null)
   try {
-    await clear()
+    await settingsStore.saveChoreLlm(null)
     message.success('Chore LLM cleared')
   } catch (e) {
     message.error(`Failed to clear: ${e}`)
@@ -57,7 +96,7 @@ const handleClear = async () => {
   <div class="settings-view">
     <n-card title="Chore LLM" size="small">
       <template #header-extra>
-        <span class="hint">Used for background tasks (e.g. MCP tool display names)</span>
+        <span class="hint">Used for background tasks (e.g. MCP tool display names) · saved automatically</span>
       </template>
       <n-form>
         <n-form-item label="Provider">
@@ -77,22 +116,21 @@ const handleClear = async () => {
           />
         </n-form-item>
         <n-space justify="end">
-          <n-button @click="handleClear">Clear</n-button>
-          <n-button type="primary" :disabled="!selectedModel" @click="handleSave">Save</n-button>
+          <n-button :disabled="!choreLlm" @click="handleClear">Clear</n-button>
         </n-space>
       </n-form>
     </n-card>
 
     <n-card title="Pipeline Config" size="small" style="margin-top: 16px">
       <template #header-extra>
-        <span class="hint">Media processing for tool results</span>
+        <span class="hint">Media processing for tool results · saved automatically</span>
       </template>
       <PipelineConfigForm />
     </n-card>
 
     <n-card title="Conversation Config" size="small" style="margin-top: 16px">
       <template #header-extra>
-        <span class="hint">Conversation engine loop parameters</span>
+        <span class="hint">Conversation engine loop parameters · saved automatically</span>
       </template>
       <ConversationConfigForm />
     </n-card>

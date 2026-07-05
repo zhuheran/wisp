@@ -27,6 +27,7 @@ mod tests {
                 name: "m1".to_string(),
                 display_name: "M1".to_string(),
                 description: None,
+                context_window: None,
             },
             model_info: ModelInfo::TextGeneration {
                 parameters: params,

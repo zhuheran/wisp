@@ -397,12 +397,7 @@ async fn run_conversation_rounds_inner<R: tauri::Runtime>(
         let model_config = provider.get_model(&model);
         let context_window = model_config
             .as_ref()
-            .and_then(|m| match &m.model_info {
-                ModelInfo::TextGeneration { multimodal, .. } => {
-                    multimodal.as_ref()?.text.as_ref()?.context_window
-                }
-                _ => None,
-            })
+            .and_then(|m| m.metadata.context_window)
             .unwrap_or(128000) as usize;
 
         let path = trim_context(
@@ -1075,6 +1070,7 @@ mod tests {
                     name: "gpt-4".to_string(),
                     display_name: "GPT-4".to_string(),
                     description: None,
+                    context_window: None,
                 },
                 model_info: ModelInfo::TextGeneration {
                     parameters: Default::default(),

@@ -55,6 +55,8 @@ export interface ModelMetadata {
 	name: string;
 	display_name: string;
 	description?: string;
+	/** The model's primary (text) context window in tokens. Intrinsic model property. */
+	context_window?: number;
 }
 
 export interface ParameterDefinition {
@@ -126,7 +128,6 @@ export interface RerankerParams {
 }
 
 export interface VisionSupport {
-	context_window?: number;
 	max_resolution?: [number, number];
 }
 
@@ -135,14 +136,9 @@ export interface AudioSupport {
 	max_duration?: number;
 }
 
-export interface TextSupport {
-	context_window?: number;
-}
-
 export interface MultimodalConfig {
 	vision?: VisionSupport;
 	audio?: AudioSupport;
-	text?: TextSupport;
 }
 
 export type ModelInfo =

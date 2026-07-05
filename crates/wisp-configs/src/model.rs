@@ -14,6 +14,15 @@ pub struct ModelMetadata {
     pub name: String,
     pub display_name: String,
     pub description: Option<String>,
+    /// The model's primary (text) context window in tokens. This is an
+    /// intrinsic property of the model, not a sampling parameter. Defaults to
+    /// 128k for configs authored before this field existed.
+    #[serde(default = "default_context_window", skip_serializing_if = "Option::is_none")]
+    pub context_window: Option<u32>,
+}
+
+fn default_context_window() -> Option<u32> {
+    Some(128_000)
 }
 
 // ========== MODEL-SPECIFIC CONFIGS ==========
@@ -56,7 +65,6 @@ pub struct RerankerParams {
 // ========== MULTIMODAL SUPPORT ==========
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct VisionSupport {
-    pub context_window: Option<u32>,
     pub max_resolution: Option<(u32, u32)>,
 }
 
@@ -70,12 +78,6 @@ pub struct AudioSupport {
 pub struct MultimodalConfig {
     pub vision: Option<VisionSupport>,
     pub audio: Option<AudioSupport>,
-    pub text: Option<TextSupport>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct TextSupport {
-    pub context_window: Option<u32>,
 }
 
 // ========== MODEL TYPE ENUM ==========
