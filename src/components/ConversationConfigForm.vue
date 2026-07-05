@@ -8,6 +8,7 @@ import {
   NButton,
   NSpace,
   NSlider,
+  NText,
 } from 'naive-ui'
 import { useSettingsStore } from '../stores/settings'
 import type { ConversationLoopConfig } from '../libs/types'
@@ -99,6 +100,9 @@ const handleSave = async () => {
 
       <n-form-item label="启用视觉注入">
         <n-switch v-model:value="formValue.enableVisionInjection" />
+        <n-text depth="3" style="margin-left: 12px; font-size: 0.85em">
+          （即将支持）
+        </n-text>
       </n-form-item>
 
       <n-space justify="end" style="margin-top: 16px">

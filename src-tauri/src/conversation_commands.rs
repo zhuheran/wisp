@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use tauri::{AppHandle, Emitter, Manager};
 use uuid::Uuid;
@@ -16,7 +17,7 @@ use wisp_conversation::payload::{
 };
 use wisp_conversation::tool_parser::parse_tool_calls;
 use wisp_conversation::{
-    retry_with_backoff, trim_context, ConversationToolCall, ConversationToolResult,
+    trim_context, ConversationToolCall, ConversationToolResult,
 };
 use wisp_common::{ToolContent, ToolResult, MessageSource};
 use wisp_db::types::{ImageContent, Message, MessageRole};
@@ -380,7 +381,7 @@ async fn run_conversation_rounds_inner<R: tauri::Runtime>(
         let state = state.lock().map_err(|e| e.to_string())?;
         state.config_manager.get_conversation_config()
     };
-    let max_rounds = loop_config.max_tool_rounds;
+    let max_rounds = loop_config.max_tool_rounds.max(1);
     for round in 0..max_rounds {
         let path = {
             let state_mutex = app_handle.state::<Mutex<AppData>>();
@@ -483,60 +484,88 @@ async fn run_conversation_rounds_inner<R: tauri::Runtime>(
             )?;
         }
 
-        let outcome = retry_with_backoff(
-            || {
-                let backend = &backend;
-                let request = StreamRequest {
-                    messages: openai_messages.clone(),
-                    model: model.clone(),
-                    provider: provider.clone(),
-                    parameters: resolve_parameters(model_config, parameters.as_ref()),
-                    callbacks: StreamCallbacks {
-                        on_content: Arc::new({
-                            let assistant_msg_id = assistant_message_id.clone();
-                            let sid = stream_id.to_string();
-                            let ah = app_handle.clone();
-                            move |chunk: &str| {
-                                let _ = ah.emit(
-                                    "conversation_stream_chunk",
-                                    serde_json::json!({
-                                        "stream_id": &sid,
-                                        "message_id": &assistant_msg_id,
-                                        "chunk": chunk,
-                                    }),
-                                );
-                            }
-                        }),
-                        on_reasoning: Arc::new({
-                            let assistant_msg_id = assistant_message_id.clone();
-                            let sid = stream_id.to_string();
-                            let ah = app_handle.clone();
-                            move |chunk: &str| {
-                                let _ = ah.emit(
-                                    "conversation_stream_reasoning",
-                                    serde_json::json!({
-                                        "stream_id": &sid,
-                                        "message_id": &assistant_msg_id,
-                                        "chunk": chunk,
-                                    }),
-                                );
-                            }
-                        }),
-                    },
-                    cancel: cancel.clone(),
-                    tools: tool_defs.clone(),
-                    tool_choice: ToolChoice::Auto,
-                };
-                async move { backend.stream(request).await }
-            },
-            loop_config.retry_attempts,
-            loop_config.retry_delay_ms,
-        )
-        .await
-        .map_err(|error| format!(
-            "Model '{}' failed while streaming conversation '{}': {}",
-            model, conversation_id, error
-        ))?;
+        let total_attempts = loop_config.retry_attempts.saturating_add(1);
+        let mut outcome = None;
+        for attempt in 0..total_attempts {
+            if attempt > 0 {
+                let _ = app_handle.emit(
+                    "conversation_stream_reset",
+                    serde_json::json!({
+                        "stream_id": stream_id,
+                        "message_id": &assistant_message_id,
+                    }),
+                );
+                if loop_config.retry_delay_ms > 0 {
+                    tokio::time::sleep(Duration::from_millis(loop_config.retry_delay_ms)).await;
+                }
+            }
+
+            let request = StreamRequest {
+                messages: openai_messages.clone(),
+                model: model.clone(),
+                provider: provider.clone(),
+                parameters: resolve_parameters(model_config, parameters.as_ref()),
+                callbacks: StreamCallbacks {
+                    on_content: Arc::new({
+                        let assistant_msg_id = assistant_message_id.clone();
+                        let sid = stream_id.to_string();
+                        let ah = app_handle.clone();
+                        move |chunk: &str| {
+                            let _ = ah.emit(
+                                "conversation_stream_chunk",
+                                serde_json::json!({
+                                    "stream_id": &sid,
+                                    "message_id": &assistant_msg_id,
+                                    "chunk": chunk,
+                                }),
+                            );
+                        }
+                    }),
+                    on_reasoning: Arc::new({
+                        let assistant_msg_id = assistant_message_id.clone();
+                        let sid = stream_id.to_string();
+                        let ah = app_handle.clone();
+                        move |chunk: &str| {
+                            let _ = ah.emit(
+                                "conversation_stream_reasoning",
+                                serde_json::json!({
+                                    "stream_id": &sid,
+                                    "message_id": &assistant_msg_id,
+                                    "chunk": chunk,
+                                }),
+                            );
+                        }
+                    }),
+                },
+                cancel: cancel.clone(),
+                tools: tool_defs.clone(),
+                tool_choice: ToolChoice::Auto,
+            };
+
+            match backend.stream(request).await {
+                Ok(result) => {
+                    outcome = Some(result);
+                    break;
+                }
+                Err(e) if attempt < total_attempts - 1 => {
+                    eprintln!(
+                        "Stream attempt {}/{} failed for conversation '{}': {}",
+                        attempt + 1,
+                        total_attempts,
+                        conversation_id,
+                        e
+                    );
+                    continue;
+                }
+                Err(e) => {
+                    return Err(format!(
+                        "Model '{}' failed while streaming conversation '{}': {}",
+                        model, conversation_id, e
+                    ))
+                }
+            }
+        }
+        let outcome = outcome.expect("at least one stream attempt was made");
 
         let parsed = parse_tool_calls(&outcome.text);
         let native_calls = wisp_conversation::merge_tool_call_deltas(&outcome.tool_call_deltas);

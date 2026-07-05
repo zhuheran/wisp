@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, watch, type ComputedRef, computed, reactive, inject } from 'vue'
 import { listen } from '@tauri-apps/api/event'
-import type { Message, Conversation, Provider, ToolCallItem, ImageContent, ConversationStreamChunkEvent } from '../libs/types'
+import type { Message, Conversation, Provider, ToolCallItem, ImageContent, ConversationStreamChunkEvent, ConversationStreamResetEvent } from '../libs/types'
 import * as Commands from '../libs/commands'
 import MessageThreadTree from '../libs/message-thread-tree'
 import { MessageRole } from '../libs/types';
@@ -52,6 +52,12 @@ export function createStreamingAccumulator() {
 			}
 			reasoning += chunk
 			return reasoning
+		},
+		reset(mid: string) {
+			if (currentMid === mid) {
+				text = ''
+				reasoning = ''
+			}
 		},
 		get text() { return text },
 		get reasoning() { return reasoning },
@@ -278,6 +284,17 @@ export const useChatStore = defineStore('chat', () => {
 			}
 			if (onReceiving) onReceiving(chunk, true)
 		})
+		const unlistenReset = await listen<ConversationStreamResetEvent>('conversation_stream_reset', (event) => {
+			if (event.payload.stream_id && event.payload.stream_id !== streamId) return;
+			const mid = event.payload.message_id
+			if (!mid) return
+			streamingAcc.reset(mid)
+			messageUpdater.flush()
+			const original = messages.value.get(mid)
+			if (original) {
+				messages.value.set(mid, { ...original, text: '', reasoning: '' })
+			}
+		})
 
 		try {
 			const ids = targetPalIds.length > 0 ? targetPalIds : parseAtMentions(message.text)
@@ -314,6 +331,7 @@ export const useChatStore = defineStore('chat', () => {
 			await unlistenConversation()
 			await unlistenContent()
 			await unlistenReasoning()
+			await unlistenReset()
 			isStreaming.value = false
 			activeStreamId.value = null
 		}
@@ -374,6 +392,17 @@ export const useChatStore = defineStore('chat', () => {
 			}
 			if (onReceiving) onReceiving(chunk, true)
 		})
+		const unlistenReset = await listen<ConversationStreamResetEvent>('conversation_stream_reset', (event) => {
+			if (event.payload.stream_id && event.payload.stream_id !== streamId) return;
+			const mid = event.payload.message_id
+			if (!mid) return
+			streamingAcc.reset(mid)
+			messageUpdater.flush()
+			const original = messages.value.get(mid)
+			if (original) {
+				messages.value.set(mid, { ...original, text: '', reasoning: '' })
+			}
+		})
 
 		try {
 			await Commands.conversationRegenerateMessage({
@@ -402,6 +431,7 @@ export const useChatStore = defineStore('chat', () => {
 			await unlistenConversation()
 			await unlistenContent()
 			await unlistenReasoning()
+			await unlistenReset()
 			isStreaming.value = false
 			activeStreamId.value = null
 		}
@@ -459,6 +489,17 @@ export const useChatStore = defineStore('chat', () => {
 			}
 			if (onReceiving) onReceiving(chunk, true)
 		})
+		const unlistenReset = await listen<ConversationStreamResetEvent>('conversation_stream_reset', (event) => {
+			if (event.payload.stream_id && event.payload.stream_id !== streamId) return;
+			const mid = event.payload.message_id
+			if (!mid) return
+			streamingAcc.reset(mid)
+			messageUpdater.flush()
+			const original = messages.value.get(mid)
+			if (original) {
+				messages.value.set(mid, { ...original, text: '', reasoning: '' })
+			}
+		})
 
 		try {
 			await Commands.conversationDeriveMessage({
@@ -487,6 +528,7 @@ export const useChatStore = defineStore('chat', () => {
 			await unlistenConversation()
 			await unlistenContent()
 			await unlistenReasoning()
+			await unlistenReset()
 			isStreaming.value = false
 			activeStreamId.value = null
 		}
@@ -544,6 +586,17 @@ export const useChatStore = defineStore('chat', () => {
 			}
 			if (onReceiving) onReceiving(chunk, true)
 		})
+		const unlistenReset = await listen<ConversationStreamResetEvent>('conversation_stream_reset', (event) => {
+			if (event.payload.stream_id && event.payload.stream_id !== streamId) return;
+			const mid = event.payload.message_id
+			if (!mid) return
+			streamingAcc.reset(mid)
+			messageUpdater.flush()
+			const original = messages.value.get(mid)
+			if (original) {
+				messages.value.set(mid, { ...original, text: '', reasoning: '' })
+			}
+		})
 
 		try {
 			await Commands.conversationEditAndRegenerate({
@@ -572,6 +625,7 @@ export const useChatStore = defineStore('chat', () => {
 			await unlistenConversation()
 			await unlistenContent()
 			await unlistenReasoning()
+			await unlistenReset()
 			isStreaming.value = false
 			activeStreamId.value = null
 		}

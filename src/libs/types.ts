@@ -394,3 +394,8 @@ export interface ConversationStreamChunkEvent {
 	message_id?: string | null;
 	chunk: string;
 }
+
+export interface ConversationStreamResetEvent {
+	stream_id?: string | null;
+	message_id: string;
+}

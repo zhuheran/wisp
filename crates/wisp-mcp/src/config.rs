@@ -26,6 +26,14 @@ impl McpConfigManager {
         let config_path = config_dir.join("mcp_config.json");
         let config = if config_path.exists() {
             let content = fs::read_to_string(&config_path).map_err(|e| e.to_string())?;
+            if let Ok(raw) = serde_json::from_str::<Value>(&content) {
+                if raw.get("pipeline_config").is_some() || raw.get("conversation_config").is_some() {
+                    eprintln!(
+                        "Warning: mcp_config.json contains pipeline_config/conversation_config \
+                         which have moved to Settings (configs.toml). These values are now ignored."
+                    );
+                }
+            }
             serde_json::from_str(&content).unwrap_or_default()
         } else {
             McpConfig::default()
