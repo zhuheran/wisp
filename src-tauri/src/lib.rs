@@ -12,6 +12,7 @@ mod mcp_commands;
 mod mcp_http_commands;
 mod mcp_stdio_commands;
 mod registry_commands;
+mod settings_commands;
 
 use tauri::{Builder, Manager};
 
@@ -156,14 +157,15 @@ pub fn run() {
 			mcp_commands::mcp_add_server,
 			mcp_commands::mcp_update_server,
 			mcp_commands::mcp_remove_server,
-			mcp_commands::mcp_get_pipeline_config,
-			mcp_commands::mcp_update_pipeline_config,
-			mcp_commands::mcp_get_conversation_config,
-			mcp_commands::mcp_update_conversation_config,
 			mcp_commands::mcp_save_session,
 			mcp_commands::mcp_load_session,
 			mcp_commands::mcp_delete_session,
 			mcp_commands::mcp_list_sessions,
+			// Settings commands
+			settings_commands::settings_get_pipeline_config,
+			settings_commands::settings_update_pipeline_config,
+			settings_commands::settings_get_conversation_config,
+			settings_commands::settings_update_conversation_config,
 			            // Registry commands
 			            registry_commands::registry_list_tools,
 			            registry_commands::registry_execute,

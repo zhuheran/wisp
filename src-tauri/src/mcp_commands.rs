@@ -4,9 +4,7 @@ use std::fs;
 use std::sync::Mutex;
 use tauri::{AppHandle, Manager};
 
-use wisp_mcp::{
-    ConversationLoopConfig, PipelineConfig, ServerConfig, SessionState,
-};
+use wisp_mcp::{ServerConfig, SessionState};
 use crate::types::AppData;
 
 // ========== Tauri Commands ==========
@@ -45,36 +43,6 @@ pub async fn mcp_remove_server(app_handle: AppHandle, server_id: String) -> Resu
     let state = app_handle.state::<Mutex<AppData>>();
     let state = state.lock().map_err(|e| e.to_string())?;
     state.mcp_config_manager.remove_server(&server_id)
-}
-
-// Pipeline config commands
-#[tauri::command]
-pub async fn mcp_get_pipeline_config(app_handle: AppHandle) -> Result<PipelineConfig, String> {
-    let state = app_handle.state::<Mutex<AppData>>();
-    let state = state.lock().map_err(|e| e.to_string())?;
-    Ok(state.mcp_config_manager.get_pipeline_config())
-}
-
-#[tauri::command]
-pub async fn mcp_update_pipeline_config(app_handle: AppHandle, config: PipelineConfig) -> Result<(), String> {
-    let state = app_handle.state::<Mutex<AppData>>();
-    let state = state.lock().map_err(|e| e.to_string())?;
-    state.mcp_config_manager.update_pipeline_config(config)
-}
-
-// Conversation config commands
-#[tauri::command]
-pub async fn mcp_get_conversation_config(app_handle: AppHandle) -> Result<ConversationLoopConfig, String> {
-    let state = app_handle.state::<Mutex<AppData>>();
-    let state = state.lock().map_err(|e| e.to_string())?;
-    Ok(state.mcp_config_manager.get_conversation_config())
-}
-
-#[tauri::command]
-pub async fn mcp_update_conversation_config(app_handle: AppHandle, config: ConversationLoopConfig) -> Result<(), String> {
-    let state = app_handle.state::<Mutex<AppData>>();
-    let state = state.lock().map_err(|e| e.to_string())?;
-    state.mcp_config_manager.update_conversation_config(config)
 }
 
 // Session persistence commands
