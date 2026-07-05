@@ -9,10 +9,10 @@ import {
   NSpace,
   NSlider,
 } from 'naive-ui'
-import { useMcpStore } from '../stores/mcp'
+import { useSettingsStore } from '../stores/settings'
 import type { ConversationLoopConfig } from '../libs/types'
 
-const mcpStore = useMcpStore()
+const settingsStore = useSettingsStore()
 
 const formValue = ref<ConversationLoopConfig>({
   maxToolRounds: 10,
@@ -25,7 +25,7 @@ const formValue = ref<ConversationLoopConfig>({
 })
 
 watch(
-  () => mcpStore.conversationConfig,
+  () => settingsStore.conversationConfig,
   (newConfig) => {
     if (newConfig) {
       formValue.value = { ...newConfig }
@@ -35,7 +35,7 @@ watch(
 )
 
 const handleSave = async () => {
-  await mcpStore.saveConversationConfig(formValue.value)
+  await settingsStore.saveConversationConfig(formValue.value)
 }
 </script>
 
@@ -102,7 +102,7 @@ const handleSave = async () => {
       </n-form-item>
 
       <n-space justify="end" style="margin-top: 16px">
-        <n-button type="primary" @click="handleSave" :loading="mcpStore.isLoading">
+        <n-button type="primary" @click="handleSave" :loading="settingsStore.isLoading">
           保存配置
         </n-button>
       </n-space>

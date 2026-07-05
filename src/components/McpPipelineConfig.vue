@@ -10,10 +10,10 @@ import {
   NInput,
   NDynamicTags,
 } from 'naive-ui'
-import { useMcpStore } from '../stores/mcp'
+import { useSettingsStore } from '../stores/settings'
 import type { PipelineConfig } from '../libs/types'
 
-const mcpStore = useMcpStore()
+const settingsStore = useSettingsStore()
 
 const formValue = ref<PipelineConfig>({
   compressionThresholdBytes: 4 * 1024 * 1024,
@@ -35,7 +35,7 @@ const formValue = ref<PipelineConfig>({
 })
 
 watch(
-  () => mcpStore.pipelineConfig,
+  () => settingsStore.pipelineConfig,
   (newConfig) => {
     if (newConfig) {
       formValue.value = { ...newConfig }
@@ -45,7 +45,7 @@ watch(
 )
 
 const handleSave = async () => {
-  await mcpStore.savePipelineConfig(formValue.value)
+  await settingsStore.savePipelineConfig(formValue.value)
 }
 
 const formatBytes = (bytes: number): string => {
@@ -131,7 +131,7 @@ const formatBytes = (bytes: number): string => {
       </n-form-item>
 
       <n-space justify="end" style="margin-top: 16px">
-        <n-button type="primary" @click="handleSave" :loading="mcpStore.isLoading">
+        <n-button type="primary" @click="handleSave" :loading="settingsStore.isLoading">
           保存配置
         </n-button>
       </n-space>

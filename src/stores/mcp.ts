@@ -2,8 +2,6 @@ import { defineStore } from 'pinia'
 import { ref, computed, onBeforeUnmount } from 'vue'
 import type {
   ServerConfig,
-  PipelineConfig,
-  ConversationLoopConfig,
   SessionState,
   ConnectionStatus,
   RegisteredTool,
@@ -14,10 +12,6 @@ import {
   mcpAddServer,
   mcpUpdateServer,
   mcpRemoveServer,
-  mcpGetPipelineConfig,
-  mcpUpdatePipelineConfig,
-  mcpGetConversationConfig,
-  mcpUpdateConversationConfig,
   mcpSaveSession,
   mcpLoadSession,
   mcpDeleteSession,
@@ -37,11 +31,10 @@ import { transformPayload, type PayloadItem, DEFAULT_PIPELINE_CONFIG } from '../
 import type { ToolCallContent } from '../libs/types'
 import { enrichDisplayNames } from '../libs/toolDisplayNames'
 import { listen } from '@tauri-apps/api/event'
+import { useSettingsStore } from './settings'
 
 export const useMcpStore = defineStore('mcp', () => {
   const servers = ref<ServerConfig[]>([])
-  const pipelineConfig = ref<PipelineConfig | null>(null)
-  const conversationConfig = ref<ConversationLoopConfig | null>(null)
   const sessions = ref<SessionState[]>([])
   const currentSession = ref<SessionState | null>(null)
   const isLoading = ref(false)
@@ -241,14 +234,15 @@ export const useMcpStore = defineStore('mcp', () => {
       return result
     }
 
-    const config = pipelineConfig.value ? {
-      compressionThresholdBytes: pipelineConfig.value.compressionThresholdBytes,
-      maxPayloadBytes: pipelineConfig.value.maxPayloadBytes,
-      jpegQuality: pipelineConfig.value.jpegQuality,
-      maxWidth: pipelineConfig.value.maxWidth,
-      maxHeight: pipelineConfig.value.maxHeight,
-      mimeWhitelist: pipelineConfig.value.mimeWhitelist,
-      enableCompression: pipelineConfig.value.enableCompression,
+    const settingsStore = useSettingsStore()
+    const config = settingsStore.pipelineConfig ? {
+      compressionThresholdBytes: settingsStore.pipelineConfig.compressionThresholdBytes,
+      maxPayloadBytes: settingsStore.pipelineConfig.maxPayloadBytes,
+      jpegQuality: settingsStore.pipelineConfig.jpegQuality,
+      maxWidth: settingsStore.pipelineConfig.maxWidth,
+      maxHeight: settingsStore.pipelineConfig.maxHeight,
+      mimeWhitelist: settingsStore.pipelineConfig.mimeWhitelist,
+      enableCompression: settingsStore.pipelineConfig.enableCompression,
     } : DEFAULT_PIPELINE_CONFIG
 
     const processedContent: Array<{ type: string; text?: string; image_url?: { url: string } }> = []
@@ -447,8 +441,6 @@ ${toolList}
     initialized = true
     await Promise.all([
       loadServers(),
-      loadPipelineConfig(),
-      loadConversationConfig(),
       initMcpStatusListener(),
     ])
     await Promise.all([refreshAllStatuses(), refreshAllTools()])
@@ -482,44 +474,6 @@ ${toolList}
       }
       await mcpRemoveServer(serverId)
       await loadServers()
-    } finally {
-      isLoading.value = false
-    }
-  }
-
-  // Pipeline config
-  const loadPipelineConfig = async () => {
-    try {
-      pipelineConfig.value = await mcpGetPipelineConfig()
-    } catch (e) {
-      console.error('Failed to load pipeline config:', e)
-    }
-  }
-
-  const savePipelineConfig = async (config: PipelineConfig) => {
-    isLoading.value = true
-    try {
-      await mcpUpdatePipelineConfig(config)
-      pipelineConfig.value = config
-    } finally {
-      isLoading.value = false
-    }
-  }
-
-  // Conversation config
-  const loadConversationConfig = async () => {
-    try {
-      conversationConfig.value = await mcpGetConversationConfig()
-    } catch (e) {
-      console.error('Failed to load conversation config:', e)
-    }
-  }
-
-  const saveConversationConfig = async (config: ConversationLoopConfig) => {
-    isLoading.value = true
-    try {
-      await mcpUpdateConversationConfig(config)
-      conversationConfig.value = config
     } finally {
       isLoading.value = false
     }
@@ -600,8 +554,6 @@ ${toolList}
     connectedServerIds,
     isAnyConnected,
     tools,
-    pipelineConfig,
-    conversationConfig,
     sessions,
     currentSession,
     isLoading,
@@ -610,10 +562,6 @@ ${toolList}
     addServer,
     updateServer,
     removeServer,
-    loadPipelineConfig,
-    savePipelineConfig,
-    loadConversationConfig,
-    saveConversationConfig,
     loadSessions,
     loadSession,
     saveSession,

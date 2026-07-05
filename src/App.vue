@@ -28,6 +28,7 @@ import { useChatStore } from "./stores/chat";
 import { useProviderStore } from './stores/provider';
 import { useCharacterStore } from './stores/character';
 import { useMcpStore } from './stores/mcp';
+import { useSettingsStore } from './stores/settings';
 
 const osThemeRef = useOsTheme();
 const isDark = computed(() => osThemeRef.value === "dark");
@@ -47,6 +48,9 @@ onMounted(() => {
     const mcpStore = useMcpStore();
     provide("McpStore", mcpStore);
     mcpStore.init()
+    const settingsStore = useSettingsStore();
+    provide("SettingsStore", settingsStore);
+    settingsStore.init()
   })()
 })
 

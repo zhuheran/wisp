@@ -265,20 +265,20 @@ export async function mcpRemoveServer(serverId: string) {
     return invoke<void>('mcp_remove_server', { serverId })
 }
 
-export async function mcpGetPipelineConfig() {
-    return invoke<PipelineConfig>('mcp_get_pipeline_config', {})
+export async function settingsGetPipelineConfig() {
+    return invoke<PipelineConfig>('settings_get_pipeline_config', {})
 }
 
-export async function mcpUpdatePipelineConfig(config: PipelineConfig) {
-    return invoke<void>('mcp_update_pipeline_config', { config })
+export async function settingsUpdatePipelineConfig(config: PipelineConfig) {
+    return invoke<void>('settings_update_pipeline_config', { config })
 }
 
-export async function mcpGetConversationConfig() {
-    return invoke<ConversationLoopConfig>('mcp_get_conversation_config', {})
+export async function settingsGetConversationConfig() {
+    return invoke<ConversationLoopConfig>('settings_get_conversation_config', {})
 }
 
-export async function mcpUpdateConversationConfig(config: ConversationLoopConfig) {
-    return invoke<void>('mcp_update_conversation_config', { config })
+export async function settingsUpdateConversationConfig(config: ConversationLoopConfig) {
+    return invoke<void>('settings_update_conversation_config', { config })
 }
 
 export async function mcpSaveSession(session: SessionState) {
