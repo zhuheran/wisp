@@ -411,10 +411,13 @@ async fn call_llm_with_pal_config<R: tauri::Runtime>(
     stream_target: Option<(&str, &str)>,
 ) -> Result<String, String> {
     use tokio_util::sync::CancellationToken;
-    use wisp_llm::{backend_for, StreamCallbacks, StreamRequest, ToolChoice};
+    use wisp_llm::{backend_for, resolve_parameters, StreamCallbacks, StreamRequest, ToolChoice};
 
     let api_messages: Vec<serde_json::Value> =
         wisp_conversation::payload::build_openai_messages(messages);
+
+    let model_config = provider.get_model(&pal.model_id);
+    let resolved_parameters = resolve_parameters(model_config, parameters);
 
     let callbacks = match stream_target {
         Some((sid, mid)) => {
@@ -463,7 +466,7 @@ async fn call_llm_with_pal_config<R: tauri::Runtime>(
             messages: api_messages,
             model: pal.model_id.clone(),
             provider: provider.clone(),
-            parameters: parameters.cloned(),
+            parameters: resolved_parameters,
             callbacks,
             cancel: CancellationToken::new(),
             tools: vec![],
@@ -689,8 +692,6 @@ mod tests {
                 metadata: ModelMetadata {
                     name: "gpt-4".to_string(),
                     display_name: "GPT-4".to_string(),
-                    creator: None,
-                    version: None,
                     description: None,
                 },
                 model_info: ModelInfo::TextGeneration {
@@ -698,9 +699,6 @@ mod tests {
                     capabilities: vec![],
                     multimodal: None,
                 },
-                tokenizer: None,
-                max_input_size: 8192,
-                api_endpoint: None,
             }],
         }
     }

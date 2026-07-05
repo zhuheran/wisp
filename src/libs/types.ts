@@ -54,8 +54,6 @@ export enum TextModelCapability {
 export interface ModelMetadata {
 	name: string;
 	display_name: string;
-	creator?: string;
-	version?: string;
 	description?: string;
 }
 
@@ -107,23 +105,23 @@ export interface TextGenerationParams {
 }
 
 export interface ImageGenerationParams {
-	width: number;
-	height: number;
-	steps: number;
-	cfg_scale: number;
+	width?: number;
+	height?: number;
+	steps?: number;
+	cfg_scale?: number;
 	sampler?: string;
 	style_preset?: string;
 }
 
 export interface EmbeddingParams {
 	embedding_dim?: number;
-	normalize: boolean;
-	truncate: boolean;
+	normalize?: boolean;
+	truncate?: boolean;
 }
 
 export interface RerankerParams {
 	top_n?: number;
-	return_documents: boolean;
+	return_documents?: boolean;
 	score_threshold?: number;
 }
 
@@ -138,8 +136,7 @@ export interface AudioSupport {
 }
 
 export interface TextSupport {
-	context_window: number;
-	languages: string[];
+	context_window?: number;
 }
 
 export interface MultimodalConfig {
@@ -158,9 +155,6 @@ export type ModelInfo =
 export interface Model {
 	metadata: ModelMetadata;
 	model_info: ModelInfo;
-	tokenizer?: string;
-	max_input_size: number;
-	api_endpoint?: string;
 }
 
 export type ApiType = 'open_ai' | 'deep_seek' | 'open_ai_compatible';

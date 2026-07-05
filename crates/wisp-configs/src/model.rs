@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 // ========== COMMON STRUCTURES ==========
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -12,8 +13,6 @@ pub enum TextModelCapability {
 pub struct ModelMetadata {
     pub name: String,
     pub display_name: String,
-    pub creator: Option<String>,
-    pub version: Option<String>,
     pub description: Option<String>,
 }
 
@@ -32,10 +31,10 @@ pub struct TextGenerationParams {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ImageGenerationParams {
-    pub width: u32,
-    pub height: u32,
-    pub steps: u32,
-    pub cfg_scale: f32,
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+    pub steps: Option<u32>,
+    pub cfg_scale: Option<f32>,
     pub sampler: Option<String>,
     pub style_preset: Option<String>,
 }
@@ -43,14 +42,14 @@ pub struct ImageGenerationParams {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct EmbeddingParams {
     pub embedding_dim: Option<usize>,
-    pub normalize: bool,
-    pub truncate: bool,
+    pub normalize: Option<bool>,
+    pub truncate: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct RerankerParams {
     pub top_n: Option<usize>,
-    pub return_documents: bool,
+    pub return_documents: Option<bool>,
     pub score_threshold: Option<f32>,
 }
 
@@ -76,8 +75,7 @@ pub struct MultimodalConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct TextSupport {
-    pub context_window: u32,
-    pub languages: Vec<String>,
+    pub context_window: Option<u32>,
 }
 
 // ========== MODEL TYPE ENUM ==========
@@ -111,106 +109,28 @@ pub enum ModelInfo {
 pub struct Model {
     pub metadata: ModelMetadata,
     pub model_info: ModelInfo,
-    pub tokenizer: Option<String>,
-    pub max_input_size: usize,
-    pub api_endpoint: Option<String>,
 }
 
-// impl Model {
-//     /// Create a new Model with required fields
-//     pub fn new(
-//         name: String,
-//         display_name: String,
-//         model_info: ModelInfo,
-//         max_input_size: usize,
-//     ) -> Self {
-//         Self {
-//             metadata: ModelMetadata {
-//                 name,
-//                 display_name,
-//                 creator: None,
-//                 version: None,
-//                 description: None,
-//             },
-//             model_info,
-//             tokenizer: None,
-//             max_input_size,
-//             api_endpoint: None,
-//         }
-//     }
+impl Model {
+    /// Serialize the model's configured `parameters` into a flat key-value map,
+    /// dropping any `null` (unset `Option`) entries. Used as fallback defaults
+    /// when building LLM requests.
+    pub fn default_parameters(&self) -> HashMap<String, serde_json::Value> {
+        let params_value = match &self.model_info {
+            ModelInfo::TextGeneration { parameters, .. } => serde_json::to_value(parameters),
+            ModelInfo::ImageGeneration { parameters } => serde_json::to_value(parameters),
+            ModelInfo::Embedding { parameters } => serde_json::to_value(parameters),
+            ModelInfo::Reranker { parameters } => serde_json::to_value(parameters),
+            ModelInfo::Audio { .. } => return HashMap::new(),
+        };
 
-//     /// Builder method for setting tokenizer
-//     pub fn with_tokenizer(mut self, tokenizer: String) -> Self {
-//         self.tokenizer = Some(tokenizer);
-//         self
-//     }
+        let obj = match params_value {
+            Ok(serde_json::Value::Object(map)) => map,
+            _ => return HashMap::new(),
+        };
 
-//     /// Builder method for setting API endpoint
-//     pub fn with_api_endpoint(mut self, endpoint: String) -> Self {
-//         self.api_endpoint = Some(endpoint);
-//         self
-//     }
-
-//     /// Builder method for setting creator
-//     pub fn with_creator(mut self, creator: String) -> Self {
-//         self.metadata.creator = Some(creator);
-//         self
-//     }
-
-//     /// Builder method for setting version
-//     pub fn with_version(mut self, version: String) -> Self {
-//         self.metadata.version = Some(version);
-//         self
-//     }
-
-//     /// Builder method for setting description
-//     pub fn with_description(mut self, description: String) -> Self {
-//         self.metadata.description = Some(description);
-//         self
-//     }
-
-//     // Getters
-//     pub fn name(&self) -> &str {
-//         &self.metadata.name
-//     }
-
-//     pub fn display_name(&self) -> &str {
-//         &self.metadata.display_name
-//     }
-
-//     /// Check if model has a specific capability
-//     pub fn has_capability(&self, capability: ModelCapability) -> bool {
-//         match &self.model_info {
-//             ModelInfo::TextGeneration { capabilities, .. } => capabilities.contains(&capability),
-//             ModelInfo::ImageGeneration { capabilities, .. } => capabilities.contains(&capability),
-//             _ => false,
-//         }
-//     }
-
-//     /// Validate model parameters
-//     pub fn validate(&self) -> Result<(), String> {
-//         // Validate max input size
-//         if self.max_input_size == 0 {
-//             return Err("Max input size cannot be zero".to_string());
-//         }
-
-//         // Validate model-specific parameters
-//         match &self.model_info {
-//             ModelInfo::TextGeneration { parameters, .. } => {
-//                 if let Some(temp) = parameters.temperature {
-//                     if temp < 0.0 || temp > 2.0 {
-//                         return Err("Temperature must be between 0.0 and 2.0".to_string());
-//                     }
-//                 }
-//             }
-//             ModelInfo::ImageGeneration { parameters, .. } => {
-//                 if parameters.width == 0 || parameters.height == 0 {
-//                     return Err("Image dimensions cannot be zero".to_string());
-//                 }
-//             }
-//             _ => {}
-//         }
-
-//         Ok(())
-//     }
-// }
+        obj.into_iter()
+            .filter(|(_, v)| !v.is_null())
+            .collect()
+    }
+}

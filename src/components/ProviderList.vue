@@ -1,20 +1,32 @@
 <script lang="ts" setup>
-import { NButton, NInput, NModal, useMessage, useDialog, useThemeVars } from 'naive-ui'
-import { inject, ref } from 'vue'
+import { NButton, NInput, NModal, NSelect, useMessage, useDialog, useThemeVars } from 'naive-ui'
+import { ref } from 'vue'
 import { Menu, MenuItem } from '@tauri-apps/api/menu'
 import { useProviderStore } from '../stores/provider';
-import { Provider } from '../libs/types'
+import { ApiType, Provider } from '../libs/types'
 
 const message = useMessage()
 const theme = useThemeVars()
 const dialog = useDialog()
-const providerStore = inject('ProviderStore') as ReturnType<typeof useProviderStore>
+const providerStore = useProviderStore()
 const showAddProvider = ref(false)
-const newProvider = ref({
+const newProvider = ref<{
+  name: string
+  display_name: string
+  base_url: string
+  api_type: ApiType
+}>({
   name: '',
   display_name: '',
-  base_url: ''
+  base_url: '',
+  api_type: 'open_ai_compatible'
 })
+
+const apiTypeOptions: { label: string; value: ApiType }[] = [
+  { label: 'OpenAI', value: 'open_ai' },
+  { label: 'DeepSeek', value: 'deep_seek' },
+  { label: 'OpenAI Compatible', value: 'open_ai_compatible' }
+]
 const selectedProvider = ref<string | null>(null)
 
 const handleAddProvider = async () => {
@@ -24,12 +36,18 @@ const handleAddProvider = async () => {
       name: newProvider.value.name,
       display_name: newProvider.value.display_name,
       base_url: newProvider.value.base_url || '',
+      api_type: newProvider.value.api_type,
       models: []
     }
     await providerStore.createProvider(provider)
     message.success('Provider added')
     showAddProvider.value = false
-    newProvider.value = { name: '', display_name: '', base_url: '' }
+    newProvider.value = {
+      name: '',
+      display_name: '',
+      base_url: '',
+      api_type: 'open_ai_compatible'
+    }
   } catch (e) {
     message.error(`Failed to add provider: ${e}`)
   }
@@ -129,6 +147,11 @@ const showContextMenu = async (e: MouseEvent, provider: Provider) => {
           <n-input
             v-model:value="newProvider.base_url"
             placeholder="Base URL (optional)"
+          />
+          <n-select
+            v-model:value="newProvider.api_type"
+            :options="apiTypeOptions"
+            placeholder="API Type"
           />
           <n-button type="primary" @click="handleAddProvider">
             Add Provider

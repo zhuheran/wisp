@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, Manager};
 use uuid::Uuid;
 
-use wisp_llm::{backend_for, StreamCallbacks, StreamRequest, ToolChoice};
+use wisp_llm::{backend_for, resolve_parameters, StreamCallbacks, StreamRequest, ToolChoice};
 use wisp_llm::ToolDefinition as LlmToolDefinition;
 use wisp_configs::character::Character;
 use wisp_configs::provider::Provider;
@@ -386,8 +386,9 @@ async fn run_conversation_rounds_inner<R: tauri::Runtime>(
         };
 
         let enabled_tools = resolve_enabled_mcp_tools(app_handle).await?;
-        let supports_native_tools = provider
-            .get_model(&model)
+        let model_config = provider.get_model(&model);
+        let supports_native_tools = model_config
+            .as_ref()
             .map(|m| match &m.model_info {
                 ModelInfo::TextGeneration { capabilities, .. } => {
                     capabilities.contains(&TextModelCapability::ToolUse)
@@ -503,7 +504,7 @@ async fn run_conversation_rounds_inner<R: tauri::Runtime>(
                 messages: openai_messages,
                 model: model.clone(),
                 provider: provider.clone(),
-                parameters: parameters.clone(),
+                parameters: resolve_parameters(model_config, parameters.as_ref()),
                 callbacks,
                 cancel: cancel.clone(),
                 tools: tool_defs,
@@ -1013,8 +1014,6 @@ mod tests {
                 metadata: ModelMetadata {
                     name: "gpt-4".to_string(),
                     display_name: "GPT-4".to_string(),
-                    creator: None,
-                    version: None,
                     description: None,
                 },
                 model_info: ModelInfo::TextGeneration {
@@ -1022,9 +1021,6 @@ mod tests {
                     capabilities: vec![],
                     multimodal: None,
                 },
-                tokenizer: None,
-                max_input_size: 8192,
-                api_endpoint: None,
             }],
         }
     }

@@ -17,27 +17,25 @@ export function useOpenAI() {
 				throw new Error('Invalid models response format')
 			}
 
-			return response.data.map((model: any) => ({
-				metadata: {
-					name: model.id,
-					display_name: model.id,
-					description: model.description || ''
-				},
-				model_info: {
-					type: 'text_generation',
-					configs: {
-						parameters: {},
-						capabilities: [],
-						multimodal: {
-							text: {
-								context_window: model.context_window || 2048,
-								languages: ['en']
-							}
+		return response.data.map((model: any) => ({
+			metadata: {
+				name: model.id,
+				display_name: model.id,
+				description: model.description || ''
+			},
+			model_info: {
+				type: 'text_generation',
+				configs: {
+					parameters: {},
+					capabilities: [],
+					multimodal: {
+						text: {
+							context_window: model.context_window || 2048,
 						}
 					}
-				},
-				max_input_size: model.context_window || 2048
-			}))
+				}
+			}
+		}))
 		} catch (error) {
 			console.error('[useOpenAI] Error fetching models:', error)
 			throw new Error(`Failed to fetch models: ${error}`)

@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
+use wisp_configs::model::Model;
 use wisp_configs::provider::Provider;
 
 use crate::error::LlmError;
@@ -82,5 +83,30 @@ pub trait LlmBackend: Send + Sync {
 
     fn reasoning_config(&self) -> ReasoningConfig {
         ReasoningConfig::default()
+    }
+}
+
+/// Resolve the effective request parameters by layering runtime parameters
+/// on top of the model's configured defaults. Runtime values take precedence;
+/// model defaults fill in any missing keys. Returns `None` if neither source
+/// provides any parameters.
+pub fn resolve_parameters(
+    model: Option<&Model>,
+    runtime: Option<&HashMap<String, Value>>,
+) -> Option<HashMap<String, Value>> {
+    let mut merged = model
+        .map(|m| m.default_parameters())
+        .unwrap_or_default();
+
+    if let Some(rt) = runtime {
+        for (k, v) in rt {
+            merged.insert(k.clone(), v.clone());
+        }
+    }
+
+    if merged.is_empty() {
+        None
+    } else {
+        Some(merged)
     }
 }
