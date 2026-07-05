@@ -332,8 +332,6 @@ export interface ConversationMessage {
 
 export interface ConversationLoopConfig {
 	max_tool_rounds: number;
-	max_context_tokens: number;
-	image_token_cost: number;
 	context_window_sliding_ratio: number;
 	retry_attempts: number;
 	retry_delay_ms: number;

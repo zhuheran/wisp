@@ -101,10 +101,6 @@ impl Default for PipelineConfig {
 pub struct ConversationLoopConfig {
     #[serde(default = "default_max_tool_rounds")]
     pub max_tool_rounds: u32,
-    #[serde(default = "default_max_context_tokens")]
-    pub max_context_tokens: u32,
-    #[serde(default = "default_image_token_cost")]
-    pub image_token_cost: u32,
     #[serde(default = "default_context_window_sliding_ratio")]
     pub context_window_sliding_ratio: f32,
     #[serde(default = "default_retry_attempts")]
@@ -117,14 +113,6 @@ pub struct ConversationLoopConfig {
 
 fn default_max_tool_rounds() -> u32 {
     10
-}
-
-fn default_max_context_tokens() -> u32 {
-    128000
-}
-
-fn default_image_token_cost() -> u32 {
-    85
 }
 
 fn default_context_window_sliding_ratio() -> f32 {
@@ -148,8 +136,6 @@ impl ConversationLoopConfig {
         let d = Self::default();
         Self {
             max_tool_rounds: if self.max_tool_rounds >= 1 { self.max_tool_rounds } else { d.max_tool_rounds },
-            max_context_tokens: if self.max_context_tokens >= 1000 { self.max_context_tokens } else { d.max_context_tokens },
-            image_token_cost: if self.image_token_cost >= 1 { self.image_token_cost } else { d.image_token_cost },
             context_window_sliding_ratio: if (0.1..=0.95).contains(&self.context_window_sliding_ratio) {
                 self.context_window_sliding_ratio
             } else {
@@ -166,8 +152,6 @@ impl Default for ConversationLoopConfig {
     fn default() -> Self {
         Self {
             max_tool_rounds: default_max_tool_rounds(),
-            max_context_tokens: default_max_context_tokens(),
-            image_token_cost: default_image_token_cost(),
             context_window_sliding_ratio: default_context_window_sliding_ratio(),
             retry_attempts: default_retry_attempts(),
             retry_delay_ms: default_retry_delay_ms(),
@@ -197,8 +181,6 @@ mod tests {
     fn conversation_loop_config_default_has_sensible_values() {
         let config = ConversationLoopConfig::default();
         assert_eq!(config.max_tool_rounds, 10);
-        assert_eq!(config.max_context_tokens, 128000);
-        assert_eq!(config.image_token_cost, 85);
         assert!((config.context_window_sliding_ratio - 0.7).abs() < f32::EPSILON);
         assert_eq!(config.retry_attempts, 2);
         assert_eq!(config.retry_delay_ms, 1000);
@@ -290,8 +272,6 @@ mod tests {
     fn conversation_config_normalize_clamps_bad_values() {
         let bad = ConversationLoopConfig {
             max_tool_rounds: 0,
-            max_context_tokens: 10,
-            image_token_cost: 0,
             context_window_sliding_ratio: 5.0,
             retry_attempts: 100,
             retry_delay_ms: 10,
@@ -300,8 +280,6 @@ mod tests {
         let normalized = bad.normalize();
         let d = ConversationLoopConfig::default();
         assert_eq!(normalized.max_tool_rounds, d.max_tool_rounds);
-        assert_eq!(normalized.max_context_tokens, d.max_context_tokens);
-        assert_eq!(normalized.image_token_cost, d.image_token_cost);
         assert_eq!(normalized.context_window_sliding_ratio, d.context_window_sliding_ratio);
         assert_eq!(normalized.retry_attempts, 10);
         assert_eq!(normalized.retry_delay_ms, d.retry_delay_ms);
@@ -312,8 +290,6 @@ mod tests {
     fn conversation_config_normalize_preserves_good_values() {
         let good = ConversationLoopConfig {
             max_tool_rounds: 5,
-            max_context_tokens: 64000,
-            image_token_cost: 100,
             context_window_sliding_ratio: 0.5,
             retry_attempts: 3,
             retry_delay_ms: 500,
@@ -321,8 +297,6 @@ mod tests {
         };
         let normalized = good.normalize();
         assert_eq!(normalized.max_tool_rounds, 5);
-        assert_eq!(normalized.max_context_tokens, 64000);
-        assert_eq!(normalized.image_token_cost, 100);
         assert_eq!(normalized.context_window_sliding_ratio, 0.5);
         assert_eq!(normalized.retry_attempts, 3);
         assert_eq!(normalized.retry_delay_ms, 500);

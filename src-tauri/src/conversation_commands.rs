@@ -394,15 +394,24 @@ async fn run_conversation_rounds_inner<R: tauri::Runtime>(
                 .map_err(|error| format!("Failed to build message path for conversation '{}' from leaf '{}': {}", conversation_id, current_leaf_id, error))?
         };
 
+        let model_config = provider.get_model(&model);
+        let context_window = model_config
+            .as_ref()
+            .and_then(|m| match &m.model_info {
+                ModelInfo::TextGeneration { multimodal, .. } => {
+                    multimodal.as_ref()?.text.as_ref()?.context_window
+                }
+                _ => None,
+            })
+            .unwrap_or(128000) as usize;
+
         let path = trim_context(
             path,
-            loop_config.max_context_tokens as usize,
+            context_window,
             loop_config.context_window_sliding_ratio,
-            loop_config.image_token_cost,
         );
 
         let enabled_tools = resolve_enabled_mcp_tools(app_handle).await?;
-        let model_config = provider.get_model(&model);
         let supports_native_tools = model_config
             .as_ref()
             .map(|m| match &m.model_info {

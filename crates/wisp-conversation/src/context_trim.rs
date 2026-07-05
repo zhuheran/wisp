@@ -1,6 +1,8 @@
 use wisp_db::types::Message;
 
-pub fn estimate_tokens(messages: &[Message], image_token_cost: u32) -> usize {
+const IMAGE_TOKEN_ESTIMATE: usize = 1000;
+
+pub fn estimate_tokens(messages: &[Message]) -> usize {
     let mut total: usize = 0;
     for msg in messages {
         let text_len = msg.text.chars().count();
@@ -18,7 +20,7 @@ pub fn estimate_tokens(messages: &[Message], image_token_cost: u32) -> usize {
         total += char_total / 4;
 
         if let Some(images) = &msg.images {
-            total += images.len() * image_token_cost as usize;
+            total += images.len() * IMAGE_TOKEN_ESTIMATE;
         }
     }
     total
@@ -28,13 +30,12 @@ pub fn trim_context(
     messages: Vec<Message>,
     max_tokens: usize,
     sliding_ratio: f32,
-    image_token_cost: u32,
 ) -> Vec<Message> {
     if messages.is_empty() {
         return messages;
     }
 
-    let total = estimate_tokens(&messages, image_token_cost);
+    let total = estimate_tokens(&messages);
     if total <= max_tokens {
         return messages;
     }
@@ -51,7 +52,6 @@ pub fn trim_context(
 
     let middle = &messages[1..n.saturating_sub(1)];
 
-    // Accumulate recent messages (from end of middle) until target is reached.
     let mut recent: Vec<Message> = Vec::new();
     for msg in middle.iter().rev() {
         recent.push(msg.clone());
@@ -59,7 +59,7 @@ pub fn trim_context(
         probe.push(first.clone());
         probe.extend(recent.iter().rev().cloned());
         probe.push(last.clone());
-        let current_tokens = estimate_tokens(&probe, image_token_cost);
+        let current_tokens = estimate_tokens(&probe);
         if current_tokens >= target {
             break;
         }
@@ -127,13 +127,13 @@ mod tests {
 
     #[test]
     fn estimate_tokens_empty_messages_returns_zero() {
-        assert_eq!(estimate_tokens(&[], 85), 0);
+        assert_eq!(estimate_tokens(&[]), 0);
     }
 
     #[test]
     fn estimate_tokens_text_message_uses_chars_div_4() {
         let msg = text_message("hello world!"); // 12 chars
-        let tokens = estimate_tokens(&[msg], 85);
+        let tokens = estimate_tokens(&[msg]);
         assert_eq!(tokens, 3); // 12 / 4 = 3
     }
 
@@ -141,29 +141,29 @@ mod tests {
     fn estimate_tokens_includes_reasoning() {
         let mut msg = text_message("hi"); // 2 chars
         msg.reasoning = Some("thinking deeply".to_string()); // 15 chars
-        let tokens = estimate_tokens(&[msg], 85);
-        assert_eq!(tokens, 4); // (2+15)/4 = 4 (rounded up)
+        let tokens = estimate_tokens(&[msg]);
+        assert_eq!(tokens, 4); // (2+15)/4 = 4
     }
 
     #[test]
-    fn estimate_tokens_counts_images_at_configured_cost() {
+    fn estimate_tokens_counts_images_at_fixed_estimate() {
         let msg = image_message(3);
-        let tokens = estimate_tokens(&[msg], 85);
-        assert_eq!(tokens, 3 * 85);
+        let tokens = estimate_tokens(&[msg]);
+        assert_eq!(tokens, 3 * IMAGE_TOKEN_ESTIMATE);
     }
 
     #[test]
     fn estimate_tokens_includes_tool_calls_json() {
         let mut msg = text_message("");
         msg.tool_calls = Some(r#"[{"name":"tool","arguments":{}}]"#.to_string()); // 33 chars
-        let tokens = estimate_tokens(&[msg], 85);
+        let tokens = estimate_tokens(&[msg]);
         assert!(tokens >= 8); // ~33/4 = 8
     }
 
     #[test]
     fn trim_context_under_limit_returns_unchanged() {
         let msgs = vec![text_message("short"), text_message("also short")];
-        let result = trim_context(msgs.clone(), 10000, 0.7, 85);
+        let result = trim_context(msgs.clone(), 10000, 0.7);
         assert_eq!(result.len(), msgs.len());
     }
 
@@ -176,23 +176,23 @@ mod tests {
                 m
             })
             .collect();
-        let result = trim_context(msgs, 500, 0.7, 85);
+        let result = trim_context(msgs, 500, 0.7);
         assert!(result.len() < 20);
-        assert_eq!(result.first().unwrap().id, "m0"); // first always kept
-        assert_eq!(result.last().unwrap().id, "m19"); // last always kept
+        assert_eq!(result.first().unwrap().id, "m0");
+        assert_eq!(result.last().unwrap().id, "m19");
     }
 
     #[test]
     fn trim_context_never_returns_empty_for_nonempty_input() {
         let msgs = vec![text_message(&"x".repeat(10000))];
-        let result = trim_context(msgs, 100, 0.7, 85);
+        let result = trim_context(msgs, 100, 0.7);
         assert!(!result.is_empty());
     }
 
     #[test]
     fn trim_context_single_message_always_kept() {
         let msgs = vec![text_message(&"x".repeat(100000))];
-        let result = trim_context(msgs, 100, 0.7, 85);
+        let result = trim_context(msgs, 100, 0.7);
         assert_eq!(result.len(), 1);
     }
 }

@@ -17,8 +17,6 @@ const settingsStore = useSettingsStore()
 
 const formValue = ref<ConversationLoopConfig>({
   max_tool_rounds: 10,
-  max_context_tokens: 128000,
-  image_token_cost: 85,
   context_window_sliding_ratio: 0.7,
   retry_attempts: 2,
   retry_delay_ms: 1000,
@@ -48,23 +46,6 @@ const handleSave = async () => {
           v-model:value="formValue.max_tool_rounds"
           :min="1"
           :max="50"
-          style="width: 200px"
-        />
-      </n-form-item>
-
-      <n-form-item label="最大上下文 Token">
-        <n-input-number
-          v-model:value="formValue.max_context_tokens"
-          :min="1000"
-          :step="1000"
-          style="width: 200px"
-        />
-      </n-form-item>
-
-      <n-form-item label="图片 Token 成本">
-        <n-input-number
-          v-model:value="formValue.image_token_cost"
-          :min="1"
           style="width: 200px"
         />
       </n-form-item>
