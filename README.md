@@ -1,31 +1,82 @@
-# A un-official full version of Wisp.
+# Wisp
 
-An experimental LLM chatting interface which design for MCP agent.
+An unofficial, expanded fork of [Wisp](#the-original-wisp) — an experimental LLM chat interface rebuilt around MCP agents, multi-pal orchestration, native tool calling, and a pluggable backend.
 
-Full version of Wisp. With plenty of BUGs :(
+> Full version of Wisp. With plenty of BUGs :(
 
-## Features
-- all features of Wisp
-- support for MCP (stdio + http/sse transports)
-- pipeline support for long Base 64 picture or other big things
-- context management (token-based sliding window, ~120k threshold, ~84k target)
-- multi-tool call rendering in conversation (nested json safe, error state aware)
-- tool call round limit to prevent infinite recursion (max 10 rounds)
-- windows acrylic / macos vibrancy native window effect
+## What this fork adds
 
-## Recent fixes
-- mcp http: start sse listener before `initialize` so the response can be received
-- mcp http: sse buffer drain instead of clone-per-line (was o(n^2))
-- mcp stdio (windows): use `raw_arg` for the command path so spaces in paths no longer break spawning
-- mcp stdio: clean pending map on write failure / timeout / channel close (was leaking tx)
-- db: propagate `update_parent` errors instead of silently dropping them
-- db: log message-list errors when deleting a conversation instead of swallowing them
-- db: use `unwrap_or_default` for system time (no panic on clock rollback)
-- api: accept assistant messages whose `content` is null (openai allows this with tool_calls)
-- commands: surface `update_reasoning` errors instead of `let _ =`
-- mcp commands: replace `.expect()` on app data dir with proper `Result` return
+This fork picks up where the original `mcp` integration landed and grows Wisp into a workspace-structured agent runtime. The work is split across standalone Rust crates under `crates/` and a Vue/Tauri frontend.
 
-# The old version of readme
+### MCP (Model Context Protocol)
+- First-class MCP support with **stdio** and **http/sse** transports
+- MCP handling moved entirely into Rust (`wisp-mcp`) behind a custom tool-call protocol
+- Per-server **env vars** and **working directory** for `stdio` clients
+- Reactive tool loading on server connect (no more one-shot poll racing the backend)
+- Cached + eager LLM display-name enrichment shown in the tools table
+- Robustness fixes: SSE listener started before `initialize`, SSE buffer drain (was O(n²)), `raw_arg` on Windows so spaces in paths don't break spawning, pending-map cleanup on write failure/timeout
+
+### Multi-Pal orchestration
+- **Orchestrator + director** modules route a single message to one or more "pals"
+- `@`-mention autocomplete (Naive UI `NMention`) with `target_pal_ids` tracking
+- Pal identity + source badge on message bubbles, `ChatPalBar` of active members
+- Per-conversation **default responder** and `role_bio` field
+- Multi-pal streaming: draft messages inserted up front, chunks streamed via events
+
+### LLM backend rewrite
+- New `wisp-llm` crate with a `LlmBackend` trait + backend factory
+- `OpenAiCompatBackend` on raw `reqwest` + SSE (replaces `async-openai`)
+- Per-backend **reasoning policy** (`Never` / `Always` / `ToolTurnsOnly`):
+  - DeepSeek interleaved thinking (`thinking:{type:enabled}` injected into body)
+  - OpenAiCompat `reasoning_details` pass-back for vLLM / MiniMax / Kimi
+- Native tool calling with **delta merging** + automatic **text-protocol fallback** based on each model's `ToolUse` capability
+- `tool_call_id` on messages + DB migration, correct OpenAI `tool_calls` reconstruction
+- SSE hardening: trailing-newline stripping, explicit `:` comment-line handling, `[DONE]` detection
+
+### Streaming control
+- `stream_id` for concurrent-stream disambiguation
+- `AbortRegistry` + `conversation_abort` command + frontend **Stop** button
+- `conversation_stream_reset` emitted before each retry so the UI clears stale chunks
+
+### Software / native tools
+- New `wisp-software-tools` crate: `NativeTool` trait + `SoftwareToolRegistry`
+- `js_exec` — sandboxed **QuickJS** (`rquickjs`) execution with try/catch error capture
+- `config_read` / `config_write` for providers, characters, default responder, chore LLM, pipeline & conversation config
+- Tool failures are surfaced to the LLM as error results instead of aborting the loop
+- Server-side tool-result markdown formatting (`formatToolCallMarkdown`)
+
+### Conversation loop & context
+- `ConversationLoopConfig` wired into the loop: `max_tool_rounds` (clamped ≥ 1), sliding-window `sliding_ratio`, retry attempts + delay
+- `context_trim` module: token estimation + sliding-window trimming driven by the model's intrinsic `context_window`
+- `retry_with_backoff` utility + stream reset on retry
+- Pipeline config for large payloads (e.g. base64 images)
+
+### Config & settings
+- `wisp-configs` with `ConfigManager` (Arc-shared with native tools)
+- `PipelineConfig` + `ConversationLoopConfig` re-exported centrally
+- Settings **normalized on load** (validate / clamp / default each field), defaults persisted on first load
+- Debounced **autosave** with broadcast-aware dedup to prevent feedback loops
+- Dedicated Settings view + Pinia store; chore-LLM selector for background display-name generation
+
+### Persistence
+- Message **thread tree** persisted in DB; `thread_decisions` (JSON) keeps branch selection across reloads
+- `tool_call_id` column added via migration
+
+### Workspace architecture
+Inline `src-tauri/src/` modules migrated to crates:
+`wisp-common`, `wisp-db`, `wisp-configs`, `wisp-keyring`, `wisp-mcp`, `wisp-llm`, `wisp-conversation`, `wisp-tool-registry`, `wisp-software-tools`.
+
+### Platform
+- Windows acrylic / macOS vibrancy native window effects
+
+## Status
+
+Work in progress. Expect rough edges — see the commit history for the full list of fixes.
+
+---
+
+# The original Wisp
+
 ## Wisp
 
 An experimental LLM chatting interface designed to be fast, minimal yet powerful.
