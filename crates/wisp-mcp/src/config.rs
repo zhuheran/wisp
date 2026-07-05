@@ -92,30 +92,4 @@ impl McpConfigManager {
         let config = self.config.lock().unwrap();
         config.servers.clone()
     }
-
-    // Pipeline config
-    pub fn get_pipeline_config(&self) -> PipelineConfig {
-        let config = self.config.lock().unwrap();
-        config.pipeline_config.clone().unwrap_or_default()
-    }
-
-    pub fn update_pipeline_config(&self, pipeline_config: PipelineConfig) -> Result<(), String> {
-        let mut config = self.config.lock().map_err(|e| e.to_string())?;
-        config.pipeline_config = Some(pipeline_config);
-        drop(config);
-        self.save()
-    }
-
-    // Conversation config
-    pub fn get_conversation_config(&self) -> ConversationLoopConfig {
-        let config = self.config.lock().unwrap();
-        config.conversation_config.clone().unwrap_or_default()
-    }
-
-    pub fn update_conversation_config(&self, conversation_config: ConversationLoopConfig) -> Result<(), String> {
-        let mut config = self.config.lock().map_err(|e| e.to_string())?;
-        config.conversation_config = Some(conversation_config);
-        drop(config);
-        self.save()
-    }
 }

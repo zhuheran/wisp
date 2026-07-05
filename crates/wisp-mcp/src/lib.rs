@@ -15,3 +15,6 @@ pub use wisp_tool_registry::{registered_name, ToolAnnotations, ToolDefinition, T
 
 // Re-export from wisp-common for backward compatibility
 pub use wisp_common::{ToolContent, ToolError, ToolResult};
+
+// Re-export from wisp-configs for backward compatibility
+pub use wisp_configs::{PipelineConfig, ConversationLoopConfig};
