@@ -3,8 +3,6 @@ import {
   NButton,
   NModal,
   NCard,
-  NDrawer,
-  NDrawerContent,
   useMessage,
   useDialog,
   useThemeVars,
@@ -12,8 +10,6 @@ import {
 import { ref, computed } from 'vue'
 import { useMcpStore } from '../stores/mcp'
 import type { ServerConfig } from '../libs/types'
-import McpPipelineConfig from './McpPipelineConfig.vue'
-import McpConversationConfig from './McpConversationConfig.vue'
 import McpServerConfig from './McpServerConfig.vue'
 
 const props = defineProps<{
@@ -30,7 +26,6 @@ const dialog = useDialog()
 const mcpStore = useMcpStore()
 
 const showAddServer = ref(false)
-const showConfigDrawer = ref<'pipeline' | 'conversation' | null>(null)
 
 const selectedServerId = computed({
   get: () => props.selected,
@@ -136,20 +131,6 @@ const handleDeleteServer = async (server: ServerConfig) => {
         >
           Add MCP Server
         </n-button>
-        <n-button
-          dashed
-          style="width: 100%"
-          @click="showConfigDrawer = 'pipeline'"
-        >
-          Pipeline Config
-        </n-button>
-        <n-button
-          dashed
-          style="width: 100%"
-          @click="showConfigDrawer = 'conversation'"
-        >
-          Conversation Config
-        </n-button>
       </div>
     </div>
 
@@ -162,19 +143,6 @@ const handleDeleteServer = async (server: ServerConfig) => {
         />
       </n-card>
     </n-modal>
-
-    <n-drawer
-      :show="showConfigDrawer !== null"
-      :width="520"
-      @update:show="(val) => { if (!val) showConfigDrawer = null }"
-    >
-      <n-drawer-content
-        :title="showConfigDrawer === 'pipeline' ? 'Pipeline Config' : 'Conversation Config'"
-      >
-        <McpPipelineConfig v-if="showConfigDrawer === 'pipeline'" />
-        <McpConversationConfig v-else-if="showConfigDrawer === 'conversation'" />
-      </n-drawer-content>
-    </n-drawer>
   </div>
 </template>
 

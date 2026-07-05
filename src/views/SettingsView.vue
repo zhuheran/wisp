@@ -1,10 +1,18 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onMounted } from 'vue'
 import { NCard, NForm, NFormItem, NSelect, NButton, NSpace, useMessage } from 'naive-ui'
 import { useChoreLlm } from '../composables/useChoreLlm'
+import { useSettingsStore } from '../stores/settings'
+import PipelineConfigForm from '../components/PipelineConfigForm.vue'
+import ConversationConfigForm from '../components/ConversationConfigForm.vue'
 
 const message = useMessage()
 const { choreLlm, providerOptions, modelOptions, save, clear } = useChoreLlm()
+const settingsStore = useSettingsStore()
+
+onMounted(() => {
+  settingsStore.init()
+})
 
 const selectedProvider = computed<string | null>({
   get: () => choreLlm.value?.provider ?? null,
@@ -73,6 +81,20 @@ const handleClear = async () => {
           <n-button type="primary" :disabled="!selectedModel" @click="handleSave">Save</n-button>
         </n-space>
       </n-form>
+    </n-card>
+
+    <n-card title="Pipeline Config" size="small" style="margin-top: 16px">
+      <template #header-extra>
+        <span class="hint">Media processing for tool results</span>
+      </template>
+      <PipelineConfigForm />
+    </n-card>
+
+    <n-card title="Conversation Config" size="small" style="margin-top: 16px">
+      <template #header-extra>
+        <span class="hint">Conversation engine loop parameters</span>
+      </template>
+      <ConversationConfigForm />
     </n-card>
   </div>
 </template>
