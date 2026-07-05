@@ -67,12 +67,28 @@ impl ConfigManager {
         let config_path = config_dir.join("configs.toml");
         let toml_content = fs::read_to_string(&config_path).unwrap_or_default();
 
-        let configs = toml::from_str::<Config>(&toml_content).unwrap_or_default();
+        let mut configs = toml::from_str::<Config>(&toml_content).unwrap_or_default();
 
-        Ok(Self {
+        let mut needs_save = false;
+        if configs.pipeline_config.is_none() {
+            configs.pipeline_config = Some(crate::settings::PipelineConfig::default());
+            needs_save = true;
+        }
+        if configs.conversation_config.is_none() {
+            configs.conversation_config = Some(crate::settings::ConversationLoopConfig::default());
+            needs_save = true;
+        }
+
+        let manager = Self {
             config_path,
             configs: Mutex::new(configs),
-        })
+        };
+
+        if needs_save {
+            let _ = manager.save();
+        }
+
+        Ok(manager)
     }
 
     /// Add a new provider to the config. If the
