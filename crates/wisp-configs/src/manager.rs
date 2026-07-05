@@ -70,12 +70,25 @@ impl ConfigManager {
         let mut configs = toml::from_str::<Config>(&toml_content).unwrap_or_default();
 
         let mut needs_save = false;
-        if configs.pipeline_config.is_none() {
-            configs.pipeline_config = Some(crate::settings::PipelineConfig::default());
-            needs_save = true;
-        }
-        if configs.conversation_config.is_none() {
-            configs.conversation_config = Some(crate::settings::ConversationLoopConfig::default());
+
+        let pipeline = configs
+            .pipeline_config
+            .take()
+            .unwrap_or_default()
+            .normalize();
+        configs.pipeline_config = Some(pipeline);
+
+        let conversation = configs
+            .conversation_config
+            .take()
+            .unwrap_or_default()
+            .normalize();
+        configs.conversation_config = Some(conversation);
+
+        if toml_content.trim().is_empty()
+            || !toml_content.contains("[pipeline_config]")
+            || !toml_content.contains("[conversation_config]")
+        {
             needs_save = true;
         }
 
