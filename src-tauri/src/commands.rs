@@ -1,16 +1,11 @@
 use std::collections::HashMap;
 use std::sync::Mutex;
 
-use crate::{
-    cache::DiagramCacheEntry,
-    inet::HttpClient,
-    types::AppData,
-};
-use wisp_configs::{model, character, provider::{self, Provider}};
-use wisp_db::types::{Conversation, Message, ThreadTreeItem};
-use wisp_common::compute_content_hash;
-use serde_json::Value;
+use crate::{cache::DiagramCacheEntry, inet::HttpClient, types::AppData};
 use tauri::{AppHandle, Manager};
+use wisp_common::compute_content_hash;
+use wisp_configs::{character, model, provider};
+use wisp_db::types::{Conversation, Message, ThreadTreeItem};
 
 use wisp_common::get_uuid_v4;
 
@@ -70,21 +65,30 @@ pub async fn post_url(
 pub fn set_api_key(app_handle: AppHandle, name: String, key: String) -> Result<(), String> {
     let state = app_handle.state::<Mutex<AppData>>();
     let state = state.lock().unwrap();
-    state.key_manager.set_api_key(&name, &key).map_err(|x| x.to_string())
+    state
+        .key_manager
+        .set_api_key(&name, &key)
+        .map_err(|x| x.to_string())
 }
 
 #[tauri::command]
 pub fn get_api_key(app_handle: AppHandle, name: String) -> Result<String, String> {
     let state = app_handle.state::<Mutex<AppData>>();
     let state = state.lock().unwrap();
-    state.key_manager.get_api_key(&name).map_err(|x| x.to_string())
+    state
+        .key_manager
+        .get_api_key(&name)
+        .map_err(|x| x.to_string())
 }
 
 #[tauri::command]
 pub fn delete_api_key(app_handle: AppHandle, name: String) -> Result<(), String> {
     let state = app_handle.state::<Mutex<AppData>>();
     let state = state.lock().unwrap();
-    state.key_manager.delete_api_key(&name).map_err(|x| x.to_string())
+    state
+        .key_manager
+        .delete_api_key(&name)
+        .map_err(|x| x.to_string())
 }
 
 #[tauri::command]
@@ -237,8 +241,6 @@ pub async fn configs_delete_model(
         Err("Provider not found".to_string())
     }
 }
-
-
 
 // Chat operations
 #[tauri::command]
@@ -515,10 +517,7 @@ pub async fn configs_update_character(
 }
 
 #[tauri::command]
-pub async fn configs_delete_character(
-    app_handle: AppHandle,
-    id: String,
-) -> Result<(), String> {
+pub async fn configs_delete_character(app_handle: AppHandle, id: String) -> Result<(), String> {
     let state = app_handle.state::<Mutex<AppData>>();
     let state = state.lock().unwrap();
     state

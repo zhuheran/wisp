@@ -1,7 +1,7 @@
 use crate::model::Model;
-use wisp_keyring::{KeyManager, KeyManagerError};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use wisp_keyring::{KeyManager, KeyManagerError};
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 #[serde(rename_all = "snake_case")]
@@ -52,9 +52,7 @@ impl Provider {
             .iter()
             .any(|m| m.metadata.name == model.metadata.name)
         {
-            return Err(ProviderError::ModelAlreadyExistError(
-                model.metadata.name.clone(),
-            ));
+            return Err(ProviderError::ModelAlreadyExistError(model.metadata.name.clone()));
         }
         self.models.push(model);
         Ok(())

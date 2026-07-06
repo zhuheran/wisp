@@ -5,7 +5,9 @@ use futures::StreamExt;
 use serde_json::{json, Value};
 use wisp_keyring::KeyManager;
 
-use crate::backend::{LlmBackend, ReasoningConfig, ReasoningPassback, StreamCallbacks, StreamOutcome, StreamRequest, ToolChoice};
+use crate::backend::{
+    LlmBackend, ReasoningConfig, ReasoningPassback, StreamOutcome, StreamRequest, ToolChoice,
+};
 use crate::error::LlmError;
 use crate::sse;
 
@@ -14,10 +16,7 @@ pub struct OpenAiCompatBackend;
 #[async_trait]
 impl LlmBackend for OpenAiCompatBackend {
     fn reasoning_config(&self) -> ReasoningConfig {
-        ReasoningConfig {
-            field_name: "reasoning_content",
-            policy: ReasoningPassback::Always,
-        }
+        ReasoningConfig { field_name: "reasoning_content", policy: ReasoningPassback::Always }
     }
 
     async fn stream(&self, req: StreamRequest) -> Result<StreamOutcome, LlmError> {
@@ -61,7 +60,7 @@ pub(crate) fn build_chat_body(req: &StreamRequest) -> Value {
             ToolChoice::Required => json!("required"),
             ToolChoice::Specific(name) => {
                 json!({"type": "function", "function": {"name": name}})
-            }
+            },
         };
     }
 
@@ -126,7 +125,7 @@ pub(crate) async fn stream_with_body(
                 }
                 buf.push(b'\n');
                 buf.len() - 1
-            }
+            },
         };
         let line = {
             let bytes = buf.drain(..=nl).collect::<Vec<u8>>();
@@ -153,15 +152,12 @@ pub(crate) async fn stream_with_body(
                 if let Some(choices) = parsed.get("choices").and_then(|c| c.as_array()) {
                     for choice in choices {
                         if let Some(delta) = choice.get("delta") {
-                            if let Some(content) =
-                                delta.get("content").and_then(|c| c.as_str())
-                            {
+                            if let Some(content) = delta.get("content").and_then(|c| c.as_str()) {
                                 outcome.text.push_str(content);
                                 (req.callbacks.on_content)(content);
                             }
-                            if let Some(reasoning) = delta
-                                .get("reasoning_content")
-                                .and_then(|c| c.as_str())
+                            if let Some(reasoning) =
+                                delta.get("reasoning_content").and_then(|c| c.as_str())
                             {
                                 outcome.reasoning.push_str(reasoning);
                                 (req.callbacks.on_reasoning)(reasoning);
@@ -170,8 +166,7 @@ pub(crate) async fn stream_with_body(
                                 delta.get("reasoning_details").and_then(|c| c.as_array())
                             {
                                 for detail in reasoning_details {
-                                    if let Some(text) =
-                                        detail.get("text").and_then(|t| t.as_str())
+                                    if let Some(text) = detail.get("text").and_then(|t| t.as_str())
                                     {
                                         outcome.reasoning.push_str(text);
                                         (req.callbacks.on_reasoning)(text);

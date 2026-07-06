@@ -26,11 +26,7 @@ pub fn estimate_tokens(messages: &[Message]) -> usize {
     total
 }
 
-pub fn trim_context(
-    messages: Vec<Message>,
-    max_tokens: usize,
-    sliding_ratio: f32,
-) -> Vec<Message> {
+pub fn trim_context(messages: Vec<Message>, max_tokens: usize, sliding_ratio: f32) -> Vec<Message> {
     if messages.is_empty() {
         return messages;
     }

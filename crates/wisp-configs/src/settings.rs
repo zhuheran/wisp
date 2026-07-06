@@ -69,8 +69,16 @@ impl PipelineConfig {
                 d.max_payload_bytes
             },
             jpeg_quality: self.jpeg_quality.clamp(1, 100),
-            max_width: if self.max_width >= 64 { self.max_width } else { d.max_width },
-            max_height: if self.max_height >= 64 { self.max_height } else { d.max_height },
+            max_width: if self.max_width >= 64 {
+                self.max_width
+            } else {
+                d.max_width
+            },
+            max_height: if self.max_height >= 64 {
+                self.max_height
+            } else {
+                d.max_height
+            },
             mime_whitelist: if self.mime_whitelist.is_empty() {
                 d.mime_whitelist
             } else {
@@ -125,19 +133,28 @@ fn default_retry_delay_ms() -> u64 {
     1000
 }
 
-
 impl ConversationLoopConfig {
     pub fn normalize(self) -> Self {
         let d = Self::default();
         Self {
-            max_tool_rounds: if self.max_tool_rounds >= 1 { self.max_tool_rounds } else { d.max_tool_rounds },
-            context_window_sliding_ratio: if (0.1..=0.95).contains(&self.context_window_sliding_ratio) {
+            max_tool_rounds: if self.max_tool_rounds >= 1 {
+                self.max_tool_rounds
+            } else {
+                d.max_tool_rounds
+            },
+            context_window_sliding_ratio: if (0.1..=0.95)
+                .contains(&self.context_window_sliding_ratio)
+            {
                 self.context_window_sliding_ratio
             } else {
                 d.context_window_sliding_ratio
             },
             retry_attempts: self.retry_attempts.min(10),
-            retry_delay_ms: if self.retry_delay_ms >= 100 { self.retry_delay_ms } else { d.retry_delay_ms },
+            retry_delay_ms: if self.retry_delay_ms >= 100 {
+                self.retry_delay_ms
+            } else {
+                d.retry_delay_ms
+            },
         }
     }
 }
@@ -200,16 +217,16 @@ mod tests {
         let config = PipelineConfig::default();
         let toml_str = toml::to_string(&config).unwrap();
         let deserialized: PipelineConfig = toml::from_str(&toml_str).unwrap();
-        assert_eq!(deserialized.compression_threshold_bytes, config.compression_threshold_bytes);
+        assert_eq!(
+            deserialized.compression_threshold_bytes,
+            config.compression_threshold_bytes
+        );
         assert_eq!(deserialized.mime_whitelist, config.mime_whitelist);
     }
 
     #[test]
     fn conversation_config_toml_roundtrip() {
-        let config = ConversationLoopConfig {
-            max_tool_rounds: 15,
-            ..Default::default()
-        };
+        let config = ConversationLoopConfig { max_tool_rounds: 15, ..Default::default() };
         let toml_str = toml::to_string(&config).unwrap();
         let deserialized: ConversationLoopConfig = toml::from_str(&toml_str).unwrap();
         assert_eq!(deserialized.max_tool_rounds, 15);
@@ -271,7 +288,10 @@ mod tests {
         let normalized = bad.normalize();
         let d = ConversationLoopConfig::default();
         assert_eq!(normalized.max_tool_rounds, d.max_tool_rounds);
-        assert_eq!(normalized.context_window_sliding_ratio, d.context_window_sliding_ratio);
+        assert_eq!(
+            normalized.context_window_sliding_ratio,
+            d.context_window_sliding_ratio
+        );
         assert_eq!(normalized.retry_attempts, 10);
         assert_eq!(normalized.retry_delay_ms, d.retry_delay_ms);
     }

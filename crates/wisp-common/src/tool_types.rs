@@ -62,10 +62,7 @@ impl ToolResult {
             .map(|arr| {
                 arr.iter()
                     .map(|item| {
-                        let type_str = item
-                            .get("type")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("text");
+                        let type_str = item.get("type").and_then(|v| v.as_str()).unwrap_or("text");
                         match type_str {
                             "text" => ToolContent::Text {
                                 text: item
@@ -98,14 +95,8 @@ impl ToolResult {
                                     .or_else(|| item.get("mime_type"))
                                     .and_then(|v| v.as_str())
                                     .map(String::from),
-                                text: item
-                                    .get("text")
-                                    .and_then(|v| v.as_str())
-                                    .map(String::from),
-                                blob: item
-                                    .get("blob")
-                                    .and_then(|v| v.as_str())
-                                    .map(String::from),
+                                text: item.get("text").and_then(|v| v.as_str()).map(String::from),
+                                blob: item.get("blob").and_then(|v| v.as_str()).map(String::from),
                             },
                             other => ToolContent::Text {
                                 text: format!("[Unsupported content type: {other}]"),
@@ -124,7 +115,6 @@ impl ToolResult {
 mod tests {
     use super::*;
 
-
     #[test]
     fn test_from_mcp_response_text_content() {
         let raw = serde_json::json!({
@@ -134,10 +124,7 @@ mod tests {
         let result = ToolResult::from_mcp_response(raw);
         assert!(!result.is_error);
         assert_eq!(result.content.len(), 1);
-        assert_eq!(
-            result.content[0],
-            ToolContent::Text { text: "hello".to_string() }
-        );
+        assert_eq!(result.content[0], ToolContent::Text { text: "hello".to_string() });
     }
 
     #[test]
@@ -149,10 +136,7 @@ mod tests {
         let result = ToolResult::from_mcp_response(raw);
         assert_eq!(
             result.content[0],
-            ToolContent::Image {
-                data: "abc123".to_string(),
-                mime_type: "image/png".to_string()
-            }
+            ToolContent::Image { data: "abc123".to_string(), mime_type: "image/png".to_string() }
         );
     }
 

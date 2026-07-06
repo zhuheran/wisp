@@ -5,11 +5,7 @@ pub enum LlmError {
     #[error("SSE parse error: {0}")]
     Sse(String),
     #[error("{}", api_error_display(*status, code.as_deref(), message))]
-    Api {
-        status: u16,
-        code: Option<String>,
-        message: String,
-    },
+    Api { status: u16, code: Option<String>, message: String },
     #[error("Stream was cancelled")]
     Cancelled,
     #[error("Serialization error: {0}")]
@@ -51,11 +47,7 @@ impl LlmError {
                 };
             }
         }
-        LlmError::Api {
-            status,
-            code: None,
-            message: body,
-        }
+        LlmError::Api { status, code: None, message: body }
     }
 }
 
@@ -78,7 +70,7 @@ mod tests {
                 assert_eq!(status, 402);
                 assert_eq!(code.as_deref(), Some("invalid_request_error"));
                 assert_eq!(message, "InsufficientBalance");
-            }
+            },
             other => panic!("expected Api, got {other:?}"),
         }
         assert_eq!(
@@ -89,14 +81,15 @@ mod tests {
 
     #[test]
     fn falls_back_to_type_when_code_absent() {
-        let body = r#"{"error":{"message":"rate limited","type":"rate_limit_exceeded"}}"#.to_string();
+        let body =
+            r#"{"error":{"message":"rate limited","type":"rate_limit_exceeded"}}"#.to_string();
         let err = LlmError::api_from_response(429, body);
         match err {
             LlmError::Api { status, ref code, ref message } => {
                 assert_eq!(status, 429);
                 assert_eq!(code.as_deref(), Some("rate_limit_exceeded"));
                 assert_eq!(message, "rate limited");
-            }
+            },
             other => panic!("expected Api, got {other:?}"),
         }
     }
@@ -116,7 +109,7 @@ mod tests {
                 assert_eq!(status, 502);
                 assert!(code.is_none());
                 assert_eq!(message, "Bad Gateway");
-            }
+            },
             other => panic!("expected Api, got {other:?}"),
         }
         assert_eq!(err.to_string(), "API error 502: Bad Gateway");
@@ -131,7 +124,7 @@ mod tests {
                 assert_eq!(status, 404);
                 assert!(code.is_none());
                 assert_eq!(message, &body);
-            }
+            },
             other => panic!("expected Api, got {other:?}"),
         }
     }

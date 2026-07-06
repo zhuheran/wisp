@@ -66,16 +66,10 @@ pub fn parse_director_response(response: &str) -> DirectorDecision {
         if let Some(end) = trimmed[start..].rfind('}') {
             &trimmed[start..=start + end]
         } else {
-            return DirectorDecision {
-                should_invoke: false,
-                target_pal_id: None,
-            };
+            return DirectorDecision { should_invoke: false, target_pal_id: None };
         }
     } else {
-        return DirectorDecision {
-            should_invoke: false,
-            target_pal_id: None,
-        };
+        return DirectorDecision { should_invoke: false, target_pal_id: None };
     };
 
     match serde_json::from_str::<serde_json::Value>(json_str) {
@@ -83,21 +77,12 @@ pub fn parse_director_response(response: &str) -> DirectorDecision {
             let action = val.get("action").and_then(|a| a.as_str()).unwrap_or("none");
             if action == "invoke" {
                 let pal_id = val.get("pal_id").and_then(|p| p.as_str()).map(String::from);
-                DirectorDecision {
-                    should_invoke: true,
-                    target_pal_id: pal_id,
-                }
+                DirectorDecision { should_invoke: true, target_pal_id: pal_id }
             } else {
-                DirectorDecision {
-                    should_invoke: false,
-                    target_pal_id: None,
-                }
+                DirectorDecision { should_invoke: false, target_pal_id: None }
             }
-        }
-        Err(_) => DirectorDecision {
-            should_invoke: false,
-            target_pal_id: None,
         },
+        Err(_) => DirectorDecision { should_invoke: false, target_pal_id: None },
     }
 }
 
@@ -215,7 +200,8 @@ mod tests {
 
     #[test]
     fn parse_director_response_with_extra_text_before_json() {
-        let response = "Let me think...\n{\"action\": \"invoke\", \"pal_id\": \"c2\"}\nThat's my decision.";
+        let response =
+            "Let me think...\n{\"action\": \"invoke\", \"pal_id\": \"c2\"}\nThat's my decision.";
 
         let decision = parse_director_response(response);
 

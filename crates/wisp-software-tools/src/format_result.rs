@@ -30,9 +30,12 @@ pub(crate) fn collect_result_pieces(result: &ToolResult) -> Vec<String> {
             ToolContent::Text { text } if !text.is_empty() => pieces.push(text.clone()),
             ToolContent::Image { .. } => pieces.push("_[image]_".to_string()),
             ToolContent::Resource { uri, text, .. } => {
-                pieces.push(text.clone().unwrap_or_else(|| format!("_[resource: {uri}]_")));
-            }
-            _ => {}
+                pieces.push(
+                    text.clone()
+                        .unwrap_or_else(|| format!("_[resource: {uri}]_")),
+                );
+            },
+            _ => {},
         }
     }
     pieces
@@ -49,7 +52,7 @@ pub fn render_result_markdown_section(result: Option<&ToolResult>) -> Vec<String
         None => {
             lines.push("> No result".to_string());
             return lines;
-        }
+        },
     };
     let pieces = collect_result_pieces(result);
     if pieces.is_empty() {
@@ -74,7 +77,11 @@ pub fn render_result_markdown_section(result: Option<&ToolResult>) -> Vec<String
  *   rule). The header (tool name + status) is rendered by the surrounding UI,
  *   so it is not emitted here.
  */
-pub fn default_format_to_markdown(name: &str, arguments: &Value, result: Option<&ToolResult>) -> String {
+pub fn default_format_to_markdown(
+    name: &str,
+    arguments: &Value,
+    result: Option<&ToolResult>,
+) -> String {
     let _ = name;
     let mut lines: Vec<String> = Vec::new();
 
@@ -87,7 +94,7 @@ pub fn default_format_to_markdown(name: &str, arguments: &Value, result: Option<
                         lines.push(format!("**{}**:", escape_inline(key)));
                         let json = serde_json::to_string_pretty(value).unwrap_or_default();
                         lines.push(format!("```json\n{json}\n```"));
-                    }
+                    },
                 }
             }
             lines.push(String::new());
@@ -117,7 +124,11 @@ pub fn first_text(result: &ToolResult) -> Option<&str> {
  * by the result content. Arguments are intentionally omitted — the model
  * already has them from its own tool-call — to save tokens and avoid noise.
  */
-pub fn default_format_to_text(name: &str, _arguments: &Value, result: Option<&ToolResult>) -> String {
+pub fn default_format_to_text(
+    name: &str,
+    _arguments: &Value,
+    result: Option<&ToolResult>,
+) -> String {
     let status_label = match result {
         None => return format!("[{name}] no result"),
         Some(r) if r.is_error => "error",
@@ -138,16 +149,14 @@ mod tests {
     use wisp_common::ToolResult;
 
     fn result(text: &str, is_error: bool) -> ToolResult {
-        ToolResult {
-            content: vec![ToolContent::Text { text: text.to_string() }],
-            is_error,
-        }
+        ToolResult { content: vec![ToolContent::Text { text: text.to_string() }], is_error }
     }
 
     #[test]
     fn markdown_renders_scalar_argument_inline() {
         let args = serde_json::json!({"location": "Hangzhou"});
-        let out = default_format_to_markdown("get_weather", &args, Some(&result("Sunny, 28°C", false)));
+        let out =
+            default_format_to_markdown("get_weather", &args, Some(&result("Sunny, 28°C", false)));
         assert!(out.contains("**location**: `Hangzhou`"));
         assert!(!out.contains("```json\nHangzhou\n```"), "scalars must not be fenced");
         assert!(out.contains("**Result**"));
@@ -177,10 +186,7 @@ mod tests {
         let r = ToolResult {
             content: vec![
                 ToolContent::Text { text: "see".to_string() },
-                ToolContent::Image {
-                    data: "x".to_string(),
-                    mime_type: "image/png".to_string(),
-                },
+                ToolContent::Image { data: "x".to_string(), mime_type: "image/png".to_string() },
                 ToolContent::Resource {
                     uri: "file:///a".to_string(),
                     mime_type: None,

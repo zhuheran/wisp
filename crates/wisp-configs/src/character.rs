@@ -72,11 +72,8 @@ impl Character {
             self.parameters[index].value = value;
             self.parameters[index].metadata = metadata;
         } else {
-            self.parameters.push(CharacterParameter {
-                name,
-                value,
-                metadata,
-            });
+            self.parameters
+                .push(CharacterParameter { name, value, metadata });
         }
         self.touch();
     }
@@ -112,12 +109,24 @@ mod tests {
     use super::*;
 
     fn default_character() -> Character {
-        Character::new("id".into(), "name".into(), "desc".into(), "prompt".into(), "model".into())
+        Character::new(
+            "id".into(),
+            "name".into(),
+            "desc".into(),
+            "prompt".into(),
+            "model".into(),
+        )
     }
 
     #[test]
     fn character_new_sets_role_bio_default() {
-        let c = Character::new("test-id".into(), "Test".into(), "desc".into(), "prompt".into(), "model".into());
+        let c = Character::new(
+            "test-id".into(),
+            "Test".into(),
+            "desc".into(),
+            "prompt".into(),
+            "model".into(),
+        );
         assert_eq!(c.role_bio, "");
     }
 

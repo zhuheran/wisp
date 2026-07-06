@@ -12,11 +12,7 @@ pub struct ImageCompressConfig {
 
 impl Default for ImageCompressConfig {
     fn default() -> Self {
-        Self {
-            max_width: 2048,
-            max_height: 2048,
-            jpeg_quality: 80,
-        }
+        Self { max_width: 2048, max_height: 2048, jpeg_quality: 80 }
     }
 }
 
@@ -60,7 +56,11 @@ pub async fn compress_image(
     let needs_resize = width > config.max_width || height > config.max_height;
 
     let processed_img = if needs_resize {
-        img.resize(config.max_width, config.max_height, image::imageops::FilterType::Lanczos3)
+        img.resize(
+            config.max_width,
+            config.max_height,
+            image::imageops::FilterType::Lanczos3,
+        )
     } else {
         img
     };
@@ -82,17 +82,17 @@ pub async fn compress_image(
             processed_img
                 .write_with_encoder(encoder)
                 .map_err(|e| format!("Failed to encode JPEG: {}", e))?;
-        }
+        },
         ImageFormat::Png => {
             processed_img
                 .write_to(&mut output_buffer, ImageFormat::Png)
                 .map_err(|e| format!("Failed to encode PNG: {}", e))?;
-        }
+        },
         _ => {
             processed_img
                 .write_to(&mut output_buffer, output_format)
                 .map_err(|e| format!("Failed to encode image: {}", e))?;
-        }
+        },
     }
 
     let output_bytes = output_buffer.into_inner();

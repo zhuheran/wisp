@@ -53,10 +53,11 @@ impl From<wisp_db::types::ChatError> for ConversationEngineError {
     }
 }
 
-
-
 pub trait ConversationLlm {
-    fn next_round(&mut self, messages: &[Message]) -> Result<AssistantRound, ConversationEngineError>;
+    fn next_round(
+        &mut self,
+        messages: &[Message],
+    ) -> Result<AssistantRound, ConversationEngineError>;
 }
 
 pub trait ConversationToolRunner {
@@ -78,12 +79,7 @@ where
     L: ConversationLlm,
     T: ConversationToolRunner,
 {
-    pub fn new(
-        chat: &'a mut Chat,
-        llm: L,
-        tools: T,
-        config: ConversationEngineConfig,
-    ) -> Self {
+    pub fn new(chat: &'a mut Chat, llm: L, tools: T, config: ConversationEngineConfig) -> Self {
         Self { chat, llm, tools, config }
     }
 
@@ -99,21 +95,23 @@ where
             .as_ref()
             .map(serde_json::to_string)
             .transpose()
-            .map_err(|error| ConversationEngineError::Chat(wisp_db::types::ChatError::Conversation(
-                wisp_db::types::ConversationError::InvalidOperation(error.to_string()),
-            )))?;
+            .map_err(|error| {
+                ConversationEngineError::Chat(wisp_db::types::ChatError::Conversation(
+                    wisp_db::types::ConversationError::InvalidOperation(error.to_string()),
+                ))
+            })?;
 
-		self.chat.add_message(
-		    conversation_id,
-		    user_message_id,
-		    text,
-		    None,
-		    &MessageRole::User.to_string(),
-		    parent_message_id,
-		    images_json.as_deref(),
-		    None,
-		    None,
-		)?;
+        self.chat.add_message(
+            conversation_id,
+            user_message_id,
+            text,
+            None,
+            &MessageRole::User.to_string(),
+            parent_message_id,
+            images_json.as_deref(),
+            None,
+            None,
+        )?;
 
         self.continue_from_leaf(conversation_id, user_message_id)
     }
@@ -125,7 +123,9 @@ where
     ) -> Result<String, ConversationEngineError> {
         let mut current_leaf_id = leaf_message_id.to_string();
         for round in 0..=self.config.max_tool_rounds {
-            let path = self.chat.get_message_path_to(conversation_id, &current_leaf_id)?;
+            let path = self
+                .chat
+                .get_message_path_to(conversation_id, &current_leaf_id)?;
 
             let assistant = self.llm.next_round(&path)?;
             let parsed = parse_tool_calls(&assistant.text);
@@ -218,19 +218,34 @@ mod tests {
     }
 
     impl ConversationLlm for FakeLlm {
-        fn next_round(&mut self, messages: &[Message]) -> Result<AssistantRound, ConversationEngineError> {
-            self.seen_roles.push(messages.iter().map(|message| message.sender.clone()).collect());
-            self.rounds.pop_front().ok_or_else(|| ConversationEngineError::Llm("no more rounds".to_string()))
+        fn next_round(
+            &mut self,
+            messages: &[Message],
+        ) -> Result<AssistantRound, ConversationEngineError> {
+            self.seen_roles.push(
+                messages
+                    .iter()
+                    .map(|message| message.sender.clone())
+                    .collect(),
+            );
+            self.rounds
+                .pop_front()
+                .ok_or_else(|| ConversationEngineError::Llm("no more rounds".to_string()))
         }
     }
 
     struct FakeTools;
 
     impl ConversationToolRunner for FakeTools {
-        fn execute(&mut self, call: ConversationToolCall) -> Result<ConversationToolCall, ConversationEngineError> {
+        fn execute(
+            &mut self,
+            call: ConversationToolCall,
+        ) -> Result<ConversationToolCall, ConversationEngineError> {
             Ok(ConversationToolCall {
                 result: Some(ConversationToolResult {
-                    content: vec![ConversationToolContent::Text { text: "tool says hi".to_string() }],
+                    content: vec![ConversationToolContent::Text {
+                        text: "tool says hi".to_string(),
+                    }],
                     is_error: false,
                 }),
                 ..call
@@ -245,10 +260,12 @@ mod tests {
     #[test]
     fn simple_text_round_persists_user_and_assistant() {
         let mut chat = chat();
-        chat.create_conversation("c1", "Conversation", "desc").expect("conversation");
+        chat.create_conversation("c1", "Conversation", "desc")
+            .expect("conversation");
         let llm = FakeLlm::new(vec![AssistantRound { text: "hello".to_string(), reasoning: None }]);
         let tools = FakeTools;
-        let mut engine = ConversationEngine::new(&mut chat, llm, tools, ConversationEngineConfig::default());
+        let mut engine =
+            ConversationEngine::new(&mut chat, llm, tools, ConversationEngineConfig::default());
 
         let leaf = engine
             .send_user_message("c1", None, "u1", "hi", None)
@@ -256,14 +273,20 @@ mod tests {
 
         assert_eq!(leaf, "assistant-u1-0");
         let path = engine.chat.get_message_path_to("c1", &leaf).expect("path");
-        assert_eq!(path.iter().map(|message| message.sender.clone()).collect::<Vec<_>>(), vec![MessageRole::User, MessageRole::Assistant]);
+        assert_eq!(
+            path.iter()
+                .map(|message| message.sender.clone())
+                .collect::<Vec<_>>(),
+            vec![MessageRole::User, MessageRole::Assistant]
+        );
         assert_eq!(path[1].text, "hello");
     }
 
     #[test]
     fn tool_round_persists_assistant_tool_call_tool_result_and_final_assistant() {
         let mut chat = chat();
-        chat.create_conversation("c1", "Conversation", "desc").expect("conversation");
+        chat.create_conversation("c1", "Conversation", "desc")
+            .expect("conversation");
         let llm = FakeLlm::new(vec![
             AssistantRound {
                 text: "<|tool_calls|>[{\"id\":\"call_1\",\"name\":\"server:tool\",\"arguments\":{}}]<|/tool_calls|>".to_string(),
@@ -272,7 +295,8 @@ mod tests {
             AssistantRound { text: "final answer".to_string(), reasoning: None },
         ]);
         let tools = FakeTools;
-        let mut engine = ConversationEngine::new(&mut chat, llm, tools, ConversationEngineConfig::default());
+        let mut engine =
+            ConversationEngine::new(&mut chat, llm, tools, ConversationEngineConfig::default());
 
         let leaf = engine
             .send_user_message("c1", None, "u1", "use tool", None)
@@ -280,13 +304,22 @@ mod tests {
 
         assert_eq!(leaf, "assistant-tool-assistant-u1-0-call_1-1");
         let path = engine.chat.get_message_path_to("c1", &leaf).expect("path");
-        assert_eq!(path.iter().map(|message| message.sender.clone()).collect::<Vec<_>>(), vec![
-            MessageRole::User,
-            MessageRole::Assistant,
-            MessageRole::Tool,
-            MessageRole::Assistant,
-        ]);
-        assert!(path[1].tool_calls.as_ref().expect("tool calls").contains("tool says hi"));
+        assert_eq!(
+            path.iter()
+                .map(|message| message.sender.clone())
+                .collect::<Vec<_>>(),
+            vec![
+                MessageRole::User,
+                MessageRole::Assistant,
+                MessageRole::Tool,
+                MessageRole::Assistant,
+            ]
+        );
+        assert!(path[1]
+            .tool_calls
+            .as_ref()
+            .expect("tool calls")
+            .contains("tool says hi"));
         assert!(path[2].text.contains("tool says hi"));
         assert_eq!(path[3].text, "final answer");
     }
@@ -294,7 +327,8 @@ mod tests {
     #[test]
     fn max_tool_rounds_stops_infinite_tool_loop() {
         let mut chat = chat();
-        chat.create_conversation("c1", "Conversation", "desc").expect("conversation");
+        chat.create_conversation("c1", "Conversation", "desc")
+            .expect("conversation");
         let llm = FakeLlm::new(vec![
             AssistantRound {
                 text: "<|tool_calls|>[{\"id\":\"call_1\",\"name\":\"server:tool\",\"arguments\":{}}]<|/tool_calls|>".to_string(),
@@ -302,7 +336,12 @@ mod tests {
             },
         ]);
         let tools = FakeTools;
-        let mut engine = ConversationEngine::new(&mut chat, llm, tools, ConversationEngineConfig { max_tool_rounds: 0 });
+        let mut engine = ConversationEngine::new(
+            &mut chat,
+            llm,
+            tools,
+            ConversationEngineConfig { max_tool_rounds: 0 },
+        );
 
         let err = engine
             .send_user_message("c1", None, "u1", "loop", None)

@@ -1,14 +1,13 @@
+use anyhow::Result;
+use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::Mutex;
-use serde_json::Value;
-use anyhow::Result;
 use tauri::{AppHandle, Emitter};
+use tokio::sync::Mutex;
 
 use super::client::McpStdioClient;
-use crate::types::{ServerConfig, ConnectionStatus};
+use crate::types::{ConnectionStatus, ServerConfig};
 use wisp_common::McpConnectionStatusEvent;
-
 
 pub struct McpStdioManager {
     clients: Arc<Mutex<HashMap<String, McpStdioClient>>>,
@@ -24,11 +23,11 @@ impl McpStdioManager {
             app_handle: Arc::new(std::sync::Mutex::new(None)),
         }
     }
-pub fn set_app_handle(&self, handle: AppHandle) {
-    *self.app_handle.lock().unwrap() = Some(handle);
-}
+    pub fn set_app_handle(&self, handle: AppHandle) {
+        *self.app_handle.lock().unwrap() = Some(handle);
+    }
 
-pub async fn connect_server(&self, config: &ServerConfig) -> Result<()> {
+    pub async fn connect_server(&self, config: &ServerConfig) -> Result<()> {
         // 检查是否已连接
         {
             let clients = self.clients.lock().await;
@@ -38,13 +37,17 @@ pub async fn connect_server(&self, config: &ServerConfig) -> Result<()> {
         }
 
         // 更新状态为连接中
-        self.update_status(&config.id, ConnectionStatus {
-            server_id: config.id.clone(),
-            connected: false,
-            last_ping_at: None,
-            reconnect_attempts: 0,
-            error: None,
-        }).await;
+        self.update_status(
+            &config.id,
+            ConnectionStatus {
+                server_id: config.id.clone(),
+                connected: false,
+                last_ping_at: None,
+                reconnect_attempts: 0,
+                error: None,
+            },
+        )
+        .await;
 
         self.emit_status(McpConnectionStatusEvent {
             server_id: config.id.clone(),
@@ -54,7 +57,8 @@ pub async fn connect_server(&self, config: &ServerConfig) -> Result<()> {
             error: None,
             transport_kind: "stdio".to_string(),
             source: "connecting".to_string(),
-        }).await;
+        })
+        .await;
 
         // 根据传输类型创建客户端
         match &config.transport {
@@ -62,15 +66,11 @@ pub async fn connect_server(&self, config: &ServerConfig) -> Result<()> {
                 let args = args.clone();
                 let env = env.clone();
                 let cwd = cwd.clone();
-                let connect_result = McpStdioClient::spawn(
-                    config.id.clone(),
-                    command,
-                    &args,
-                    &env,
-                    cwd.as_deref(),
-                ).await;
+                let connect_result =
+                    McpStdioClient::spawn(config.id.clone(), command, &args, &env, cwd.as_deref())
+                        .await;
 
-                let mut client = match connect_result {
+                let client = match connect_result {
                     Ok(client) => client,
                     Err(e) => {
                         self.emit_status(McpConnectionStatusEvent {
@@ -81,9 +81,10 @@ pub async fn connect_server(&self, config: &ServerConfig) -> Result<()> {
                             error: Some(e.to_string()),
                             transport_kind: "stdio".to_string(),
                             source: "connect_failed".to_string(),
-                        }).await;
+                        })
+                        .await;
                         return Err(e);
-                    }
+                    },
                 };
 
                 // 初始化 MCP 连接
@@ -96,7 +97,8 @@ pub async fn connect_server(&self, config: &ServerConfig) -> Result<()> {
                         error: Some(e.to_string()),
                         transport_kind: "stdio".to_string(),
                         source: "connect_failed".to_string(),
-                    }).await;
+                    })
+                    .await;
                     return Err(e);
                 }
                 println!("[McpStdioManager] Server {} initialized", config.id);
@@ -108,35 +110,44 @@ pub async fn connect_server(&self, config: &ServerConfig) -> Result<()> {
                 }
 
                 // 更新状态为已连接
-                self.update_status(&config.id, ConnectionStatus {
-                    server_id: config.id.clone(),
-                    connected: true,
-                    last_ping_at: Some(std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_secs()),
-                    reconnect_attempts: 0,
-                    error: None,
-                }).await;
+                self.update_status(
+                    &config.id,
+                    ConnectionStatus {
+                        server_id: config.id.clone(),
+                        connected: true,
+                        last_ping_at: Some(
+                            std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap_or_default()
+                                .as_secs(),
+                        ),
+                        reconnect_attempts: 0,
+                        error: None,
+                    },
+                )
+                .await;
 
                 self.emit_status(McpConnectionStatusEvent {
                     server_id: config.id.clone(),
                     connected: true,
-                    last_ping_at: Some(std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_secs()),
+                    last_ping_at: Some(
+                        std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_secs(),
+                    ),
                     reconnect_attempts: 0,
                     error: None,
                     transport_kind: "stdio".to_string(),
                     source: "connected".to_string(),
-                }).await;
+                })
+                .await;
 
                 Ok(())
-            }
+            },
             _ => {
                 anyhow::bail!("Transport type not supported by stdio manager")
-            }
+            },
         }
     }
 
@@ -146,13 +157,17 @@ pub async fn connect_server(&self, config: &ServerConfig) -> Result<()> {
             client.kill().await?;
         }
 
-        self.update_status(server_id, ConnectionStatus {
-            server_id: server_id.to_string(),
-            connected: false,
-            last_ping_at: None,
-            reconnect_attempts: 0,
-            error: None,
-        }).await;
+        self.update_status(
+            server_id,
+            ConnectionStatus {
+                server_id: server_id.to_string(),
+                connected: false,
+                last_ping_at: None,
+                reconnect_attempts: 0,
+                error: None,
+            },
+        )
+        .await;
 
         self.emit_status(McpConnectionStatusEvent {
             server_id: server_id.to_string(),
@@ -162,16 +177,18 @@ pub async fn connect_server(&self, config: &ServerConfig) -> Result<()> {
             error: None,
             transport_kind: "stdio".to_string(),
             source: "disconnected".to_string(),
-        }).await;
+        })
+        .await;
 
         Ok(())
     }
 
     pub async fn list_tools(&self, server_id: &str, cursor: Option<String>) -> Result<Value> {
         let clients = self.clients.lock().await;
-        let client = clients.get(server_id)
+        let client = clients
+            .get(server_id)
             .ok_or_else(|| anyhow::anyhow!("Server {} not connected", server_id))?;
-        
+
         client.list_tools(cursor).await
     }
 
@@ -182,9 +199,10 @@ pub async fn connect_server(&self, config: &ServerConfig) -> Result<()> {
         arguments: Option<Value>,
     ) -> Result<Value> {
         let clients = self.clients.lock().await;
-        let client = clients.get(server_id)
+        let client = clients
+            .get(server_id)
             .ok_or_else(|| anyhow::anyhow!("Server {} not connected", server_id))?;
-        
+
         client.call_tool(tool_name, arguments).await
     }
 

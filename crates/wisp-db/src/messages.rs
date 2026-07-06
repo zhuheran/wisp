@@ -1,8 +1,8 @@
-use rusqlite::params;
 use crate::pool::DbPool;
+use rusqlite::params;
 
+use crate::types::{Message, MessageError, MessageRole};
 use std::time::{SystemTime, UNIX_EPOCH};
-use crate::types::{MessageError, MessageRole, Message};
 
 pub struct Messages {
     pool: DbPool,
@@ -32,11 +32,13 @@ impl Messages {
         )?;
 
         // Migration: add images column if it doesn't exist
-        let column_count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = 'images'",
-            [Self::TABLE_NAME],
-            |row| row.get(0),
-        ).unwrap_or(0);
+        let column_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = 'images'",
+                [Self::TABLE_NAME],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
 
         if column_count == 0 {
             conn.execute(
@@ -46,11 +48,13 @@ impl Messages {
         }
 
         // Migration: add tool_calls column if it doesn't exist
-        let tc_column_count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = 'tool_calls'",
-            [Self::TABLE_NAME],
-            |row| row.get(0),
-        ).unwrap_or(0);
+        let tc_column_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = 'tool_calls'",
+                [Self::TABLE_NAME],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
 
         if tc_column_count == 0 {
             conn.execute(
@@ -60,11 +64,13 @@ impl Messages {
         }
 
         // Migration: add tool_call_id column if it doesn't exist
-        let tci_column_count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = 'tool_call_id'",
-            [Self::TABLE_NAME],
-            |row| row.get(0),
-        ).unwrap_or(0);
+        let tci_column_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = 'tool_call_id'",
+                [Self::TABLE_NAME],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
 
         if tci_column_count == 0 {
             conn.execute(
@@ -76,7 +82,18 @@ impl Messages {
         Ok(Self { pool })
     }
 
-    pub fn add(&mut self, id: &str, text: &str, reasoning: Option<&str>, sender: &str, tokens: Option<i32>, embedding: Option<Vec<u8>>, images: Option<&str>, tool_calls: Option<&str>, tool_call_id: Option<&str>) -> Result<(), MessageError> {
+    pub fn add(
+        &mut self,
+        id: &str,
+        text: &str,
+        reasoning: Option<&str>,
+        sender: &str,
+        tokens: Option<i32>,
+        embedding: Option<Vec<u8>>,
+        images: Option<&str>,
+        tool_calls: Option<&str>,
+        tool_call_id: Option<&str>,
+    ) -> Result<(), MessageError> {
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
@@ -93,7 +110,20 @@ impl Messages {
         Ok(())
     }
 
-    pub fn add_batch(&mut self, messages: &[(&str, &str, Option<&str>, &str, Option<i32>, Option<Vec<u8>>, Option<&str>, Option<&str>, Option<&str>)]) -> Result<(), MessageError> {
+    pub fn add_batch(
+        &mut self,
+        messages: &[(
+            &str,
+            &str,
+            Option<&str>,
+            &str,
+            Option<i32>,
+            Option<Vec<u8>>,
+            Option<&str>,
+            Option<&str>,
+            Option<&str>,
+        )],
+    ) -> Result<(), MessageError> {
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
@@ -107,8 +137,30 @@ impl Messages {
                 Self::TABLE_NAME
             ))?;
 
-            for (id, text, reasoning, sender, tokens, embedding, images, tool_calls, tool_call_id) in messages {
-                stmt.execute(params![id, text, reasoning, sender, timestamp, tokens, embedding, images, tool_calls, tool_call_id])?;
+            for (
+                id,
+                text,
+                reasoning,
+                sender,
+                tokens,
+                embedding,
+                images,
+                tool_calls,
+                tool_call_id,
+            ) in messages
+            {
+                stmt.execute(params![
+                    id,
+                    text,
+                    reasoning,
+                    sender,
+                    timestamp,
+                    tokens,
+                    embedding,
+                    images,
+                    tool_calls,
+                    tool_call_id
+                ])?;
             }
         }
         tx.commit()?;
@@ -123,7 +175,7 @@ impl Messages {
         ))?;
 
         let row = stmt.query_row(params![id], |row| {
-			let sender_str: String = row.get(3)?;
+            let sender_str: String = row.get(3)?;
             let sender = MessageRole::try_from(sender_str)
                 .map_err(|e| rusqlite::Error::InvalidParameterName(e.to_string()))?;
             let images_json: Option<String> = row.get(7)?;
@@ -156,9 +208,9 @@ impl Messages {
 
         let messages = stmt
             .query_map(params![limit, offset], |row| {
-				let sender_str: String = row.get(3)?;
-				let sender = MessageRole::try_from(sender_str)
-					.map_err(|e| rusqlite::Error::InvalidParameterName(e.to_string()))?;
+                let sender_str: String = row.get(3)?;
+                let sender = MessageRole::try_from(sender_str)
+                    .map_err(|e| rusqlite::Error::InvalidParameterName(e.to_string()))?;
                 let images_json: Option<String> = row.get(7)?;
                 let images = images_json.and_then(|s| serde_json::from_str(&s).ok());
                 Ok(Message {
@@ -186,10 +238,7 @@ impl Messages {
     pub fn update_text(&mut self, id: &str, text: &str) -> Result<(), MessageError> {
         let conn = self.pool.get()?;
         conn.execute(
-            &format!(
-                "UPDATE {} SET text = ?2 WHERE id = ?1",
-                Self::TABLE_NAME
-            ),
+            &format!("UPDATE {} SET text = ?2 WHERE id = ?1", Self::TABLE_NAME),
             params![id, text],
         )?;
         Ok(())
@@ -198,22 +247,16 @@ impl Messages {
     pub fn update_tool_calls(&mut self, id: &str, tool_calls: &str) -> Result<(), MessageError> {
         let conn = self.pool.get()?;
         conn.execute(
-            &format!(
-                "UPDATE {} SET tool_calls = ?2 WHERE id = ?1",
-                Self::TABLE_NAME
-            ),
+            &format!("UPDATE {} SET tool_calls = ?2 WHERE id = ?1", Self::TABLE_NAME),
             params![id, tool_calls],
         )?;
         Ok(())
     }
 
-	pub fn update_reasoning(&mut self, id: &str, reasoning: &str) -> Result<(), MessageError> {
+    pub fn update_reasoning(&mut self, id: &str, reasoning: &str) -> Result<(), MessageError> {
         let conn = self.pool.get()?;
         conn.execute(
-            &format!(
-                "UPDATE {} SET reasoning = ?2 WHERE id = ?1",
-                Self::TABLE_NAME
-            ),
+            &format!("UPDATE {} SET reasoning = ?2 WHERE id = ?1", Self::TABLE_NAME),
             params![id, reasoning],
         )?;
         Ok(())
@@ -222,10 +265,7 @@ impl Messages {
     pub fn update_sender(&mut self, id: &str, sender: MessageRole) -> Result<(), MessageError> {
         let conn = self.pool.get()?;
         conn.execute(
-            &format!(
-                "UPDATE {} SET sender = ?2 WHERE id = ?1",
-                Self::TABLE_NAME
-            ),
+            &format!("UPDATE {} SET sender = ?2 WHERE id = ?1", Self::TABLE_NAME),
             params![id, sender.to_string()],
         )?;
         Ok(())
@@ -234,10 +274,7 @@ impl Messages {
     pub fn delete(&mut self, id: &str) -> Result<(), MessageError> {
         let conn = self.pool.get()?;
         conn.execute(
-            &format!(
-                "DELETE FROM {} WHERE id = ?1",
-                Self::TABLE_NAME
-            ),
+            &format!("DELETE FROM {} WHERE id = ?1", Self::TABLE_NAME),
             params![id],
         )?;
         Ok(())
@@ -247,10 +284,8 @@ impl Messages {
         let mut conn = self.pool.get()?;
         let tx = conn.transaction()?;
         {
-            let mut stmt = tx.prepare(&format!(
-                "DELETE FROM {} WHERE id = ?1",
-                Self::TABLE_NAME
-            ))?;
+            let mut stmt =
+                tx.prepare(&format!("DELETE FROM {} WHERE id = ?1", Self::TABLE_NAME))?;
 
             for id in ids {
                 stmt.execute(params![id])?;
@@ -259,5 +294,4 @@ impl Messages {
         tx.commit()?;
         Ok(())
     }
-
 }

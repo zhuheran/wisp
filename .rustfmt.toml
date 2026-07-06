@@ -1,0 +1,27 @@
+max_width = 100
+hard_tabs = false
+tab_spaces = 4
+newline_style = "Auto"
+use_small_heuristics = "Default"
+
+fn_call_width = 70
+attr_fn_like_width = 70
+struct_lit_width = 70
+struct_variant_width = 70
+
+reorder_imports = true
+reorder_modules = true
+remove_nested_parens = true
+short_array_element_width_threshold = 10
+
+match_block_trailing_comma = true
+force_explicit_abi = true
+merge_derives = true
+use_field_init_shorthand = true
+
+# unstable (nightly-only) options; comment out to use stable
+# normalize_comments = false
+# normalize_doc_attributes = false
+# wrap_comments = false
+# format_code_in_doc_comments = false
+# format_strings = false

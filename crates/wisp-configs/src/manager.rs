@@ -1,6 +1,3 @@
-
-
-
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -73,7 +70,8 @@ impl ConfigManager {
             .expect("Failed to get config directory");
 
         // 确保配置目录存在
-        fs::create_dir_all(&config_dir).map_err(|e| format!("Failed to create config directory: {}", e))?;
+        fs::create_dir_all(&config_dir)
+            .map_err(|e| format!("Failed to create config directory: {}", e))?;
 
         let config_path = config_dir.join("configs.toml");
         let toml_content = fs::read_to_string(&config_path).unwrap_or_default();
@@ -120,10 +118,9 @@ impl ConfigManager {
     /// Failures are silently ignored — emitting is best-effort and must never
     /// disrupt the save flow.
     fn emit_update(&self, key: &'static str, value: serde_json::Value) {
-        let _ = self.app_handle.emit(
-            "settings_updated",
-            SettingsUpdatePayload { key, value },
-        );
+        let _ = self
+            .app_handle
+            .emit("settings_updated", SettingsUpdatePayload { key, value });
     }
 
     /// Add a new provider to the config. If the
@@ -132,9 +129,7 @@ impl ConfigManager {
         println!("Adding provider: {}", provider.name);
         if self.exists_provider(&provider.name) {
             println!("provider already exists");
-            return Err(ConfigError::ProviderAlreadyExistsError(
-                provider.name.clone(),
-            ));
+            return Err(ConfigError::ProviderAlreadyExistsError(provider.name.clone()));
         }
         let mut configs = self.configs.lock().unwrap();
         configs.providers.push(provider);
@@ -225,9 +220,7 @@ impl ConfigManager {
     /// Add a new character
     pub fn add_character(&self, character: crate::character::Character) -> Result<(), ConfigError> {
         if self.exists_character(&character.id) {
-            return Err(ConfigError::CharacterAlreadyExistsError(
-                character.id.clone(),
-            ));
+            return Err(ConfigError::CharacterAlreadyExistsError(character.id.clone()));
         }
         let mut configs = self.configs.lock().unwrap();
         configs.characters.push(character);
@@ -405,7 +398,11 @@ mod tests {
         let toml_str = toml::to_string(&config).unwrap();
         let deserialized: Config = toml::from_str(&toml_str).unwrap();
         assert_eq!(
-            deserialized.conversation_config.as_ref().unwrap().retry_attempts,
+            deserialized
+                .conversation_config
+                .as_ref()
+                .unwrap()
+                .retry_attempts,
             5
         );
     }

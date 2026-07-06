@@ -5,24 +5,20 @@ use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager};
 use uuid::Uuid;
 
-use wisp_llm::{backend_for, resolve_parameters, StreamCallbacks, StreamRequest, ToolChoice};
-use wisp_llm::ToolDefinition as LlmToolDefinition;
-use wisp_configs::character::Character;
-use wisp_configs::provider::Provider;
-use wisp_configs::model::{ModelInfo, TextModelCapability};
 use crate::abort::AbortRegistry;
 use crate::orchestrator;
-use wisp_conversation::payload::{
-    build_openai_messages, build_openai_messages_with_reasoning,
-};
-use wisp_conversation::tool_parser::parse_tool_calls;
-use wisp_conversation::{
-    trim_context, ConversationToolCall, ConversationToolResult,
-};
-use wisp_common::{ToolContent, ToolResult, MessageSource};
-use wisp_db::types::{ImageContent, Message, MessageRole};
-use wisp_tool_registry::ToolDefinition;
 use crate::types::AppData;
+use wisp_common::{MessageSource, ToolContent, ToolResult};
+use wisp_configs::character::Character;
+use wisp_configs::model::{ModelInfo, TextModelCapability};
+use wisp_configs::provider::Provider;
+use wisp_conversation::payload::build_openai_messages_with_reasoning;
+use wisp_conversation::tool_parser::parse_tool_calls;
+use wisp_conversation::{trim_context, ConversationToolCall, ConversationToolResult};
+use wisp_db::types::{ImageContent, Message, MessageRole};
+use wisp_llm::ToolDefinition as LlmToolDefinition;
+use wisp_llm::{backend_for, resolve_parameters, StreamCallbacks, StreamRequest, ToolChoice};
+use wisp_tool_registry::ToolDefinition;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ConversationSendRequest {
@@ -71,13 +67,28 @@ pub struct ConversationDeriveRequest {
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ConversationEventPayload {
-    MessageCreated { message: Message, parent_id: Option<String> },
-    MessageUpdated { message_id: String, text: String, reasoning: Option<String>, tool_calls: Option<String> },
-    Completed { leaf_message_id: String },
-    Failed { error: String },
+    MessageCreated {
+        message: Message,
+        parent_id: Option<String>,
+    },
+    MessageUpdated {
+        message_id: String,
+        text: String,
+        reasoning: Option<String>,
+        tool_calls: Option<String>,
+    },
+    Completed {
+        leaf_message_id: String,
+    },
+    Failed {
+        error: String,
+    },
 }
 
-pub(crate) fn emit_event<R: tauri::Runtime>(app_handle: &tauri::AppHandle<R>, payload: ConversationEventPayload) -> Result<(), String> {
+pub(crate) fn emit_event<R: tauri::Runtime>(
+    app_handle: &tauri::AppHandle<R>,
+    payload: ConversationEventPayload,
+) -> Result<(), String> {
     app_handle
         .emit("conversation_event", payload)
         .map_err(|error| error.to_string())
@@ -127,9 +138,9 @@ async fn execute_tool_call<R: tauri::Runtime>(
 ) -> Result<ConversationToolCall, String> {
     let registry = {
         let state = app_handle.state::<Mutex<AppData>>();
-        let state = state
-            .lock()
-            .map_err(|error| format!("Failed to acquire app state for tool {}: {}", call.name, error))?;
+        let state = state.lock().map_err(|error| {
+            format!("Failed to acquire app state for tool {}: {}", call.name, error)
+        })?;
         std::sync::Arc::clone(&state.tool_registry)
     };
 
@@ -144,43 +155,31 @@ async fn execute_tool_call<R: tauri::Runtime>(
                 .map(|c| match c {
                     ToolContent::Text { text } => {
                         wisp_conversation::ConversationToolContent::Text { text }
-                    }
+                    },
                     ToolContent::Image { data, mime_type } => {
-                        wisp_conversation::ConversationToolContent::Image {
-                            data,
+                        wisp_conversation::ConversationToolContent::Image { data, mime_type }
+                    },
+                    ToolContent::Resource { uri, mime_type, text, blob } => {
+                        wisp_conversation::ConversationToolContent::Resource {
+                            uri,
                             mime_type,
+                            text,
+                            blob,
                         }
-                    }
-                    ToolContent::Resource {
-                        uri,
-                        mime_type,
-                        text,
-                        blob,
-                    } => wisp_conversation::ConversationToolContent::Resource {
-                        uri,
-                        mime_type,
-                        text,
-                        blob,
                     },
                 })
                 .collect::<Vec<_>>();
             (content, result.is_error)
-        }
+        },
         Err(error) => {
             let text = format!("Tool '{}' failed: {}", call.name, error);
             (vec![wisp_conversation::ConversationToolContent::Text { text }], true)
-        }
+        },
     };
 
-    let tool_result = wisp_conversation::ConversationToolResult {
-        content,
-        is_error,
-    };
+    let tool_result = wisp_conversation::ConversationToolResult { content, is_error };
 
-    Ok(ConversationToolCall {
-        result: Some(tool_result),
-        ..call
-    })
+    Ok(ConversationToolCall { result: Some(tool_result), ..call })
 }
 
 /// Render a completed tool call as LLM-friendly text via the software tool
@@ -200,24 +199,6 @@ fn format_call_to_text<R: tauri::Runtime>(
     };
     let result = call.result.as_ref().map(ToolResult::from);
     Ok(software_registry.format_to_text(&call.name, &call.arguments, result.as_ref()))
-}
-
-/// Render a completed tool call as frontend markdown via the software tool
-/// registry. Native tools may override; MCP/unknown tools fall back to the
-/// default algorithm.
-fn format_call_to_markdown<R: tauri::Runtime>(
-    app_handle: &tauri::AppHandle<R>,
-    call: &ConversationToolCall,
-) -> Result<String, String> {
-    let software_registry = {
-        let state = app_handle.state::<Mutex<AppData>>();
-        let state = state
-            .lock()
-            .map_err(|error| format!("Failed to acquire app state: {}", error))?;
-        std::sync::Arc::clone(&state.software_registry)
-    };
-    let result = call.result.as_ref().map(ToolResult::from);
-    Ok(software_registry.format_to_markdown(&call.name, &call.arguments, result.as_ref()))
 }
 
 /// Frontend-facing command: render a tool call result as markdown. The
@@ -240,32 +221,6 @@ pub async fn format_tool_call_markdown<R: tauri::Runtime>(
     Ok(software_registry.format_to_markdown(&name, &arguments, result.as_ref()))
 }
 
-fn format_tool_parameter_line(name: &str, property: &serde_json::Value) -> String {
-    let mut detail = property
-        .get("description")
-        .and_then(|value| value.as_str())
-        .map(ToString::to_string)
-        .or_else(|| {
-            property
-                .get("type")
-                .and_then(|value| value.as_str())
-                .map(ToString::to_string)
-        })
-        .unwrap_or_else(|| "unknown".to_string());
-
-    if let Some(enum_values) = property.get("enum").and_then(|value| value.as_array()) {
-        let enum_values = enum_values
-            .iter()
-            .filter_map(|value| value.as_str().map(ToString::to_string))
-            .collect::<Vec<_>>();
-        if !enum_values.is_empty() {
-            detail.push_str(&format!(" (enum: {})", enum_values.join(", ")));
-        }
-    }
-
-    format!("      - {}: {}", name, detail)
-}
-
 fn build_enabled_tools_prompt(enabled_tools: &[ToolDefinition]) -> String {
     if enabled_tools.is_empty() {
         return String::new();
@@ -277,10 +232,7 @@ fn build_enabled_tools_prompt(enabled_tools: &[ToolDefinition]) -> String {
     let tool_lines: Vec<String> = tool_info
         .into_iter()
         .map(|tool| {
-            let desc = tool
-                .description
-                .as_deref()
-                .unwrap_or("No description");
+            let desc = tool.description.as_deref().unwrap_or("No description");
             let mut lines = vec![format!("  - **{}**: {desc}", tool.name)];
 
             if let Some(props) = tool
@@ -385,13 +337,21 @@ async fn run_conversation_rounds_inner<R: tauri::Runtime>(
     for round in 0..max_rounds {
         let path = {
             let state_mutex = app_handle.state::<Mutex<AppData>>();
-            let mut state = state_mutex
-                .lock()
-                .map_err(|error| format!("Failed to acquire app state for conversation '{}': {}", conversation_id, error))?;
+            let mut state = state_mutex.lock().map_err(|error| {
+                format!(
+                    "Failed to acquire app state for conversation '{}': {}",
+                    conversation_id, error
+                )
+            })?;
             state
                 .chat
                 .get_message_path_to(&conversation_id, &current_leaf_id)
-                .map_err(|error| format!("Failed to build message path for conversation '{}' from leaf '{}': {}", conversation_id, current_leaf_id, error))?
+                .map_err(|error| {
+                    format!(
+                        "Failed to build message path for conversation '{}' from leaf '{}': {}",
+                        conversation_id, current_leaf_id, error
+                    )
+                })?
         };
 
         let model_config = provider.get_model(&model);
@@ -400,11 +360,7 @@ async fn run_conversation_rounds_inner<R: tauri::Runtime>(
             .and_then(|m| m.metadata.context_window)
             .unwrap_or(128000) as usize;
 
-        let path = trim_context(
-            path,
-            context_window,
-            loop_config.context_window_sliding_ratio,
-        );
+        let path = trim_context(path, context_window, loop_config.context_window_sliding_ratio);
 
         let enabled_tools = resolve_enabled_mcp_tools(app_handle).await?;
         let supports_native_tools = model_config
@@ -412,7 +368,7 @@ async fn run_conversation_rounds_inner<R: tauri::Runtime>(
             .map(|m| match &m.model_info {
                 ModelInfo::TextGeneration { capabilities, .. } => {
                     capabilities.contains(&TextModelCapability::ToolUse)
-                }
+                },
                 _ => false,
             })
             .unwrap_or(false);
@@ -451,10 +407,13 @@ async fn run_conversation_rounds_inner<R: tauri::Runtime>(
             system_prompt_sections.push(tools_prompt);
         }
         if !system_prompt_sections.is_empty() {
-            openai_messages.insert(0, serde_json::json!({
-                "role": "system",
-                "content": system_prompt_sections.join("\n\n"),
-            }));
+            openai_messages.insert(
+                0,
+                serde_json::json!({
+                    "role": "system",
+                    "content": system_prompt_sections.join("\n\n"),
+                }),
+            );
         }
 
         let assistant_message_id = Uuid::new_v4().to_string();
@@ -550,7 +509,7 @@ async fn run_conversation_rounds_inner<R: tauri::Runtime>(
                 Ok(result) => {
                     outcome = Some(result);
                     break;
-                }
+                },
                 Err(e) if attempt < total_attempts - 1 => {
                     eprintln!(
                         "Stream attempt {}/{} failed for conversation '{}': {}",
@@ -560,27 +519,54 @@ async fn run_conversation_rounds_inner<R: tauri::Runtime>(
                         e
                     );
                     continue;
-                }
+                },
                 Err(e) => {
                     return Err(format!(
                         "Model '{}' failed while streaming conversation '{}': {}",
                         model, conversation_id, e
                     ))
-                }
+                },
             }
         }
         let outcome = outcome.expect("at least one stream attempt was made");
 
         let parsed = parse_tool_calls(&outcome.text);
         let native_calls = wisp_conversation::merge_tool_call_deltas(&outcome.tool_call_deltas);
+        let has_native = !native_calls.is_empty();
         let mut calls = parsed
             .calls
             .into_iter()
             .filter(|call| !call.name.trim().is_empty())
             .filter(|call| call.arguments.is_object())
             .collect::<Vec<_>>();
-        if !native_calls.is_empty() {
+        if has_native {
             calls = native_calls;
+        }
+
+        // 文本协议兜底：模型输出了 `<|tool_calls|>` 标签但 JSON 解析失败 / 没有任何
+        // 有效调用。此时不能把原始标签文本当作普通助手消息展示，而是合成一个"工具
+        // 调用解析失败"的结果（is_error = true），沿用既有失败渲染 + 回传给 LLM 的路径。
+        if calls.is_empty() && !has_native && !parsed.failed_blocks.is_empty() {
+            calls = parsed
+                .failed_blocks
+                .iter()
+                .map(|block| ConversationToolCall {
+                    id: Uuid::new_v4().to_string(),
+                    name: "invalid_tool_call".to_string(),
+                    arguments: serde_json::json!({}),
+                    result: Some(ConversationToolResult {
+                        content: vec![wisp_conversation::ConversationToolContent::Text {
+                            text: format!(
+                                "Failed to parse tool call. Expected a JSON array of \
+                                 {{\"name\",\"arguments\"}} objects wrapped in \
+                                 `<|tool_calls|>` ... `<|/tool_calls|>`. Raw output:\n{block}"
+                            ),
+                        }],
+                        is_error: true,
+                    }),
+                    qualified_name: None,
+                })
+                .collect();
         }
         let assistant_message = Message {
             id: assistant_message_id.clone(),
@@ -639,9 +625,7 @@ async fn run_conversation_rounds_inner<R: tauri::Runtime>(
         if calls.is_empty() {
             emit_event(
                 app_handle,
-                ConversationEventPayload::Completed {
-                    leaf_message_id: current_leaf_id.clone(),
-                },
+                ConversationEventPayload::Completed { leaf_message_id: current_leaf_id.clone() },
             )?;
             return Ok(current_leaf_id);
         }
@@ -649,19 +633,30 @@ async fn run_conversation_rounds_inner<R: tauri::Runtime>(
         if round == max_rounds.saturating_sub(1) {
             emit_event(
                 app_handle,
-                ConversationEventPayload::Failed {
-                    error: "Max tool rounds reached".to_string(),
-                },
+                ConversationEventPayload::Failed { error: "Max tool rounds reached".to_string() },
             )?;
-            return Err(format!("Max tool rounds reached for conversation '{}'", conversation_id));
+            return Err(format!(
+                "Max tool rounds reached for conversation '{}'",
+                conversation_id
+            ));
         }
 
         let mut completed_calls = Vec::new();
         for call in calls {
-            completed_calls.push(execute_tool_call(app_handle, call).await?);
+            // 已有结果的调用（如解析失败合成的 error 结果）无需再执行。
+            let completed = if call.result.is_some() {
+                call
+            } else {
+                execute_tool_call(app_handle, call).await?
+            };
+            completed_calls.push(completed);
         }
-        let completed_calls_json = serde_json::to_string(&completed_calls)
-            .map_err(|error| format!("Failed to serialize completed tool calls for conversation '{}': {}", conversation_id, error))?;
+        let completed_calls_json = serde_json::to_string(&completed_calls).map_err(|error| {
+            format!(
+                "Failed to serialize completed tool calls for conversation '{}': {}",
+                conversation_id, error
+            )
+        })?;
 
         {
             let state_mutex = app_handle.state::<Mutex<AppData>>();
@@ -719,7 +714,10 @@ async fn run_conversation_rounds_inner<R: tauri::Runtime>(
         }
     }
 
-    Err(format!("Max tool rounds reached for conversation '{}'", conversation_id))
+    Err(format!(
+        "Max tool rounds reached for conversation '{}'",
+        conversation_id
+    ))
 }
 
 /// Inner logic of conversation_send_message, generic over Runtime for
@@ -729,7 +727,10 @@ pub async fn conversation_send_message_inner<R: tauri::Runtime>(
     app_handle: &tauri::AppHandle<R>,
     request: ConversationSendRequest,
 ) -> Result<String, String> {
-    let stream_id = request.stream_id.clone().unwrap_or_else(|| Uuid::new_v4().to_string());
+    let stream_id = request
+        .stream_id
+        .clone()
+        .unwrap_or_else(|| Uuid::new_v4().to_string());
     let user_message_id = Uuid::new_v4().to_string();
     let user_message = Message {
         id: user_message_id.clone(),
@@ -867,9 +868,7 @@ pub async fn conversation_send_message_inner<R: tauri::Runtime>(
             // emitted message_created/message_updated; just emit completion.
             emit_event(
                 app_handle,
-                ConversationEventPayload::Completed {
-                    leaf_message_id: reply.message_id.clone(),
-                },
+                ConversationEventPayload::Completed { leaf_message_id: reply.message_id.clone() },
             )?;
 
             return Ok(reply.message_id);
@@ -905,7 +904,10 @@ pub async fn conversation_regenerate_message(
     };
 
     let _ = request.insert_guidance;
-    let stream_id = request.stream_id.clone().unwrap_or_else(|| Uuid::new_v4().to_string());
+    let stream_id = request
+        .stream_id
+        .clone()
+        .unwrap_or_else(|| Uuid::new_v4().to_string());
     run_conversation_rounds(
         app_handle,
         request.conversation_id,
@@ -987,7 +989,9 @@ pub async fn conversation_edit_and_regenerate(
             .unwrap_or(request.replaced_message_id.clone())
     };
 
-    let stream_id = request.stream_id.unwrap_or_else(|| Uuid::new_v4().to_string());
+    let stream_id = request
+        .stream_id
+        .unwrap_or_else(|| Uuid::new_v4().to_string());
     run_conversation_rounds(
         app_handle,
         request.conversation_id,
@@ -1008,8 +1012,8 @@ mod tests {
 
     use crate::cache::DiagramCache;
     use wisp_configs::ConfigManager;
-    use wisp_db::create_memory_pool;
     use wisp_db::chat::Chat;
+    use wisp_db::create_memory_pool;
     use wisp_keyring::KeyManager;
     use wisp_mcp::McpConfigManager;
     use wisp_mcp::McpHttpManager;
@@ -1029,10 +1033,8 @@ mod tests {
 
         let diagram_cache = DiagramCache::new().expect("diagram cache");
         let key_manager = KeyManager::new("test-wisp".to_string());
-        let config_manager =
-            ConfigManager::new(&handle).expect("config manager");
-        let mcp_config_manager =
-            McpConfigManager::new(&handle).expect("mcp config");
+        let config_manager = ConfigManager::new(&handle).expect("config manager");
+        let mcp_config_manager = McpConfigManager::new(&handle).expect("mcp config");
         let stdio_manager = Arc::new(McpStdioManager::new());
         let http_manager = Arc::new(McpHttpManager::new());
         let tool_registry = Arc::new(ToolRegistry::new());
@@ -1173,8 +1175,14 @@ mod tests {
         let state_mutex = handle.state::<Mutex<AppData>>();
         let state = state_mutex.lock().unwrap();
         let stored = state.unlocked_pals.get(&conversation_id);
-        assert!(stored.is_some(), "unlocked_pals should contain an entry for the conversation");
-        assert!(stored.unwrap().contains("nonexistent-pal"), "unlocked_pals should contain the target_pal_id");
+        assert!(
+            stored.is_some(),
+            "unlocked_pals should contain an entry for the conversation"
+        );
+        assert!(
+            stored.unwrap().contains("nonexistent-pal"),
+            "unlocked_pals should contain the target_pal_id"
+        );
     }
 
     #[tokio::test]
@@ -1275,8 +1283,14 @@ mod tests {
         let stored = state.unlocked_pals.get(&conversation_id);
         assert!(stored.is_some());
         let stored_set = stored.unwrap();
-        assert!(stored_set.contains("coder"), "should contain coder from first message");
-        assert!(stored_set.contains("designer"), "should contain designer from second message");
+        assert!(
+            stored_set.contains("coder"),
+            "should contain coder from first message"
+        );
+        assert!(
+            stored_set.contains("designer"),
+            "should contain designer from second message"
+        );
         assert_eq!(stored_set.len(), 2, "should have accumulated both pals");
     }
 }

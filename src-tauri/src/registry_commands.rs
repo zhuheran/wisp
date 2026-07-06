@@ -1,10 +1,10 @@
-use std::sync::Mutex;
-use serde::Serialize;
-use tauri::{AppHandle, Manager};
 use crate::types::AppData;
-use wisp_mcp::{NormalizedTool, TransportConfig, register_mcp_tools};
-use wisp_tool_registry::ToolDefinition;
+use serde::Serialize;
+use std::sync::Mutex;
+use tauri::{AppHandle, Manager};
 use wisp_common::ToolResult;
+use wisp_mcp::{register_mcp_tools, NormalizedTool, TransportConfig};
+use wisp_tool_registry::ToolDefinition;
 
 /// A tool definition paired with its runtime `enabled` flag.
 ///
@@ -55,40 +55,38 @@ pub async fn registry_refresh(app_handle: AppHandle) -> Result<(), String> {
                 .list_tools(&server.id, None)
                 .await
                 .map_err(|e| e.to_string())?,
-            TransportConfig::Sse { .. }
-            | TransportConfig::Http { .. } => http_manager
+            TransportConfig::Sse { .. } | TransportConfig::Http { .. } => http_manager
                 .list_tools(&server.id, None)
                 .await
                 .map_err(|e| e.to_string())?,
         };
 
-        let tools: Vec<NormalizedTool> = raw
-            .get("tools")
-            .and_then(|v| v.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|t| {
-                        let name = t.get("name")?.as_str()?;
-                        Some(NormalizedTool {
-                            name: name.to_string(),
-                            server_id: server.id.clone(),
-                            qualified_name: format!("{}:{}", server.id, name),
-                            description: t
-                                .get("description")
-                                .and_then(|v| v.as_str())
-                                .map(String::from),
-                            input_schema: t
-                                .get("inputSchema")
-                                .cloned()
-                                .unwrap_or(serde_json::json!({"type":"object","properties":{}})),
-                            annotations: t
-                                .get("annotations")
-                                .and_then(|v| serde_json::from_value(v.clone()).ok()),
+        let tools: Vec<NormalizedTool> =
+            raw.get("tools")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|t| {
+                            let name = t.get("name")?.as_str()?;
+                            Some(NormalizedTool {
+                                name: name.to_string(),
+                                server_id: server.id.clone(),
+                                qualified_name: format!("{}:{}", server.id, name),
+                                description: t
+                                    .get("description")
+                                    .and_then(|v| v.as_str())
+                                    .map(String::from),
+                                input_schema: t.get("inputSchema").cloned().unwrap_or(
+                                    serde_json::json!({"type":"object","properties":{}}),
+                                ),
+                                annotations: t
+                                    .get("annotations")
+                                    .and_then(|v| serde_json::from_value(v.clone()).ok()),
+                            })
                         })
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
+                        .collect()
+                })
+                .unwrap_or_default();
 
         server_tools.push((server.id.clone(), tools, transport));
     }

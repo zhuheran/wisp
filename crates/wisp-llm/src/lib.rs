@@ -1,11 +1,11 @@
 pub mod backend;
+pub mod backends;
 pub mod error;
 pub mod sse;
-pub mod backends;
 
 pub use backend::{
     resolve_parameters, ChunkCallback, LlmBackend, ReasoningConfig, ReasoningPassback,
-    StreamCallbacks, StreamRequest, StreamOutcome, ToolChoice, ToolDefinition,
+    StreamCallbacks, StreamOutcome, StreamRequest, ToolChoice, ToolDefinition,
 };
 pub use error::LlmError;
 

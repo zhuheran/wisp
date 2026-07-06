@@ -1,11 +1,11 @@
 use async_trait::async_trait;
 use serde_json::json;
 
+use super::compat::{build_chat_body, stream_with_body};
 use crate::backend::{
     LlmBackend, ReasoningConfig, ReasoningPassback, StreamOutcome, StreamRequest,
 };
 use crate::error::LlmError;
-use super::compat::{build_chat_body, stream_with_body};
 
 pub struct DeepSeekBackend;
 

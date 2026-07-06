@@ -3,7 +3,9 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use serde_json::Value;
 use wisp_common::{ToolError, ToolResult};
-use wisp_tool_registry::{registered_name, ToolAnnotations, ToolDefinition, ToolHandler, ToolRegistry};
+use wisp_tool_registry::{
+    registered_name, ToolAnnotations, ToolDefinition, ToolHandler, ToolRegistry,
+};
 
 use crate::http::McpHttpManager;
 use crate::stdio::McpStdioManager;
@@ -25,13 +27,7 @@ impl McpToolHandler {
         http_manager: Arc<McpHttpManager>,
         transport: TransportConfig,
     ) -> Self {
-        McpToolHandler {
-            server_id,
-            original_name,
-            stdio_manager,
-            http_manager,
-            transport,
-        }
+        McpToolHandler { server_id, original_name, stdio_manager, http_manager, transport }
     }
 }
 
@@ -49,16 +45,22 @@ impl ToolHandler for McpToolHandler {
                 .stdio_manager
                 .call_tool(&self.server_id, &self.original_name, mcp_args)
                 .await
-                .map_err(|e| ToolError::ExecutionFailed(format!(
-                    "MCP stdio, server '{}': {e}", self.server_id
-                )))?,
+                .map_err(|e| {
+                    ToolError::ExecutionFailed(format!(
+                        "MCP stdio, server '{}': {e}",
+                        self.server_id
+                    ))
+                })?,
             TransportConfig::Sse { .. } | TransportConfig::Http { .. } => self
                 .http_manager
                 .call_tool(&self.server_id, &self.original_name, mcp_args)
                 .await
-                .map_err(|e| ToolError::ExecutionFailed(format!(
-                    "MCP http, server '{}': {e}", self.server_id
-                )))?,
+                .map_err(|e| {
+                    ToolError::ExecutionFailed(format!(
+                        "MCP http, server '{}': {e}",
+                        self.server_id
+                    ))
+                })?,
         };
 
         Ok(ToolResult::from_mcp_response(raw))
@@ -154,14 +156,8 @@ mod tests {
         let def = registry
             .get_tool("mcp_tavily_search")
             .expect("tool should be registered");
-        assert_eq!(
-            def.metadata.get("provider").and_then(|v| v.as_str()),
-            Some("mcp")
-        );
-        assert_eq!(
-            def.metadata.get("server_id").and_then(|v| v.as_str()),
-            Some("tavily")
-        );
+        assert_eq!(def.metadata.get("provider").and_then(|v| v.as_str()), Some("mcp"));
+        assert_eq!(def.metadata.get("server_id").and_then(|v| v.as_str()), Some("tavily"));
         assert_eq!(
             def.metadata.get("original_name").and_then(|v| v.as_str()),
             Some("search")

@@ -32,12 +32,7 @@ pub trait NativeTool: Send + Sync {
     /// feeding back into a model context. Defaults to the generic formatter;
     /// native tools may override to customise how their output is presented to
     /// the model.
-    fn format_to_text(
-        &self,
-        name: &str,
-        arguments: &Value,
-        result: Option<&ToolResult>,
-    ) -> String {
+    fn format_to_text(&self, name: &str, arguments: &Value, result: Option<&ToolResult>) -> String {
         crate::format_result::default_format_to_text(name, arguments, result)
     }
 }

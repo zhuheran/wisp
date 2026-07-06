@@ -21,6 +21,7 @@ const mockCharacters: Character[] = [
 		system_prompt: '',
 		parameters: [],
 		model_id: 'model-1',
+		role_bio: '',
 		created_at: 1,
 		updated_at: 1,
 	},
@@ -32,6 +33,7 @@ const mockCharacters: Character[] = [
 		system_prompt: '',
 		parameters: [],
 		model_id: 'model-2',
+		role_bio: '',
 		created_at: 2,
 		updated_at: 2,
 	},
@@ -219,7 +221,7 @@ describe('chatStore pal integration', () => {
 
 		store.currentConversationId = 'test-conversation'
 		store.chosenModel = 'test-model'
-		store.chosenProvider = { id: 'test-provider', name: 'Test Provider', base_url: 'http://localhost' }
+		store.chosenProvider = { name: 'Test Provider', display_name: 'Test Provider', base_url: 'http://localhost', models: [] }
 
     await store.sendMessage({
       sender: MessageRole.User,
@@ -253,7 +255,7 @@ describe('chatStore pal integration', () => {
 
 		store.currentConversationId = 'test-conversation'
 		store.chosenModel = 'test-model'
-		store.chosenProvider = { id: 'test-provider', name: 'Test Provider', base_url: 'http://localhost' }
+		store.chosenProvider = { name: 'Test Provider', display_name: 'Test Provider', base_url: 'http://localhost', models: [] }
 
     await store.sendMessage({
       sender: MessageRole.User,
@@ -286,7 +288,7 @@ describe('chatStore pal integration', () => {
 
     store.currentConversationId = 'test-conversation'
     store.chosenModel = 'test-model'
-    store.chosenProvider = { id: 'test-provider', name: 'Test Provider', base_url: 'http://localhost' }
+    store.chosenProvider = { name: 'Test Provider', display_name: 'Test Provider', base_url: 'http://localhost', models: [] }
 
     await store.sendMessage({
       sender: MessageRole.User,
@@ -318,7 +320,7 @@ describe('chatStore pal integration', () => {
 
     store.currentConversationId = 'test-conversation'
     store.chosenModel = 'test-model'
-    store.chosenProvider = { id: 'test-provider', name: 'Test Provider', base_url: 'http://localhost' }
+    store.chosenProvider = { name: 'Test Provider', display_name: 'Test Provider', base_url: 'http://localhost', models: [] }
 
     await store.sendMessage({
       sender: MessageRole.User,
@@ -350,7 +352,7 @@ describe('chatStore pal integration', () => {
 
 		store.currentConversationId = 'test-conversation'
 		store.chosenModel = 'test-model'
-		store.chosenProvider = { id: 'test-provider', name: 'Test Provider', base_url: 'http://localhost' }
+		store.chosenProvider = { name: 'Test Provider', display_name: 'Test Provider', base_url: 'http://localhost', models: [] }
 
     await store.sendMessage({
       sender: MessageRole.User,

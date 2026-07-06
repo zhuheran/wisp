@@ -52,10 +52,7 @@ pub struct ReasoningConfig {
 
 impl Default for ReasoningConfig {
     fn default() -> Self {
-        ReasoningConfig {
-            field_name: "reasoning_content",
-            policy: ReasoningPassback::Never,
-        }
+        ReasoningConfig { field_name: "reasoning_content", policy: ReasoningPassback::Never }
     }
 }
 
@@ -94,9 +91,7 @@ pub fn resolve_parameters(
     model: Option<&Model>,
     runtime: Option<&HashMap<String, Value>>,
 ) -> Option<HashMap<String, Value>> {
-    let mut merged = model
-        .map(|m| m.default_parameters())
-        .unwrap_or_default();
+    let mut merged = model.map(|m| m.default_parameters()).unwrap_or_default();
 
     if let Some(rt) = runtime {
         for (k, v) in rt {

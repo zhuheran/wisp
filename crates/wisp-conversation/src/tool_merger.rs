@@ -33,17 +33,15 @@ pub fn merge_tool_call_deltas(deltas: &[Value]) -> Vec<ConversationToolCall> {
                     .get("arguments")
                     .and_then(|a| a.as_str())
                     .unwrap_or("");
-                func_map.insert(
-                    "arguments".to_string(),
-                    Value::String(format!("{current}{args_str}")),
-                );
+                func_map
+                    .insert("arguments".to_string(), Value::String(format!("{current}{args_str}")));
             }
         }
     }
 
     merged
         .into_values()
-        .filter_map(|mut v| {
+        .filter_map(|v| {
             let func = v.get("function")?.as_object()?;
             let name = func.get("name")?.as_str()?.to_string();
             let args_str = func
@@ -58,13 +56,7 @@ pub fn merge_tool_call_deltas(deltas: &[Value]) -> Vec<ConversationToolCall> {
                 .map(|s| s.to_string())
                 .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
-            Some(ConversationToolCall {
-                id,
-                name,
-                arguments,
-                result: None,
-                qualified_name: None,
-            })
+            Some(ConversationToolCall { id, name, arguments, result: None, qualified_name: None })
         })
         .collect()
 }

@@ -46,7 +46,9 @@ impl ToolRegistry {
         // registered tools default to enabled; otherwise the user's UI
         // selection would be silently wiped on every refresh.
         let is_new = !inner.entries.contains_key(&name);
-        inner.entries.insert(name.clone(), ToolEntry { definition, handler });
+        inner
+            .entries
+            .insert(name.clone(), ToolEntry { definition, handler });
         if is_new {
             inner.enabled.insert(name.clone());
         }
@@ -90,7 +92,11 @@ impl ToolRegistry {
 
     pub fn list_tools(&self) -> Vec<ToolDefinition> {
         let inner = self.inner.lock().unwrap();
-        inner.entries.values().map(|e| e.definition.clone()).collect()
+        inner
+            .entries
+            .values()
+            .map(|e| e.definition.clone())
+            .collect()
     }
 
     pub fn list_enabled_tools(&self) -> Vec<ToolDefinition> {
@@ -172,9 +178,7 @@ impl ToolRegistry {
                 .ok_or_else(|| ToolError::NotFound(name.to_string()))?;
 
             if !inner.enabled.contains(name) {
-                return Err(ToolError::ExecutionFailed(format!(
-                    "tool '{name}' is disabled"
-                )));
+                return Err(ToolError::ExecutionFailed(format!("tool '{name}' is disabled")));
             }
 
             if let Some(allowed) = inner.allowed_pals.get(name) {
@@ -210,10 +214,7 @@ impl ToolRegistry {
         lines.push(String::new());
 
         for tool in &tools {
-            let desc = tool
-                .description
-                .as_deref()
-                .unwrap_or("No description");
+            let desc = tool.description.as_deref().unwrap_or("No description");
             lines.push(format!("- **{}**: {desc}", tool.name));
 
             if let Some(props) = tool
@@ -241,9 +242,7 @@ impl ToolRegistry {
         lines.push(String::new());
         lines.push("Call tools by wrapping a JSON array in `<|tool_calls|>` tags:".to_string());
         lines.push("<|tool_calls|>".to_string());
-        lines.push(
-            r#"[{"name":"tool_name","arguments":{"param1":"value1"}}]"#.to_string(),
-        );
+        lines.push(r#"[{"name":"tool_name","arguments":{"param1":"value1"}}]"#.to_string());
         lines.push("<|/tool_calls|>".to_string());
 
         lines.join("\n")
@@ -309,10 +308,12 @@ mod tests {
     fn test_unregister_by_metadata() {
         let reg = ToolRegistry::new();
         let mut def = make_definition("mcp_srv_a");
-        def.metadata.insert("server_id".to_string(), Value::String("srv".to_string()));
+        def.metadata
+            .insert("server_id".to_string(), Value::String("srv".to_string()));
         reg.register(def, Arc::new(EchoHandler), vec![]);
         let mut def2 = make_definition("mcp_srv_b");
-        def2.metadata.insert("server_id".to_string(), Value::String("srv".to_string()));
+        def2.metadata
+            .insert("server_id".to_string(), Value::String("srv".to_string()));
         reg.register(def2, Arc::new(EchoHandler), vec![]);
 
         let removed = reg.unregister_by_metadata("server_id", "srv");
@@ -336,10 +337,7 @@ mod tests {
         let reg = ToolRegistry::new();
         reg.register(make_definition("t"), Arc::new(EchoHandler), vec!["admin".to_string()]);
         let inner = reg.inner.lock().unwrap();
-        assert_eq!(
-            inner.allowed_pals.get("t"),
-            Some(&vec!["admin".to_string()])
-        );
+        assert_eq!(inner.allowed_pals.get("t"), Some(&vec!["admin".to_string()]));
     }
 
     #[tokio::test]

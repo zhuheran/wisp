@@ -17,7 +17,10 @@ pub struct ModelMetadata {
     /// The model's primary (text) context window in tokens. This is an
     /// intrinsic property of the model, not a sampling parameter. Defaults to
     /// 128k for configs authored before this field existed.
-    #[serde(default = "default_context_window", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default = "default_context_window",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub context_window: Option<u32>,
 }
 
@@ -131,8 +134,6 @@ impl Model {
             _ => return HashMap::new(),
         };
 
-        obj.into_iter()
-            .filter(|(_, v)| !v.is_null())
-            .collect()
+        obj.into_iter().filter(|(_, v)| !v.is_null()).collect()
     }
 }

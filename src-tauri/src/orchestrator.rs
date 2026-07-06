@@ -5,13 +5,13 @@ use serde_json::Value;
 
 use tauri::{Emitter, Manager};
 
+use crate::conversation_commands::{emit_event, insert_message_and_emit, ConversationEventPayload};
+use crate::types::AppData;
+use wisp_common::MessageSource;
 use wisp_configs::character::Character;
 use wisp_configs::provider::Provider;
 use wisp_conversation::director::{assemble_director_prompt, parse_director_response};
-use wisp_common::MessageSource;
 use wisp_db::types::{Message, MessageRole};
-use crate::conversation_commands::{emit_event, insert_message_and_emit, ConversationEventPayload};
-use crate::types::AppData;
 
 #[derive(Debug, Clone)]
 pub struct PalReply {
@@ -289,7 +289,7 @@ pub async fn run_director_check<R: tauri::Runtime>(
     // 6. If invoke, create PalReply with source: Directed
     if decision.should_invoke {
         if let Some(pal_id) = decision.target_pal_id {
-        	println!("Director calls {}", pal_id);
+            println!("Director calls {}", pal_id);
 
             let pal = all_characters
                 .iter()
@@ -386,9 +386,8 @@ pub async fn run_director_check<R: tauri::Runtime>(
                 source: MessageSource::Directed,
             }));
         }
-    }
-    else {
-    	println!("Director believes no one should be called");
+    } else {
+        println!("Director believes no one should be called");
     }
 
     // 7. Return None if action: none
@@ -449,15 +448,9 @@ async fn call_llm_with_pal_config<R: tauri::Runtime>(
                 );
             });
 
-            StreamCallbacks {
-                on_content,
-                on_reasoning,
-            }
-        }
-        None => StreamCallbacks {
-            on_content: Arc::new(|_| {}),
-            on_reasoning: Arc::new(|_| {}),
+            StreamCallbacks { on_content, on_reasoning }
         },
+        None => StreamCallbacks { on_content: Arc::new(|_| {}), on_reasoning: Arc::new(|_| {}) },
     };
 
     let backend = backend_for(provider);
@@ -484,10 +477,10 @@ mod tests {
     use std::sync::Arc;
 
     use crate::cache::DiagramCache;
-    use wisp_configs::ConfigManager;
     use wisp_configs::character::Character;
-    use wisp_db::create_memory_pool;
+    use wisp_configs::ConfigManager;
     use wisp_db::chat::Chat;
+    use wisp_db::create_memory_pool;
     use wisp_db::types::MessageRole;
     use wisp_keyring::KeyManager;
     use wisp_mcp::McpConfigManager;
@@ -533,10 +526,8 @@ mod tests {
 
         let diagram_cache = DiagramCache::new().expect("diagram cache");
         let key_manager = KeyManager::new("test-wisp".to_string());
-        let config_manager =
-            ConfigManager::new(&handle).expect("config manager");
-        let mcp_config_manager =
-            McpConfigManager::new(&handle).expect("mcp config");
+        let config_manager = ConfigManager::new(&handle).expect("config manager");
+        let mcp_config_manager = McpConfigManager::new(&handle).expect("mcp config");
         let stdio_manager = Arc::new(McpStdioManager::new());
         let http_manager = Arc::new(McpHttpManager::new());
         let tool_registry = Arc::new(ToolRegistry::new());
@@ -610,9 +601,7 @@ mod tests {
     #[test]
     fn build_context_preserves_reply_source_metadata() {
         let pal = test_character("c1", "Bot", "You are a bot.", "A bot");
-        let replies = vec![
-            test_reply("c2", "Other", "hello", MessageSource::Directed),
-        ];
+        let replies = vec![test_reply("c2", "Other", "hello", MessageSource::Directed)];
 
         let context = build_context_for_pal(&pal, &replies, &[]).unwrap();
 
@@ -623,7 +612,12 @@ mod tests {
     #[test]
     fn build_context_includes_conversation_history() {
         let pal = test_character("c1", "Bot", "You are a bot.", "A bot");
-        let replies = vec![test_reply("c2", "Other", "a pal reply", MessageSource::UserPrompted)];
+        let replies = vec![test_reply(
+            "c2",
+            "Other",
+            "a pal reply",
+            MessageSource::UserPrompted,
+        )];
         let history = vec![
             Message {
                 id: "user-msg-1".to_string(),
@@ -709,15 +703,13 @@ mod tests {
         // unlocked pals → returns empty vec (no LLM calls made).
         let (handle, conv_id) = setup_app();
         let provider = test_provider();
-        let characters = vec![
-            test_character("c1", "Alice", "You are Alice.", "Expert"),
-        ];
+        let characters = vec![test_character("c1", "Alice", "You are Alice.", "Expert")];
 
         let result = orchestrate_multi_pal_round(
             &handle,
             &conv_id,
             "msg1",
-            vec![],  // empty target_pal_ids
+            vec![], // empty target_pal_ids
             &characters,
             &provider,
             None,
@@ -734,9 +726,7 @@ mod tests {
         // Step 5: Pal ID not found in all_characters → error before any LLM call.
         let (handle, conv_id) = setup_app();
         let provider = test_provider();
-        let characters = vec![
-            test_character("c1", "Alice", "You are Alice.", "Expert"),
-        ];
+        let characters = vec![test_character("c1", "Alice", "You are Alice.", "Expert")];
 
         let result = orchestrate_multi_pal_round(
             &handle,

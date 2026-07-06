@@ -1,12 +1,12 @@
-use thiserror::Error;
 use serde;
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash, Default)]
 pub struct ThreadTreeItem {
-	pub key: String,
-	pub parent: Option<String>,
-	pub children: Vec<String>,
+    pub key: String,
+    pub parent: Option<String>,
+    pub children: Vec<String>,
 }
 
 #[derive(Debug, Error)]
@@ -19,10 +19,9 @@ pub enum ChatError {
     Message(#[from] MessageError),
     #[error("Chat Thread error: {0}")]
     Thread(#[from] ThreadError),
-	#[error("Chat Conversation error: {0}")]
-	Conversation(#[from] ConversationError),
+    #[error("Chat Conversation error: {0}")]
+    Conversation(#[from] ConversationError),
 }
-
 
 #[derive(Debug, Error)]
 pub enum ConversationError {
@@ -44,7 +43,6 @@ pub struct Conversation {
     pub default_pal_id: Option<String>,
 }
 
-
 #[derive(Debug, Error)]
 pub enum ThreadError {
     #[error("Database error in Thread: {0}")]
@@ -53,10 +51,9 @@ pub enum ThreadError {
     Pool(#[from] r2d2::Error),
     #[error("Invalid thread relation")]
     InvalidRelation,
-	#[error("Invalid thread relation in batch operation at index {0}")]
-	InvalidRelationBatch(usize),
+    #[error("Invalid thread relation in batch operation at index {0}")]
+    InvalidRelationBatch(usize),
 }
-
 
 #[derive(Debug, Error)]
 pub enum MessageError {
@@ -122,7 +119,7 @@ pub struct ImageUrl {
 pub struct Message {
     pub id: String,
     pub text: String,
-	pub reasoning: Option<String>,
+    pub reasoning: Option<String>,
     pub sender: MessageRole,
     pub timestamp: i64,
     #[serde(skip_serializing_if = "Option::is_none")]

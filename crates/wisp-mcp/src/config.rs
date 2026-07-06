@@ -1,11 +1,9 @@
 use crate::types::*;
 use serde_json::Value;
-use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Mutex;
-use tauri::{AppHandle, Manager};
-
+use tauri::Manager;
 
 // ========== MCP Config Manager ==========
 
@@ -21,13 +19,15 @@ impl McpConfigManager {
             .app_data_dir()
             .expect("Failed to get config directory");
 
-        fs::create_dir_all(&config_dir).map_err(|e| format!("Failed to create config directory: {}", e))?;
+        fs::create_dir_all(&config_dir)
+            .map_err(|e| format!("Failed to create config directory: {}", e))?;
 
         let config_path = config_dir.join("mcp_config.json");
         let config = if config_path.exists() {
             let content = fs::read_to_string(&config_path).map_err(|e| e.to_string())?;
             if let Ok(raw) = serde_json::from_str::<Value>(&content) {
-                if raw.get("pipeline_config").is_some() || raw.get("conversation_config").is_some() {
+                if raw.get("pipeline_config").is_some() || raw.get("conversation_config").is_some()
+                {
                     eprintln!(
                         "Warning: mcp_config.json contains pipeline_config/conversation_config \
                          which have moved to Settings (configs.toml). These values are now ignored."
@@ -39,10 +39,7 @@ impl McpConfigManager {
             McpConfig::default()
         };
 
-        Ok(Self {
-            config_path,
-            config: Mutex::new(config),
-        })
+        Ok(Self { config_path, config: Mutex::new(config) })
     }
 
     pub fn save(&self) -> Result<(), String> {

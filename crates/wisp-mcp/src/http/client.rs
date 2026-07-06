@@ -1,12 +1,12 @@
+use anyhow::{Context, Result};
+use futures::StreamExt;
+use reqwest::Client;
+use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{oneshot, Mutex};
 use tokio::time::timeout;
-use serde_json::{json, Value};
-use anyhow::{Context, Result};
-use reqwest::Client;
-use futures::StreamExt;
 
 pub enum HttpTransport {
     Sse,
@@ -89,7 +89,9 @@ impl McpHttpClient {
             self.start_sse_listener().await?;
         }
 
-        let result = self.call_with_timeout("initialize", params, Duration::from_secs(60)).await?;
+        let result = self
+            .call_with_timeout("initialize", params, Duration::from_secs(60))
+            .await?;
 
         let notification = json!({
             "jsonrpc": "2.0",
@@ -99,10 +101,10 @@ impl McpHttpClient {
         match &self.transport {
             HttpTransport::Sse => {
                 self.send_notification(&notification).await?;
-            }
+            },
             HttpTransport::Http => {
                 self.send_http_request(&notification).await?;
-            }
+            },
         }
 
         Ok(result)
@@ -116,7 +118,7 @@ impl McpHttpClient {
         let server_id = self.server_id.clone();
 
         let sse_url = format!("{}/sse", url.trim_end_matches('/'));
-        
+
         let mut request = client.get(&sse_url);
         for (key, value) in &headers {
             request = request.header(key, value);
@@ -145,32 +147,44 @@ impl McpHttpClient {
 
                                             if trimmed.starts_with("data:") {
                                                 let data = trimmed[5..].trim();
-                                                if let Ok(msg) = serde_json::from_str::<Value>(data) {
-                                                    if let Some(id) = msg.get("id").and_then(|v| v.as_i64()) {
-                                                        if let Some(tx) = pending.lock().await.remove(&id) {
+                                                if let Ok(msg) = serde_json::from_str::<Value>(data)
+                                                {
+                                                    if let Some(id) =
+                                                        msg.get("id").and_then(|v| v.as_i64())
+                                                    {
+                                                        if let Some(tx) =
+                                                            pending.lock().await.remove(&id)
+                                                        {
                                                             let _ = tx.send(msg);
                                                         }
                                                     } else {
-                                                        println!("[MCP-SSE:{}] Notification: {}", server_id, data);
+                                                        println!(
+                                                            "[MCP-SSE:{}] Notification: {}",
+                                                            server_id, data
+                                                        );
                                                     }
                                                 }
                                             }
                                         }
                                     }
-                                }
+                                },
                                 Err(e) => {
                                     eprintln!("[MCP-SSE:{}] Stream error: {}", server_id, e);
                                     break;
-                                }
+                                },
                             }
                         }
                     } else {
-                        eprintln!("[MCP-SSE:{}] SSE connection failed: {}", server_id, response.status());
+                        eprintln!(
+                            "[MCP-SSE:{}] SSE connection failed: {}",
+                            server_id,
+                            response.status()
+                        );
                     }
-                }
+                },
                 Err(e) => {
                     eprintln!("[MCP-SSE:{}] Failed to connect: {}", server_id, e);
-                }
+                },
             }
         });
 
@@ -180,7 +194,7 @@ impl McpHttpClient {
 
     async fn send_notification(&self, notification: &Value) -> Result<()> {
         let url = format!("{}/message", self.url.trim_end_matches('/'));
-        
+
         let mut request = self.client.post(&url);
         for (key, value) in &self.headers {
             request = request.header(key, value);
@@ -225,10 +239,16 @@ impl McpHttpClient {
     }
 
     pub async fn call(&self, method: &str, params: Value) -> Result<Value> {
-        self.call_with_timeout(method, params, Duration::from_secs(30)).await
+        self.call_with_timeout(method, params, Duration::from_secs(30))
+            .await
     }
 
-    pub async fn call_with_timeout(&self, method: &str, params: Value, timeout_duration: Duration) -> Result<Value> {
+    pub async fn call_with_timeout(
+        &self,
+        method: &str,
+        params: Value,
+        timeout_duration: Duration,
+    ) -> Result<Value> {
         let id = {
             let mut id_lock = self.next_id.lock().await;
             let id = *id_lock;
@@ -252,15 +272,21 @@ impl McpHttpClient {
 
                 let response = timeout(timeout_duration, rx)
                     .await
-                    .context(format!("MCP request timed out after {:?} for method: {}", timeout_duration, method))?
+                    .context(format!(
+                        "MCP request timed out after {:?} for method: {}",
+                        timeout_duration, method
+                    ))?
                     .context("MCP response channel closed")?;
 
                 if let Some(err) = response.get("error") {
                     anyhow::bail!("MCP Server Error: {}", err);
                 }
 
-                response.get("result").cloned().ok_or_else(|| anyhow::anyhow!("MCP response missing 'result'"))
-            }
+                response
+                    .get("result")
+                    .cloned()
+                    .ok_or_else(|| anyhow::anyhow!("MCP response missing 'result'"))
+            },
             HttpTransport::Http => {
                 let response = self.send_http_request(&request).await?;
 
@@ -268,8 +294,11 @@ impl McpHttpClient {
                     anyhow::bail!("MCP Server Error: {}", err);
                 }
 
-                response.get("result").cloned().ok_or_else(|| anyhow::anyhow!("MCP response missing 'result'"))
-            }
+                response
+                    .get("result")
+                    .cloned()
+                    .ok_or_else(|| anyhow::anyhow!("MCP response missing 'result'"))
+            },
         }
     }
 

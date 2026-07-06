@@ -7,9 +7,7 @@ use crate::types::AppData;
 // ========== Pipeline Config ==========
 
 #[tauri::command]
-pub async fn settings_get_pipeline_config(
-    app_handle: AppHandle,
-) -> Result<PipelineConfig, String> {
+pub async fn settings_get_pipeline_config(app_handle: AppHandle) -> Result<PipelineConfig, String> {
     let state = app_handle.state::<Mutex<AppData>>();
     let state = state.lock().map_err(|e| e.to_string())?;
     Ok(state.config_manager.get_pipeline_config())

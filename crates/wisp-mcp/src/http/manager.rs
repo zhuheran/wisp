@@ -1,14 +1,13 @@
+use anyhow::Result;
+use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::Mutex;
-use serde_json::Value;
-use anyhow::Result;
 use tauri::{AppHandle, Emitter};
+use tokio::sync::Mutex;
 
 use super::client::McpHttpClient;
-use crate::types::{ServerConfig, ConnectionStatus, TransportConfig};
+use crate::types::{ConnectionStatus, ServerConfig, TransportConfig};
 use wisp_common::McpConnectionStatusEvent;
-
 
 pub struct McpHttpManager {
     clients: Arc<Mutex<HashMap<String, McpHttpClient>>>,
@@ -37,13 +36,17 @@ impl McpHttpManager {
             }
         }
 
-        self.update_status(&config.id, ConnectionStatus {
-            server_id: config.id.clone(),
-            connected: false,
-            last_ping_at: None,
-            reconnect_attempts: 0,
-            error: None,
-        }).await;
+        self.update_status(
+            &config.id,
+            ConnectionStatus {
+                server_id: config.id.clone(),
+                connected: false,
+                last_ping_at: None,
+                reconnect_attempts: 0,
+                error: None,
+            },
+        )
+        .await;
 
         self.emit_status(McpConnectionStatusEvent {
             server_id: config.id.clone(),
@@ -53,7 +56,8 @@ impl McpHttpManager {
             error: None,
             transport_kind: "http".to_string(),
             source: "connecting".to_string(),
-        }).await;
+        })
+        .await;
 
         let transport_kind = match &config.transport {
             TransportConfig::Sse { .. } => "sse",
@@ -63,23 +67,20 @@ impl McpHttpManager {
 
         let connect_result = match &config.transport {
             TransportConfig::Sse { url, headers } => {
-                McpHttpClient::new_sse(
-                    config.id.clone(),
-                    url.clone(),
-                    headers.clone(),
-                ).await
-            }
+                McpHttpClient::new_sse(config.id.clone(), url.clone(), headers.clone()).await
+            },
             TransportConfig::Http { url, headers, session_id } => {
                 McpHttpClient::new_http(
                     config.id.clone(),
                     url.clone(),
                     headers.clone(),
                     session_id.clone(),
-                ).await
-            }
+                )
+                .await
+            },
             _ => {
                 anyhow::bail!("Transport type not supported by HTTP manager")
-            }
+            },
         };
 
         let client = match connect_result {
@@ -93,9 +94,10 @@ impl McpHttpManager {
                     error: Some(e.to_string()),
                     transport_kind: transport_kind.to_string(),
                     source: "connect_failed".to_string(),
-                }).await;
+                })
+                .await;
                 return Err(e);
-            }
+            },
         };
 
         if let Err(e) = client.initialize().await {
@@ -107,7 +109,8 @@ impl McpHttpManager {
                 error: Some(e.to_string()),
                 transport_kind: transport_kind.to_string(),
                 source: "connect_failed".to_string(),
-            }).await;
+            })
+            .await;
             return Err(e);
         }
         println!("[McpHttpManager] Server {} initialized", config.id);
@@ -117,29 +120,38 @@ impl McpHttpManager {
             clients.insert(config.id.clone(), client);
         }
 
-        self.update_status(&config.id, ConnectionStatus {
-            server_id: config.id.clone(),
-            connected: true,
-            last_ping_at: Some(std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs()),
-            reconnect_attempts: 0,
-            error: None,
-        }).await;
+        self.update_status(
+            &config.id,
+            ConnectionStatus {
+                server_id: config.id.clone(),
+                connected: true,
+                last_ping_at: Some(
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs(),
+                ),
+                reconnect_attempts: 0,
+                error: None,
+            },
+        )
+        .await;
 
         self.emit_status(McpConnectionStatusEvent {
             server_id: config.id.clone(),
             connected: true,
-            last_ping_at: Some(std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs()),
+            last_ping_at: Some(
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs(),
+            ),
             reconnect_attempts: 0,
             error: None,
             transport_kind: transport_kind.to_string(),
             source: "connected".to_string(),
-        }).await;
+        })
+        .await;
 
         Ok(())
     }
@@ -150,13 +162,17 @@ impl McpHttpManager {
             client.disconnect().await?;
         }
 
-        self.update_status(server_id, ConnectionStatus {
-            server_id: server_id.to_string(),
-            connected: false,
-            last_ping_at: None,
-            reconnect_attempts: 0,
-            error: None,
-        }).await;
+        self.update_status(
+            server_id,
+            ConnectionStatus {
+                server_id: server_id.to_string(),
+                connected: false,
+                last_ping_at: None,
+                reconnect_attempts: 0,
+                error: None,
+            },
+        )
+        .await;
 
         self.emit_status(McpConnectionStatusEvent {
             server_id: server_id.to_string(),
@@ -166,14 +182,16 @@ impl McpHttpManager {
             error: None,
             transport_kind: "http".to_string(),
             source: "disconnected".to_string(),
-        }).await;
+        })
+        .await;
 
         Ok(())
     }
 
     pub async fn list_tools(&self, server_id: &str, cursor: Option<String>) -> Result<Value> {
         let clients = self.clients.lock().await;
-        let client = clients.get(server_id)
+        let client = clients
+            .get(server_id)
             .ok_or_else(|| anyhow::anyhow!("Server {} not connected", server_id))?;
 
         client.list_tools(cursor).await
@@ -186,7 +204,8 @@ impl McpHttpManager {
         arguments: Option<Value>,
     ) -> Result<Value> {
         let clients = self.clients.lock().await;
-        let client = clients.get(server_id)
+        let client = clients
+            .get(server_id)
             .ok_or_else(|| anyhow::anyhow!("Server {} not connected", server_id))?;
 
         client.call_tool(tool_name, arguments).await

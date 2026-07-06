@@ -1,11 +1,9 @@
-use serde_json::Value;
-use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::sync::Mutex;
 use tauri::{AppHandle, Manager};
 
-use wisp_mcp::{ServerConfig, SessionState};
 use crate::types::AppData;
+use wisp_mcp::{ServerConfig, SessionState};
 
 // ========== Tauri Commands ==========
 
@@ -18,7 +16,10 @@ pub async fn mcp_get_servers(app_handle: AppHandle) -> Result<Vec<ServerConfig>,
 }
 
 #[tauri::command]
-pub async fn mcp_get_server(app_handle: AppHandle, server_id: String) -> Result<Option<ServerConfig>, String> {
+pub async fn mcp_get_server(
+    app_handle: AppHandle,
+    server_id: String,
+) -> Result<Option<ServerConfig>, String> {
     let state = app_handle.state::<Mutex<AppData>>();
     let state = state.lock().map_err(|e| e.to_string())?;
     Ok(state.mcp_config_manager.get_server(&server_id))
@@ -32,7 +33,11 @@ pub async fn mcp_add_server(app_handle: AppHandle, server: ServerConfig) -> Resu
 }
 
 #[tauri::command]
-pub async fn mcp_update_server(app_handle: AppHandle, server_id: String, server: ServerConfig) -> Result<(), String> {
+pub async fn mcp_update_server(
+    app_handle: AppHandle,
+    server_id: String,
+    server: ServerConfig,
+) -> Result<(), String> {
     let state = app_handle.state::<Mutex<AppData>>();
     let state = state.lock().map_err(|e| e.to_string())?;
     state.mcp_config_manager.update_server(&server_id, server)
@@ -62,13 +67,18 @@ pub async fn mcp_save_session(app_handle: AppHandle, session: SessionState) -> R
 }
 
 #[tauri::command]
-pub async fn mcp_load_session(app_handle: AppHandle, session_id: String) -> Result<Option<SessionState>, String> {
+pub async fn mcp_load_session(
+    app_handle: AppHandle,
+    session_id: String,
+) -> Result<Option<SessionState>, String> {
     let config_dir = app_handle
         .path()
         .app_data_dir()
         .map_err(|e| e.to_string())?;
 
-    let session_path = config_dir.join("mcp_sessions").join(format!("{}.json", session_id));
+    let session_path = config_dir
+        .join("mcp_sessions")
+        .join(format!("{}.json", session_id));
 
     if !session_path.exists() {
         return Ok(None);
@@ -86,7 +96,9 @@ pub async fn mcp_delete_session(app_handle: AppHandle, session_id: String) -> Re
         .app_data_dir()
         .map_err(|e| e.to_string())?;
 
-    let session_path = config_dir.join("mcp_sessions").join(format!("{}.json", session_id));
+    let session_path = config_dir
+        .join("mcp_sessions")
+        .join(format!("{}.json", session_id));
 
     if session_path.exists() {
         fs::remove_file(session_path).map_err(|e| e.to_string())?;
@@ -95,27 +107,25 @@ pub async fn mcp_delete_session(app_handle: AppHandle, session_id: String) -> Re
     Ok(())
 }
 
-
-
 #[tauri::command]
 pub async fn mcp_list_sessions(app_handle: AppHandle) -> Result<Vec<SessionState>, String> {
     let config_dir = app_handle
         .path()
         .app_data_dir()
         .map_err(|e| e.to_string())?;
-    
+
     let sessions_dir = config_dir.join("mcp_sessions");
-    
+
     if !sessions_dir.exists() {
         return Ok(vec![]);
     }
-    
+
     let mut sessions = vec![];
-    
+
     for entry in fs::read_dir(sessions_dir).map_err(|e| e.to_string())? {
         let entry = entry.map_err(|e| e.to_string())?;
         let path = entry.path();
-        
+
         if path.extension().and_then(|s| s.to_str()) == Some("json") {
             let content = fs::read_to_string(&path).map_err(|e| e.to_string())?;
             if let Ok(session) = serde_json::from_str::<SessionState>(&content) {
@@ -123,6 +133,6 @@ pub async fn mcp_list_sessions(app_handle: AppHandle) -> Result<Vec<SessionState
             }
         }
     }
-    
+
     Ok(sessions)
 }

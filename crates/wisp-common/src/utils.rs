@@ -1,5 +1,5 @@
-use xxhash_rust::xxh3::Xxh3;
 use uuid::Uuid;
+use xxhash_rust::xxh3::Xxh3;
 
 pub fn compute_content_hash(content: &str) -> String {
     let mut hasher = Xxh3::new();

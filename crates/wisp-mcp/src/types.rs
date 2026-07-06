@@ -138,8 +138,13 @@ pub struct ToolCallResult {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ToolCallContent {
-    Text { text: String },
-    Image { data: String, mime_type: String },
+    Text {
+        text: String,
+    },
+    Image {
+        data: String,
+        mime_type: String,
+    },
     Resource {
         uri: String,
         #[serde(skip_serializing_if = "Option::is_none")]

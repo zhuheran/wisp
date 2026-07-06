@@ -1,20 +1,17 @@
 use async_trait::async_trait;
 
+use super::compat::{build_chat_body, stream_with_body};
 use crate::backend::{
     LlmBackend, ReasoningConfig, ReasoningPassback, StreamOutcome, StreamRequest,
 };
 use crate::error::LlmError;
-use super::compat::{build_chat_body, stream_with_body};
 
 pub struct OpenAiBackend;
 
 #[async_trait]
 impl LlmBackend for OpenAiBackend {
     fn reasoning_config(&self) -> ReasoningConfig {
-        ReasoningConfig {
-            field_name: "reasoning_content",
-            policy: ReasoningPassback::Never,
-        }
+        ReasoningConfig { field_name: "reasoning_content", policy: ReasoningPassback::Never }
     }
 
     async fn stream(&self, req: StreamRequest) -> Result<StreamOutcome, LlmError> {

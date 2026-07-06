@@ -1,6 +1,6 @@
-pub mod openai;
-pub mod deepseek;
 pub mod compat;
+pub mod deepseek;
+pub mod openai;
 
 #[cfg(test)]
 mod tests {

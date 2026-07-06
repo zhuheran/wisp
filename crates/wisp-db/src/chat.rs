@@ -1,8 +1,8 @@
 use crate::conversations::Conversations;
 use crate::messages::Messages;
+use crate::pool::{create_pool, DbPool};
 use crate::threads::Threads;
 use crate::types::{ChatError, Conversation, ConversationError, Message, ThreadTreeItem};
-use crate::pool::{create_pool, DbPool};
 use std::path::PathBuf;
 use tauri::{AppHandle, Manager};
 
@@ -20,12 +20,7 @@ impl Chat {
         let thread_manager = Threads::new(pool.clone(), "messages", "id")?;
         let conversation_manager = Conversations::new(pool.clone(), "messages")?;
 
-        Ok(Chat {
-            pool,
-            thread_manager,
-            conversation_manager,
-            messages_manager,
-        })
+        Ok(Chat { pool, thread_manager, conversation_manager, messages_manager })
     }
 
     pub fn new(app_handle: &AppHandle) -> Result<Self, ChatError> {
@@ -65,7 +60,7 @@ impl Chat {
         conversation_id: &str,
         message_id: &str,
         text: &str,
-			reasoning: Option<&str>,
+        reasoning: Option<&str>,
         sender: &str,
         parent_message_id: Option<&str>,
         images: Option<&str>,
@@ -76,8 +71,17 @@ impl Chat {
         let tx = conn.transaction()?;
 
         // Add the message
-        self.messages_manager
-            .add(message_id, text, reasoning, sender, None, None, images, tool_calls, tool_call_id)?;
+        self.messages_manager.add(
+            message_id,
+            text,
+            reasoning,
+            sender,
+            None,
+            None,
+            images,
+            tool_calls,
+            tool_call_id,
+        )?;
 
         // Link to parent message
         self.thread_manager.add(message_id, parent_message_id)?;
@@ -105,12 +109,12 @@ impl Chat {
         conversation_id: &str,
         leaf_message_id: &str,
     ) -> Result<Vec<Message>, ChatError> {
-        let conv = self
-            .conversation_manager
-            .get(conversation_id)?
-            .ok_or(ChatError::Conversation(ConversationError::Database(
-                rusqlite::Error::QueryReturnedNoRows,
-            )))?;
+        let conv =
+            self.conversation_manager
+                .get(conversation_id)?
+                .ok_or(ChatError::Conversation(ConversationError::Database(
+                    rusqlite::Error::QueryReturnedNoRows,
+                )))?;
 
         let Some(entry_id) = conv.entry_message_id else {
             return Ok(vec![]);
@@ -127,9 +131,9 @@ impl Chat {
         }
 
         if ids.last() != Some(&entry_id) {
-            return Err(ChatError::Conversation(ConversationError::InvalidOperation(
-                format!("message {leaf_message_id} is not in conversation {conversation_id}"),
-            )));
+            return Err(ChatError::Conversation(ConversationError::InvalidOperation(format!(
+                "message {leaf_message_id} is not in conversation {conversation_id}"
+            ))));
         }
 
         ids.reverse();
@@ -140,12 +144,12 @@ impl Chat {
 
     /// Gets the default leaf by always selecting the last child at each branch.
     pub fn get_default_leaf(&mut self, conversation_id: &str) -> Result<Option<String>, ChatError> {
-        let conv = self
-            .conversation_manager
-            .get(conversation_id)?
-            .ok_or(ChatError::Conversation(ConversationError::Database(
-                rusqlite::Error::QueryReturnedNoRows,
-            )))?;
+        let conv =
+            self.conversation_manager
+                .get(conversation_id)?
+                .ok_or(ChatError::Conversation(ConversationError::Database(
+                    rusqlite::Error::QueryReturnedNoRows,
+                )))?;
 
         let Some(mut current) = conv.entry_message_id else {
             return Ok(None);
@@ -216,10 +220,10 @@ impl Chat {
                     self.messages_manager.delete(&message.id)?;
                     self.thread_manager.delete_with_parent(&message.id)?;
                 }
-            }
+            },
             Err(e) => {
                 eprintln!("[Chat] Failed to list messages while deleting conversation {}: {:?}. Proceeding to delete conversation record only; orphan messages may remain.", conversation_id, e);
-            }
+            },
         }
 
         self.conversation_manager.delete(conversation_id)?;
@@ -325,7 +329,7 @@ impl Chat {
                     for child in &children {
                         self.thread_manager.update_parent(child, Some(p))?;
                     }
-                }
+                },
                 None => {
                     // root message
                     match children.len() {
@@ -338,7 +342,7 @@ impl Chat {
                                 )))?;
                             self.conversation_manager
                                 .update_entry_message_id(&conversation.id, None)?
-                        }
+                        },
                         1 => {
                             let conversation = self
                                 .conversation_manager
@@ -348,16 +352,16 @@ impl Chat {
                                 )))?;
                             self.conversation_manager
                                 .update_entry_message_id(&conversation.id, Some(&children[0]))?
-                        }
+                        },
                         _ => {
                             return Err(ChatError::Conversation(
                                 ConversationError::InvalidOperation(
                                     "Cannot delete root message with children".to_string(),
                                 ),
                             ));
-                        }
+                        },
                     }
-                }
+                },
             };
 
             // Delete message
@@ -407,7 +411,14 @@ mod tests {
     use super::*;
     use crate::create_memory_pool;
 
-    fn add(chat: &mut Chat, conversation_id: &str, id: &str, text: &str, sender: &str, parent: Option<&str>) {
+    fn add(
+        chat: &mut Chat,
+        conversation_id: &str,
+        id: &str,
+        text: &str,
+        sender: &str,
+        parent: Option<&str>,
+    ) {
         chat.add_message(conversation_id, id, text, None, sender, parent, None, None, None)
             .expect("message inserted");
     }
@@ -424,9 +435,7 @@ mod tests {
         add(&mut chat, "c1", "a2", "assistant branch 2", "bot", Some("u1"));
         add(&mut chat, "c1", "u2", "follow up", "user", Some("a2"));
 
-        let path = chat
-            .get_message_path_to("c1", "u2")
-            .expect("path selected");
+        let path = chat.get_message_path_to("c1", "u2").expect("path selected");
         let ids: Vec<String> = path.into_iter().map(|message| message.id).collect();
 
         assert_eq!(ids, vec!["u1", "a2", "u2"]);
@@ -484,10 +493,7 @@ mod tests {
         // Persist a selection and read it back.
         chat.update_thread_decisions("c1", Some(&[0, 1, 0]))
             .expect("saved");
-        assert_eq!(
-            chat.get_thread_decisions("c1").unwrap(),
-            Some(vec![0, 1, 0])
-        );
+        assert_eq!(chat.get_thread_decisions("c1").unwrap(), Some(vec![0, 1, 0]));
 
         // Overwriting replaces, not appends.
         chat.update_thread_decisions("c1", Some(&[2]))

@@ -8,9 +8,7 @@ pub struct HttpClient {
 
 impl HttpClient {
     pub fn new() -> Self {
-        Self {
-            client: reqwest::Client::new(),
-        }
+        Self { client: reqwest::Client::new() }
     }
 
     pub async fn get(
@@ -32,10 +30,7 @@ impl HttpClient {
             request = request.headers(header_map);
         }
 
-        let response = request
-            .send()
-            .await
-            .map_err(|e| e.to_string())?;
+        let response = request.send().await.map_err(|e| e.to_string())?;
 
         if parse_json {
             response.json::<Value>().await.map_err(|e| e.to_string())
@@ -64,10 +59,7 @@ impl HttpClient {
             request = request.headers(header_map);
         }
 
-        let response = request
-            .send()
-            .await
-            .map_err(|e| e.to_string())?;
+        let response = request.send().await.map_err(|e| e.to_string())?;
 
         if parse_json {
             response.json::<Value>().await.map_err(|e| e.to_string())

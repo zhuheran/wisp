@@ -38,7 +38,11 @@ pub fn registered_name(server_id: &str, tool_name: &str) -> String {
         let mut out = String::new();
         let mut prev_underscore = false;
         for ch in s.chars() {
-            let mapped = if ch.is_ascii_alphanumeric() || ch == '_' { ch } else { '_' };
+            let mapped = if ch.is_ascii_alphanumeric() || ch == '_' {
+                ch
+            } else {
+                '_'
+            };
             if mapped == '_' {
                 if !prev_underscore {
                     out.push('_');

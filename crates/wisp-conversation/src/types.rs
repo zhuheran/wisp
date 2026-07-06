@@ -50,20 +50,16 @@ impl From<&ConversationToolContent> for ToolContent {
     fn from(content: &ConversationToolContent) -> Self {
         match content {
             ConversationToolContent::Text { text } => ToolContent::Text { text: text.clone() },
-            ConversationToolContent::Image { data, mime_type } => ToolContent::Image {
-                data: data.clone(),
-                mime_type: mime_type.clone(),
+            ConversationToolContent::Image { data, mime_type } => {
+                ToolContent::Image { data: data.clone(), mime_type: mime_type.clone() }
             },
-            ConversationToolContent::Resource {
-                uri,
-                mime_type,
-                text,
-                blob,
-            } => ToolContent::Resource {
-                uri: uri.clone(),
-                mime_type: mime_type.clone(),
-                text: text.clone(),
-                blob: blob.clone(),
+            ConversationToolContent::Resource { uri, mime_type, text, blob } => {
+                ToolContent::Resource {
+                    uri: uri.clone(),
+                    mime_type: mime_type.clone(),
+                    text: text.clone(),
+                    blob: blob.clone(),
+                }
             },
         }
     }

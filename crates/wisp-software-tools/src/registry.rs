@@ -25,9 +25,7 @@ pub struct SoftwareToolRegistry {
 
 impl SoftwareToolRegistry {
     pub fn new() -> Self {
-        SoftwareToolRegistry {
-            tools: HashMap::new(),
-        }
+        SoftwareToolRegistry { tools: HashMap::new() }
     }
 
     pub fn register<T: NativeTool + 'static>(&mut self, tool: T) -> &mut Self {
@@ -77,7 +75,8 @@ impl SoftwareToolRegistry {
     pub fn register_into(&self, registry: &ToolRegistry) {
         for tool in self.tools.values() {
             let definition = build_definition(tool);
-            let handler = Arc::new(NativeToolAdapter { tool: Arc::clone(tool) }) as Arc<dyn ToolHandler>;
+            let handler =
+                Arc::new(NativeToolAdapter { tool: Arc::clone(tool) }) as Arc<dyn ToolHandler>;
             registry.register(definition, handler, tool.default_allowed_pals());
         }
     }
@@ -129,12 +128,9 @@ mod tests {
             schemars::schema_for!(EchoArgs).into()
         }
         async fn run(&self, args: Value) -> Result<ToolResult, ToolError> {
-            let args: EchoArgs =
-                serde_json::from_value(args).map_err(|e| ToolError::ExecutionFailed(e.to_string()))?;
-            Ok(ToolResult {
-                content: vec![ToolContent::Text { text: args.msg }],
-                is_error: false,
-            })
+            let args: EchoArgs = serde_json::from_value(args)
+                .map_err(|e| ToolError::ExecutionFailed(e.to_string()))?;
+            Ok(ToolResult { content: vec![ToolContent::Text { text: args.msg }], is_error: false })
         }
     }
 
@@ -170,10 +166,7 @@ mod tests {
         assert!(result.is_ok());
         let result = result.unwrap();
         assert!(!result.is_error);
-        assert_eq!(
-            result.content[0],
-            ToolContent::Text { text: "hello".to_string() }
-        );
+        assert_eq!(result.content[0], ToolContent::Text { text: "hello".to_string() });
     }
 
     #[test]

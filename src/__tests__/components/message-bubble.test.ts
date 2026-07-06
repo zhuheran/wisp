@@ -2,7 +2,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { mount } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
-import { h, ref, nextTick } from "vue";
+import { ref, nextTick } from "vue";
 import { MessageRole } from "../../libs/types";
 import MessageBubble from "../../components/MessageBubble.vue";
 import { NCollapse } from "naive-ui";

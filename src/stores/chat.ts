@@ -59,6 +59,15 @@ export function createStreamingAccumulator() {
 				reasoning = ''
 			}
 		},
+		/** 用后端权威文本（如解析 `<|tool_calls|>` 后剔除原始标签的 clean_text）
+		 * 覆盖本地累计的原始流式文本，避免 onFinish / 后续 chunk 回写脏数据。 */
+		setText(mid: string, nextText: string, nextReasoning?: string) {
+			if (currentMid !== mid) {
+				currentMid = mid
+			}
+			text = nextText
+			if (nextReasoning !== undefined) reasoning = nextReasoning
+		},
 		get text() { return text },
 		get reasoning() { return reasoning },
 	}
@@ -113,6 +122,14 @@ export function createThrottledMessagePatcher(
 			else timer = setTimeout(run, delay);
 		},
 		flush: run,
+		/** 丢弃某条消息尚未 flush 的脏 patch（例如已被 message_updated 权威覆盖）。 */
+		clear(mid: string) {
+			if (pendingMid === mid) {
+				if (timer) { clearTimeout(timer); timer = null; }
+				pendingMid = null;
+				pendingPatch = null;
+			}
+		},
 	};
 }
 
@@ -252,6 +269,10 @@ export const useChatStore = defineStore('chat', () => {
 				const original = messages.value.get(event.message_id)
 				if (original) {
 					const toolCalls = event.tool_calls ? JSON.parse(event.tool_calls) as ToolCallItem[] : original.toolCalls
+					// 后端 clean_text 是权威值：丢弃尚未 flush 的原始流式 patch，
+					// 并同步本地累计器，防止后续 flush()/onFinish 把脏文本写回。
+					messageUpdater.clear(event.message_id)
+					streamingAcc.setText(event.message_id, event.text, event.reasoning ?? undefined)
 					messages.value.set(event.message_id, {
 						...original,
 						text: event.text,
@@ -363,6 +384,10 @@ export const useChatStore = defineStore('chat', () => {
 				const original = messages.value.get(event.message_id)
 				if (original) {
 					const toolCalls = event.tool_calls ? JSON.parse(event.tool_calls) as ToolCallItem[] : original.toolCalls
+					// 后端 clean_text 是权威值：丢弃尚未 flush 的原始流式 patch，
+					// 并同步本地累计器，防止后续 flush()/onFinish 把脏文本写回。
+					messageUpdater.clear(event.message_id)
+					streamingAcc.setText(event.message_id, event.text, event.reasoning ?? undefined)
 					messages.value.set(event.message_id, {
 						...original,
 						text: event.text,
@@ -460,6 +485,10 @@ export const useChatStore = defineStore('chat', () => {
 				const original = messages.value.get(event.message_id)
 				if (original) {
 					const toolCalls = event.tool_calls ? JSON.parse(event.tool_calls) as ToolCallItem[] : original.toolCalls
+					// 后端 clean_text 是权威值：丢弃尚未 flush 的原始流式 patch，
+					// 并同步本地累计器，防止后续 flush()/onFinish 把脏文本写回。
+					messageUpdater.clear(event.message_id)
+					streamingAcc.setText(event.message_id, event.text, event.reasoning ?? undefined)
 					messages.value.set(event.message_id, {
 						...original,
 						text: event.text,
@@ -557,6 +586,10 @@ export const useChatStore = defineStore('chat', () => {
 				const original = messages.value.get(event.message_id)
 				if (original) {
 					const toolCalls = event.tool_calls ? JSON.parse(event.tool_calls) as ToolCallItem[] : original.toolCalls
+					// 后端 clean_text 是权威值：丢弃尚未 flush 的原始流式 patch，
+					// 并同步本地累计器，防止后续 flush()/onFinish 把脏文本写回。
+					messageUpdater.clear(event.message_id)
+					streamingAcc.setText(event.message_id, event.text, event.reasoning ?? undefined)
 					messages.value.set(event.message_id, {
 						...original,
 						text: event.text,

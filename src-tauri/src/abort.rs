@@ -10,9 +10,7 @@ pub struct AbortRegistry {
 
 impl AbortRegistry {
     pub fn new() -> Self {
-        Self {
-            tokens: Mutex::new(HashMap::new()),
-        }
+        Self { tokens: Mutex::new(HashMap::new()) }
     }
 
     pub fn register(&self, stream_id: &str) -> CancellationToken {
@@ -45,10 +43,7 @@ impl Default for AbortRegistry {
 }
 
 #[tauri::command]
-pub async fn conversation_abort(
-    app_handle: AppHandle,
-    stream_id: String,
-) -> Result<bool, String> {
+pub async fn conversation_abort(app_handle: AppHandle, stream_id: String) -> Result<bool, String> {
     let registry = app_handle.state::<AbortRegistry>();
     Ok(registry.cancel(&stream_id))
 }

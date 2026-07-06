@@ -6,8 +6,8 @@ use serde::Deserialize;
 use serde_json::{Map, Value};
 use wisp_common::{ToolContent, ToolError, ToolResult};
 use wisp_configs::ConfigManager;
-use wisp_software_tools::NativeTool;
 use wisp_software_tools::format_result::first_text;
+use wisp_software_tools::NativeTool;
 
 /// Shallowly merge `patch` into `base` at the top level. Only keys present in
 /// `patch` are overwritten; nested sub-objects are replaced wholesale (which
@@ -79,7 +79,7 @@ impl NativeTool for ConfigWrite {
                 } else {
                     format!("✓ {text}")
                 }
-            }
+            },
         }
     }
 
@@ -99,13 +99,13 @@ impl NativeTool for ConfigWrite {
                             }],
                             is_error: true,
                         });
-                    }
+                    },
                 };
                 self.config
                     .set_default_responder(pal_id)
                     .map_err(|e| ToolError::ExecutionFailed(e.to_string()))?;
                 "default_responder updated.".to_string()
-            }
+            },
             "chore_llm" => {
                 let chore_llm = if args.value.is_null() {
                     None
@@ -118,7 +118,7 @@ impl NativeTool for ConfigWrite {
                     .set_chore_llm(chore_llm)
                     .map_err(|e| ToolError::ExecutionFailed(e.to_string()))?;
                 "chore_llm updated.".to_string()
-            }
+            },
             "pipeline_config" => {
                 if !args.value.is_object() {
                     return Ok(ToolResult {
@@ -136,13 +136,15 @@ impl NativeTool for ConfigWrite {
                     merge_object(base, &args.value);
                 }
                 let pipeline: wisp_configs::PipelineConfig = serde_json::from_value(merged)
-                    .map_err(|e| ToolError::ExecutionFailed(format!("invalid pipeline_config: {e}")))?;
+                    .map_err(|e| {
+                        ToolError::ExecutionFailed(format!("invalid pipeline_config: {e}"))
+                    })?;
                 let pipeline = pipeline.normalize();
                 self.config
                     .update_pipeline_config(pipeline)
                     .map_err(|e| ToolError::ExecutionFailed(e.to_string()))?;
                 "pipeline_config updated.".to_string()
-            }
+            },
             "conversation_config" => {
                 if !args.value.is_object() {
                     return Ok(ToolResult {
@@ -158,14 +160,15 @@ impl NativeTool for ConfigWrite {
                     merge_object(base, &args.value);
                 }
                 let conversation: wisp_configs::ConversationLoopConfig =
-                    serde_json::from_value(merged)
-                        .map_err(|e| ToolError::ExecutionFailed(format!("invalid conversation_config: {e}")))?;
+                    serde_json::from_value(merged).map_err(|e| {
+                        ToolError::ExecutionFailed(format!("invalid conversation_config: {e}"))
+                    })?;
                 let conversation = conversation.normalize();
                 self.config
                     .update_conversation_config(conversation)
                     .map_err(|e| ToolError::ExecutionFailed(e.to_string()))?;
                 "conversation_config updated.".to_string()
-            }
+            },
             other => {
                 return Ok(ToolResult {
                     content: vec![ToolContent::Text {
@@ -173,7 +176,7 @@ impl NativeTool for ConfigWrite {
                     }],
                     is_error: true,
                 });
-            }
+            },
         };
 
         Ok(ToolResult {

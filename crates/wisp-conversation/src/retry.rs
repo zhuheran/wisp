@@ -21,7 +21,7 @@ where
                 if delay_ms > 0 {
                     tokio::time::sleep(Duration::from_millis(delay_ms)).await;
                 }
-            }
+            },
         }
     }
 

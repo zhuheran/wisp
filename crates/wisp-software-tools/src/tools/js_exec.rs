@@ -1,6 +1,6 @@
 use async_trait::async_trait;
-use serde::Deserialize;
 use schemars::JsonSchema;
+use serde::Deserialize;
 use serde_json::Value;
 use wisp_common::{ToolContent, ToolError, ToolResult};
 
@@ -42,10 +42,7 @@ impl NativeTool for JsExec {
         arguments: &Value,
         result: Option<&ToolResult>,
     ) -> String {
-        let code = arguments
-            .get("code")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let code = arguments.get("code").and_then(|v| v.as_str()).unwrap_or("");
         let mut lines: Vec<String> = Vec::new();
         lines.push("**code**:".to_string());
         lines.push(format!("```js\n{code}\n```"));
@@ -83,10 +80,7 @@ impl NativeTool for JsExec {
             None => (result, false),
         };
 
-        Ok(ToolResult {
-            content: vec![ToolContent::Text { text }],
-            is_error,
-        })
+        Ok(ToolResult { content: vec![ToolContent::Text { text }], is_error })
     }
 }
 
@@ -116,10 +110,7 @@ mod tests {
         let args = serde_json::json!({"code": "return 1 + 2;"});
         let result = tool.run(args).await.unwrap();
         assert!(!result.is_error);
-        assert_eq!(
-            result.content[0],
-            ToolContent::Text { text: "3".to_string() }
-        );
+        assert_eq!(result.content[0], ToolContent::Text { text: "3".to_string() });
     }
 
     #[tokio::test]
@@ -128,10 +119,7 @@ mod tests {
         let args = serde_json::json!({"code": "return \"hello\".toUpperCase();"});
         let result = tool.run(args).await.unwrap();
         assert!(!result.is_error);
-        assert_eq!(
-            result.content[0],
-            ToolContent::Text { text: "HELLO".to_string() }
-        );
+        assert_eq!(result.content[0], ToolContent::Text { text: "HELLO".to_string() });
     }
 
     #[tokio::test]
@@ -179,7 +167,10 @@ mod tests {
             ToolContent::Text { text } => text.as_str(),
             _ => panic!("expected text"),
         };
-        assert!(text.contains("undefinedVar"), "error should mention the undefined variable, got: {text}");
+        assert!(
+            text.contains("undefinedVar"),
+            "error should mention the undefined variable, got: {text}"
+        );
     }
 
     #[tokio::test]
@@ -192,7 +183,10 @@ mod tests {
             ToolContent::Text { text } => text.as_str(),
             _ => panic!("expected text"),
         };
-        assert!(text.contains("null") || text.contains("Cannot read"), "error should explain the type error, got: {text}");
+        assert!(
+            text.contains("null") || text.contains("Cannot read"),
+            "error should explain the type error, got: {text}"
+        );
     }
 
     #[tokio::test]

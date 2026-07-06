@@ -26,7 +26,7 @@ pub fn parse_display_names(raw: &str) -> HashMap<String, String> {
                 },
                 _ => return HashMap::new(),
             }
-        }
+        },
     };
 
     let arr = match parsed.as_array() {
@@ -63,8 +63,8 @@ pub async fn chore_complete<R: Runtime>(
     system: &str,
     user: &str,
 ) -> Result<String, String> {
-    use std::sync::Mutex;
     use crate::types::AppData;
+    use std::sync::Mutex;
 
     let (provider, model) = {
         let state = app_handle.state::<Mutex<AppData>>();
@@ -81,10 +81,7 @@ pub async fn chore_complete<R: Runtime>(
     };
 
     let noop = Arc::new(|_chunk: &str| {}) as Arc<dyn Fn(&str) + Send + Sync>;
-    let callbacks = StreamCallbacks {
-        on_content: noop.clone(),
-        on_reasoning: noop,
-    };
+    let callbacks = StreamCallbacks { on_content: noop.clone(), on_reasoning: noop };
 
     let messages: Vec<Value> = vec![
         serde_json::json!({ "role": "system", "content": system }),
@@ -147,7 +144,7 @@ pub async fn mcp_generate_tool_display_names(
         Err(e) => {
             eprintln!("[chore] display-name generation failed: {e}");
             return Ok(HashMap::new());
-        }
+        },
     };
 
     Ok(parse_display_names(&raw))
