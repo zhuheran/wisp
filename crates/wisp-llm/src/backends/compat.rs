@@ -74,8 +74,7 @@ pub(crate) async fn stream_with_body(
     let base_url = req.provider.base_url.trim_end_matches('/').to_string();
     let url = format!("{base_url}/chat/completions");
 
-    let key_manager = KeyManager::new("wisp".to_string());
-    let api_key = key_manager
+    let api_key = KeyManager::global()
         .get_api_key(&req.provider.name)
         .or_else(|_| std::env::var("OPENAI_API_KEY"))
         .map_err(|e| LlmError::Other(format!("API key not found: {e}")))?;

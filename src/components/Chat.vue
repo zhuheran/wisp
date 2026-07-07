@@ -161,6 +161,30 @@ watch(() => providerStore.providers.length, () => {
     }
   }
 }, { immediate: true });
+
+// Keep the selected provider/model in sync with the live provider list so that
+// in-place edits to model capabilities (e.g. enabling tool calling) take effect
+// immediately instead of requiring an app restart. `providerStore.providers` is
+// reassigned on every config save, so this re-binds the (otherwise stale)
+// `chosenProvider` snapshot to the freshly persisted object.
+watch(
+  () => providerStore.providers,
+  (providers) => {
+    if (!chosenProviderId.value) return;
+    const provider = providers.find((p) => p.name === chosenProviderId.value);
+    if (!provider) return;
+    chatStore.chosenProvider = provider;
+    if (chatStore.chosenModel) {
+      const modelStillExists = provider.models.some(
+        (m) => m.metadata.name === chatStore.chosenModel
+      );
+      if (!modelStillExists) {
+        chatStore.chosenModel = null;
+      }
+    }
+  },
+  { deep: true }
+);
 const autoScrollWrapper = ref<typeof AutoScrollWrapper | null>(null);
 const imageInputRef = ref<typeof ImageInput | null>(null);
 

@@ -1032,7 +1032,9 @@ mod tests {
             .expect("conversation created");
 
         let diagram_cache = DiagramCache::new().expect("diagram cache");
-        let key_manager = KeyManager::new("test-wisp".to_string());
+        let _key_manager =
+            KeyManager::new("test-wisp", std::env::temp_dir().join("wisp-test-keyring.db"))
+                .expect("key manager");
         let config_manager = ConfigManager::new(&handle).expect("config manager");
         let mcp_config_manager = McpConfigManager::new(&handle).expect("mcp config");
         let stdio_manager = Arc::new(McpStdioManager::new());
@@ -1043,7 +1045,6 @@ mod tests {
         let app_data = AppData {
             chat,
             diagram_cache,
-            key_manager,
             config_manager: Arc::new(config_manager),
             mcp_config_manager,
             mcp_stdio_manager: stdio_manager,

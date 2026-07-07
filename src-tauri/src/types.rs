@@ -10,12 +10,10 @@ use wisp_software_tools::SoftwareToolRegistry;
 use wisp_tool_registry::ToolRegistry;
 
 use crate::cache::DiagramCache;
-use wisp_keyring::KeyManager;
 
 pub struct AppData {
     pub chat: Chat,
     pub diagram_cache: DiagramCache,
-    pub key_manager: KeyManager,
     pub config_manager: Arc<ConfigManager>,
     pub mcp_config_manager: McpConfigManager,
     pub mcp_stdio_manager: Arc<McpStdioManager>,

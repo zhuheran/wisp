@@ -8,8 +8,8 @@ use wisp_configs::{character, model, provider};
 use wisp_db::types::{Conversation, Message, ThreadTreeItem};
 
 use wisp_common::get_uuid_v4;
+use wisp_keyring::KeyManager;
 
-// Content utilities
 #[tauri::command]
 pub fn hash_content(content: String) -> String {
     compute_content_hash(&content)
@@ -62,31 +62,22 @@ pub async fn post_url(
 
 // API Key Management
 #[tauri::command]
-pub fn set_api_key(app_handle: AppHandle, name: String, key: String) -> Result<(), String> {
-    let state = app_handle.state::<Mutex<AppData>>();
-    let state = state.lock().unwrap();
-    state
-        .key_manager
+pub fn set_api_key(_app_handle: AppHandle, name: String, key: String) -> Result<(), String> {
+    KeyManager::global()
         .set_api_key(&name, &key)
         .map_err(|x| x.to_string())
 }
 
 #[tauri::command]
-pub fn get_api_key(app_handle: AppHandle, name: String) -> Result<String, String> {
-    let state = app_handle.state::<Mutex<AppData>>();
-    let state = state.lock().unwrap();
-    state
-        .key_manager
+pub fn get_api_key(_app_handle: AppHandle, name: String) -> Result<String, String> {
+    KeyManager::global()
         .get_api_key(&name)
         .map_err(|x| x.to_string())
 }
 
 #[tauri::command]
-pub fn delete_api_key(app_handle: AppHandle, name: String) -> Result<(), String> {
-    let state = app_handle.state::<Mutex<AppData>>();
-    let state = state.lock().unwrap();
-    state
-        .key_manager
+pub fn delete_api_key(_app_handle: AppHandle, name: String) -> Result<(), String> {
+    KeyManager::global()
         .delete_api_key(&name)
         .map_err(|x| x.to_string())
 }

@@ -1,9 +1,10 @@
 use crate::types::AppData;
 use serde::Serialize;
+use std::collections::HashSet;
 use std::sync::Mutex;
 use tauri::{AppHandle, Manager};
 use wisp_common::ToolResult;
-use wisp_mcp::{register_mcp_tools, NormalizedTool, TransportConfig};
+use wisp_mcp::{register_mcp_tools, unregister_mcp_server, NormalizedTool, TransportConfig};
 use wisp_tool_registry::ToolDefinition;
 
 /// A tool definition paired with its runtime `enabled` flag.
@@ -106,6 +107,31 @@ pub async fn registry_refresh(app_handle: AppHandle) -> Result<(), String> {
                 std::sync::Arc::clone(&stdio_mgr),
                 std::sync::Arc::clone(&http_mgr),
             );
+        }
+    }
+
+    // Reconcile: unregister tools belonging to servers that are not connected.
+    // This keeps the live registry in sync when a server is disconnected or
+    // deleted, so the model can never call a tool whose server is gone.
+    {
+        let state = app_handle.state::<Mutex<AppData>>();
+        let state = state.lock().map_err(|e| e.to_string())?;
+        let connected_ids: HashSet<String> =
+            server_tools.iter().map(|(id, _, _)| id.clone()).collect();
+        let stale_servers: HashSet<String> = state
+            .tool_registry
+            .list_tools()
+            .into_iter()
+            .filter_map(|t| {
+                t.metadata
+                    .get("server_id")
+                    .and_then(|v| v.as_str())
+                    .map(String::from)
+            })
+            .filter(|sid| !connected_ids.contains(sid))
+            .collect();
+        for sid in stale_servers {
+            unregister_mcp_server(&state.tool_registry, &sid);
         }
     }
 

@@ -24,7 +24,7 @@ const selectedProvider = computed(() => providers.currentProvider)
     </template>
     <template #2>
       <div class="config-panel">
-        <ProviderConfig v-if="selectedProvider" :provider="selectedProvider" />
+        <ProviderConfig v-if="selectedProvider" :key="selectedProvider.name" :provider="selectedProvider" />
         <div v-else style="height: 100%; display: grid; place-items: center;">
           <n-empty description="Select a provider" />
         </div>

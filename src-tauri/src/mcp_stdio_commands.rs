@@ -3,7 +3,7 @@ use std::sync::Mutex;
 use tauri::{AppHandle, Manager};
 
 use crate::types::AppData;
-use wisp_mcp::{ConnectionStatus, ServerConfig};
+use wisp_mcp::{unregister_mcp_server, ConnectionStatus, ServerConfig};
 
 /// 连接 MCP stdio 服务器
 #[tauri::command]
@@ -24,16 +24,24 @@ pub async fn mcp_stdio_connect(app_handle: AppHandle, config: ServerConfig) -> R
 /// 断开 MCP stdio 服务器
 #[tauri::command]
 pub async fn mcp_stdio_disconnect(app_handle: AppHandle, server_id: String) -> Result<(), String> {
-    let manager = {
+    let (manager, registry) = {
         let state = app_handle.state::<Mutex<AppData>>();
         let state = state.lock().map_err(|e| e.to_string())?;
-        std::sync::Arc::clone(&state.mcp_stdio_manager)
+        (
+            std::sync::Arc::clone(&state.mcp_stdio_manager),
+            std::sync::Arc::clone(&state.tool_registry),
+        )
     };
 
     manager
         .disconnect_server(&server_id)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+
+    // Remove this server's tools from the live registry so the model stops
+    // offering tools that are no longer reachable.
+    unregister_mcp_server(&registry, &server_id);
+    Ok(())
 }
 
 /// 获取 MCP stdio 服务器状态

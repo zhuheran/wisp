@@ -3,7 +3,7 @@ use std::sync::Mutex;
 use tauri::{AppHandle, Manager};
 
 use crate::types::AppData;
-use wisp_mcp::{ServerConfig, SessionState};
+use wisp_mcp::{unregister_mcp_server, ServerConfig, SessionState};
 
 // ========== Tauri Commands ==========
 
@@ -45,9 +45,26 @@ pub async fn mcp_update_server(
 
 #[tauri::command]
 pub async fn mcp_remove_server(app_handle: AppHandle, server_id: String) -> Result<(), String> {
-    let state = app_handle.state::<Mutex<AppData>>();
-    let state = state.lock().map_err(|e| e.to_string())?;
-    state.mcp_config_manager.remove_server(&server_id)
+    let (stdio_manager, http_manager, registry, config_result) = {
+        let state = app_handle.state::<Mutex<AppData>>();
+        let state = state.lock().map_err(|e| e.to_string())?;
+        (
+            std::sync::Arc::clone(&state.mcp_stdio_manager),
+            std::sync::Arc::clone(&state.mcp_http_manager),
+            std::sync::Arc::clone(&state.tool_registry),
+            state.mcp_config_manager.remove_server(&server_id),
+        )
+    };
+    config_result?;
+
+    // Best-effort disconnect (the server may already be disconnected).
+    let _ = stdio_manager.disconnect_server(&server_id).await;
+    let _ = http_manager.disconnect_server(&server_id).await;
+
+    // Remove any tools this server registered from the live tool registry so
+    // the model can no longer call a tool whose server no longer exists.
+    unregister_mcp_server(&registry, &server_id);
+    Ok(())
 }
 
 // Session persistence commands

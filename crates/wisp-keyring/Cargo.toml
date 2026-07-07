@@ -5,7 +5,6 @@ edition.workspace = true
 
 [dependencies]
 thiserror.workspace = true
-serde.workspace = true
 keyring = { version = "3.6.2", features = [
     "apple-native",
     "windows-native",
@@ -13,3 +12,7 @@ keyring = { version = "3.6.2", features = [
     "crypto-rust",
     "tokio",
 ] }
+rusqlite = { version = "0.35.0", features = ["bundled"] }
+aes-gcm = "0.10"
+rand = "0.8"
+base64 = "0.22"

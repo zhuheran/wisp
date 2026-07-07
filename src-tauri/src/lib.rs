@@ -24,7 +24,6 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use wisp_configs::ConfigManager;
 use wisp_db::chat::Chat;
-use wisp_keyring::KeyManager;
 use wisp_mcp::McpConfigManager;
 use wisp_mcp::McpHttpManager;
 use wisp_mcp::McpStdioManager;
@@ -74,7 +73,6 @@ pub fn run() {
             app.manage(Mutex::new(AppData {
                 chat: Chat::new(app.handle())?,
                 diagram_cache: DiagramCache::new()?,
-                key_manager: KeyManager::new("wisp".to_string()),
                 config_manager,
                 mcp_config_manager,
                 mcp_stdio_manager,

@@ -271,6 +271,17 @@ const isToolRelatedBlock = (block: GroupMessageBlock): boolean => {
   return block.sender === MessageRole.Tool || (block.toolCalls?.length ?? 0) > 0;
 };
 
+const showTypingIndicator = computed(() => {
+  if (props.over) return false;
+  if (props.sender !== MessageRole.Assistant) return false;
+  if (props.groupMessages && props.groupMessages.length > 0) {
+    return !props.groupMessages.some(
+      (b) => b.text || b.reasoning || (b.toolCalls?.length ?? 0) > 0
+    );
+  }
+  return !props.text && !props.reasoning && !hasToolCalls.value;
+});
+
 const showDivider = (blockIdx: number): boolean => {
   if (!props.groupMessages) return false;
   if (blockIdx >= props.groupMessages.length - 1) return false;
@@ -333,7 +344,12 @@ const showDivider = (blockIdx: number): boolean => {
             "
           >
             <div class="content">
-              <template v-if="groupMessages && groupMessages.length > 0">
+              <div v-if="showTypingIndicator" class="typing-indicator">
+                <span class="typing-dot"></span>
+                <span class="typing-dot"></span>
+                <span class="typing-dot"></span>
+              </div>
+              <template v-if="groupMessages && groupMessages.length > 0 && !showTypingIndicator">
                 <div v-for="(block, blockIdx) in groupMessages" :key="blockIdx" class="group-block" :class="showDivider(blockIdx) ? 'group-block-divider' : ''">
                   <div v-if="block.images && block.images.length > 0" class="images-container">
                     <n-flex :wrap="true" size="small">
@@ -782,5 +798,45 @@ const showDivider = (blockIdx: number): boolean => {
   padding-bottom: 8px;
   margin-bottom: 8px;
   border-bottom: 1px solid v-bind("theme.borderColor");
+}
+
+.typing-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 0;
+}
+
+.typing-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: v-bind("theme.textColor3");
+  animation: typing-bounce 1.4s infinite ease-in-out both;
+}
+
+.typing-dot:nth-child(1) {
+  animation-delay: -0.32s;
+}
+
+.typing-dot:nth-child(2) {
+  animation-delay: -0.16s;
+}
+
+.typing-dot:nth-child(3) {
+  animation-delay: 0s;
+}
+
+@keyframes typing-bounce {
+  0%,
+  80%,
+  100% {
+    transform: scale(0.6);
+    opacity: 0.4;
+  }
+  40% {
+    transform: scale(1);
+    opacity: 1;
+  }
 }
 </style>

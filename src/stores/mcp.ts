@@ -100,6 +100,9 @@ export const useMcpStore = defineStore('mcp', () => {
       await mcpHttpDisconnect(serverId)
     }
     tools.value = tools.value.filter(t => getToolServerId(t) !== serverId)
+    // Re-sync the tool registry display with the backend (which unregisters
+    // the disconnected server's tools) so removed tools leave the chat list.
+    await refreshAllTools()
   }
 
   const connectAll = async () => {
@@ -429,7 +432,9 @@ ${toolList}
       const payload = event.payload as { server_id: string; connected: boolean; error?: string | null; last_ping_at?: number | null; reconnect_attempts: number }
       const wasConnected = isServerConnected(payload.server_id)
       applyStatusEvent(payload)
-      if (!wasConnected && payload.connected) {
+      // Refresh the tool list whenever a server connects OR disconnects so the
+      // chat's available-tool set always reflects reality.
+      if (payload.connected || wasConnected) {
         refreshAllTools()
       }
     })
@@ -474,6 +479,10 @@ ${toolList}
       }
       await mcpRemoveServer(serverId)
       await loadServers()
+      // Re-sync the tool list so the deleted server's tools disappear from the
+      // chat's available-tool set immediately (the backend already unregistered
+      // them, but the UI cache must be refreshed too).
+      await refreshAllTools()
     } finally {
       isLoading.value = false
     }

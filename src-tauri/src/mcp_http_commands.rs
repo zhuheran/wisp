@@ -3,7 +3,7 @@ use std::sync::Mutex;
 use tauri::{AppHandle, Manager};
 
 use crate::types::AppData;
-use wisp_mcp::{ConnectionStatus, ServerConfig};
+use wisp_mcp::{unregister_mcp_server, ConnectionStatus, ServerConfig};
 
 #[tauri::command]
 pub async fn mcp_http_connect(app_handle: AppHandle, config: ServerConfig) -> Result<(), String> {
@@ -21,16 +21,24 @@ pub async fn mcp_http_connect(app_handle: AppHandle, config: ServerConfig) -> Re
 
 #[tauri::command]
 pub async fn mcp_http_disconnect(app_handle: AppHandle, server_id: String) -> Result<(), String> {
-    let manager = {
+    let (manager, registry) = {
         let state = app_handle.state::<Mutex<AppData>>();
         let state = state.lock().map_err(|e| e.to_string())?;
-        std::sync::Arc::clone(&state.mcp_http_manager)
+        (
+            std::sync::Arc::clone(&state.mcp_http_manager),
+            std::sync::Arc::clone(&state.tool_registry),
+        )
     };
 
     manager
         .disconnect_server(&server_id)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+
+    // Remove this server's tools from the live registry so the model stops
+    // offering tools that are no longer reachable.
+    unregister_mcp_server(&registry, &server_id);
+    Ok(())
 }
 
 #[tauri::command]

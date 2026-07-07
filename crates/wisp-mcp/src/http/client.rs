@@ -23,21 +23,27 @@ pub struct McpHttpClient {
     next_id: Arc<Mutex<i64>>,
     server_id: String,
     sse_task: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
+    message_url: Arc<Mutex<String>>,
 }
 
 impl McpHttpClient {
+    fn build_client() -> Result<Client> {
+        Client::builder()
+            .timeout(Duration::from_secs(60))
+            .user_agent("wisp-mcp-client/0.1.0")
+            .build()
+            .context("Failed to create HTTP client")
+    }
+
     pub async fn new_sse(
         server_id: String,
         url: String,
         headers: HashMap<String, String>,
     ) -> Result<Self> {
-        let client = Client::builder()
-            .timeout(Duration::from_secs(60))
-            .build()
-            .context("Failed to create HTTP client")?;
+        let message_url = format!("{}/message", url.trim_end_matches('/'));
 
         Ok(Self {
-            client,
+            client: Self::build_client()?,
             url,
             headers,
             transport: HttpTransport::Sse,
@@ -46,6 +52,7 @@ impl McpHttpClient {
             next_id: Arc::new(Mutex::new(1i64)),
             server_id,
             sse_task: Arc::new(Mutex::new(None)),
+            message_url: Arc::new(Mutex::new(message_url)),
         })
     }
 
@@ -55,13 +62,8 @@ impl McpHttpClient {
         headers: HashMap<String, String>,
         session_id: Option<String>,
     ) -> Result<Self> {
-        let client = Client::builder()
-            .timeout(Duration::from_secs(60))
-            .build()
-            .context("Failed to create HTTP client")?;
-
         Ok(Self {
-            client,
+            client: Self::build_client()?,
             url,
             headers,
             transport: HttpTransport::Http,
@@ -70,12 +72,18 @@ impl McpHttpClient {
             next_id: Arc::new(Mutex::new(1i64)),
             server_id,
             sse_task: Arc::new(Mutex::new(None)),
+            message_url: Arc::new(Mutex::new(String::new())),
         })
     }
 
     pub async fn initialize(&self) -> Result<Value> {
+        let protocol_version = match &self.transport {
+            HttpTransport::Sse => "2024-11-05",
+            HttpTransport::Http => "2025-03-26",
+        };
+
         let params = json!({
-            "protocolVersion": "2024-11-05",
+            "protocolVersion": protocol_version,
             "capabilities": {},
             "clientInfo": {
                 "name": "wisp",
@@ -83,8 +91,6 @@ impl McpHttpClient {
             }
         });
 
-        // 关键：对于 SSE 传输，必须先启动 SSE 监听器再发起 initialize 请求，
-        // 否则 initialize 的响应（通过 SSE 流返回）无人接收，会导致 60 秒超时失败。
         if matches!(self.transport, HttpTransport::Sse) {
             self.start_sse_listener().await?;
         }
@@ -103,7 +109,7 @@ impl McpHttpClient {
                 self.send_notification(&notification).await?;
             },
             HttpTransport::Http => {
-                self.send_http_request(&notification).await?;
+                self.send_http_notification(&notification).await?;
             },
         }
 
@@ -116,10 +122,11 @@ impl McpHttpClient {
         let headers = self.headers.clone();
         let pending = Arc::clone(&self.pending);
         let server_id = self.server_id.clone();
+        let message_url = Arc::clone(&self.message_url);
 
         let sse_url = format!("{}/sse", url.trim_end_matches('/'));
 
-        let mut request = client.get(&sse_url);
+        let mut request = client.get(&sse_url).header("Accept", "text/event-stream");
         for (key, value) in &headers {
             request = request.header(key, value);
         }
@@ -127,59 +134,80 @@ impl McpHttpClient {
         let task = tokio::spawn(async move {
             match request.send().await {
                 Ok(response) => {
-                    if response.status().is_success() {
-                        let mut stream = response.bytes_stream();
-                        let mut buffer = String::new();
-
-                        while let Some(chunk_result) = stream.next().await {
-                            match chunk_result {
-                                Ok(chunk) => {
-                                    if let Ok(text) = std::str::from_utf8(&chunk) {
-                                        buffer.push_str(text);
-
-                                        while let Some(pos) = buffer.find('\n') {
-                                            let line: String = buffer.drain(..=pos).collect();
-
-                                            let trimmed = line.trim();
-                                            if trimmed.is_empty() {
-                                                continue;
-                                            }
-
-                                            if trimmed.starts_with("data:") {
-                                                let data = trimmed[5..].trim();
-                                                if let Ok(msg) = serde_json::from_str::<Value>(data)
-                                                {
-                                                    if let Some(id) =
-                                                        msg.get("id").and_then(|v| v.as_i64())
-                                                    {
-                                                        if let Some(tx) =
-                                                            pending.lock().await.remove(&id)
-                                                        {
-                                                            let _ = tx.send(msg);
-                                                        }
-                                                    } else {
-                                                        println!(
-                                                            "[MCP-SSE:{}] Notification: {}",
-                                                            server_id, data
-                                                        );
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                },
-                                Err(e) => {
-                                    eprintln!("[MCP-SSE:{}] Stream error: {}", server_id, e);
-                                    break;
-                                },
-                            }
-                        }
-                    } else {
+                    if !response.status().is_success() {
                         eprintln!(
                             "[MCP-SSE:{}] SSE connection failed: {}",
                             server_id,
                             response.status()
                         );
+                        return;
+                    }
+
+                    let mut stream = response.bytes_stream();
+                    let mut buffer = String::new();
+                    let mut current_event = String::new();
+
+                    while let Some(chunk_result) = stream.next().await {
+                        match chunk_result {
+                            Ok(chunk) => {
+                                if let Ok(text) = std::str::from_utf8(&chunk) {
+                                    buffer.push_str(text);
+
+                                    while let Some(pos) = buffer.find('\n') {
+                                        let line: String = buffer.drain(..=pos).collect();
+                                        let trimmed = line.trim();
+
+                                        if trimmed.is_empty() {
+                                            current_event.clear();
+                                            continue;
+                                        }
+
+                                        if let Some(value) = trimmed.strip_prefix("event:") {
+                                            current_event = value.trim().to_string();
+                                            continue;
+                                        }
+
+                                        if let Some(data) = trimmed.strip_prefix("data:") {
+                                            let data = data.trim();
+
+                                            if current_event == "endpoint" {
+                                                let endpoint = data.trim().to_string();
+                                                println!(
+                                                    "[MCP-SSE:{}] Received endpoint: {}",
+                                                    server_id, endpoint
+                                                );
+                                                *message_url.lock().await = endpoint;
+                                                current_event.clear();
+                                                continue;
+                                            }
+
+                                            if let Ok(msg) = serde_json::from_str::<Value>(data) {
+                                                if let Some(id) =
+                                                    msg.get("id").and_then(|v| v.as_i64())
+                                                {
+                                                    if let Some(tx) =
+                                                        pending.lock().await.remove(&id)
+                                                    {
+                                                        let _ = tx.send(msg);
+                                                    }
+                                                } else {
+                                                    println!(
+                                                        "[MCP-SSE:{}] Notification: {}",
+                                                        server_id, data
+                                                    );
+                                                }
+                                            }
+                                        }
+
+                                        current_event.clear();
+                                    }
+                                }
+                            },
+                            Err(e) => {
+                                eprintln!("[MCP-SSE:{}] Stream error: {}", server_id, e);
+                                break;
+                            },
+                        }
                     }
                 },
                 Err(e) => {
@@ -193,31 +221,87 @@ impl McpHttpClient {
     }
 
     async fn send_notification(&self, notification: &Value) -> Result<()> {
-        let url = format!("{}/message", self.url.trim_end_matches('/'));
+        let url = self.message_url.lock().await.clone();
+        if url.is_empty() {
+            anyhow::bail!("[MCP-SSE:{}] No message endpoint available", self.server_id);
+        }
 
-        let mut request = self.client.post(&url);
+        let mut request = self
+            .client
+            .post(&url)
+            .header("Accept", "application/json, text/event-stream");
         for (key, value) in &self.headers {
             request = request.header(key, value);
         }
 
-        request
+        let response = request
             .json(notification)
             .send()
             .await
             .context("Failed to send notification")?;
 
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            anyhow::bail!(
+                "[MCP-SSE:{}] Notification POST failed with status: {} body: {}",
+                self.server_id, status, body
+            );
+        }
+
         Ok(())
     }
 
-    async fn send_http_request(&self, request_body: &Value) -> Result<Value> {
-        let mut request = self.client.post(&self.url);
+    async fn send_http_notification(&self, notification: &Value) -> Result<()> {
+        let mut request = self
+            .client
+            .post(&self.url)
+            .header("Accept", "application/json, text/event-stream");
         for (key, value) in &self.headers {
             request = request.header(key, value);
         }
 
         let session_id = self.session_id.lock().await.clone();
         if let Some(sid) = session_id {
-            request = request.header("X-Session-Id", &sid);
+            request = request.header("Mcp-Session-Id", &sid);
+        }
+
+        let response = request
+            .json(notification)
+            .send()
+            .await
+            .context("Failed to send notification")?;
+
+        if let Some(new_sid) = response.headers().get("Mcp-Session-Id") {
+            if let Ok(s) = new_sid.to_str() {
+                *self.session_id.lock().await = Some(s.to_string());
+            }
+        }
+
+        let status = response.status();
+        if status != reqwest::StatusCode::ACCEPTED && !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            anyhow::bail!(
+                "Notification POST failed with status: {} body: {}",
+                status, body
+            );
+        }
+
+        Ok(())
+    }
+
+    async fn send_http_request(&self, request_body: &Value) -> Result<Value> {
+        let mut request = self
+            .client
+            .post(&self.url)
+            .header("Accept", "application/json, text/event-stream");
+        for (key, value) in &self.headers {
+            request = request.header(key, value);
+        }
+
+        let session_id = self.session_id.lock().await.clone();
+        if let Some(sid) = session_id {
+            request = request.header("Mcp-Session-Id", &sid);
         }
 
         let response = request
@@ -226,16 +310,50 @@ impl McpHttpClient {
             .await
             .context("Failed to send HTTP request")?;
 
-        if !response.status().is_success() {
-            anyhow::bail!("HTTP request failed with status: {}", response.status());
+        if let Some(new_sid) = response.headers().get("Mcp-Session-Id") {
+            if let Ok(s) = new_sid.to_str() {
+                *self.session_id.lock().await = Some(s.to_string());
+            }
         }
 
-        let json: Value = response
-            .json()
-            .await
-            .context("Failed to parse HTTP response")?;
+        let status = response.status();
+        if status == reqwest::StatusCode::ACCEPTED {
+            return Ok(json!({ "result": {} }));
+        }
 
-        Ok(json)
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            anyhow::bail!(
+                "HTTP request failed with status: {} body: {}",
+                status, body
+            );
+        }
+
+        let content_type = response
+            .headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .to_lowercase();
+
+        if content_type.contains("text/event-stream") {
+            let expected_id = request_body
+                .get("id")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0);
+            let body_bytes = response
+                .bytes()
+                .await
+                .context("Failed to read SSE response body")?;
+            let body_str = String::from_utf8_lossy(&body_bytes);
+            parse_sse_response(&body_str, expected_id)
+        } else {
+            let json: Value = response
+                .json()
+                .await
+                .context("Failed to parse HTTP response")?;
+            Ok(json)
+        }
     }
 
     pub async fn call(&self, method: &str, params: Value) -> Result<Value> {
@@ -325,4 +443,51 @@ impl McpHttpClient {
         }
         Ok(())
     }
+}
+
+/// Parse a Server-Sent Events body and return the JSON-RPC message whose `id`
+/// matches `expected_id`. Falls back to the first message if no id matches.
+fn parse_sse_response(body: &str, expected_id: i64) -> Result<Value> {
+    let mut data_lines: Vec<String> = Vec::new();
+    let mut results: Vec<Value> = Vec::new();
+
+    for line in body.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            let data = data_lines.join("\n");
+            if !data.is_empty() {
+                if let Ok(msg) = serde_json::from_str::<Value>(&data) {
+                    results.push(msg);
+                }
+            }
+            data_lines.clear();
+            continue;
+        }
+
+        if let Some(rest) = trimmed.strip_prefix("event:") {
+            let _ = rest;
+        } else if let Some(rest) = trimmed.strip_prefix("data:") {
+            data_lines.push(rest.trim().to_string());
+        }
+    }
+
+    if !data_lines.is_empty() {
+        let data = data_lines.join("\n");
+        if let Ok(msg) = serde_json::from_str::<Value>(&data) {
+            results.push(msg);
+        }
+    }
+
+    for msg in &results {
+        if let Some(id) = msg.get("id").and_then(|v| v.as_i64()) {
+            if id == expected_id {
+                return Ok(msg.clone());
+            }
+        }
+    }
+
+    results
+        .into_iter()
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("No JSON-RPC response found in SSE body"))
 }
