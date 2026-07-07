@@ -21,7 +21,10 @@ type MessageDisplay = {
 		text: ComputedRef<string>
 		reasoning: ComputedRef<string>
 		toolCalls: ComputedRef<ToolCallItem[]>,
-}
+		pal_id?: string
+		pal_name?: string
+		source?: 'user_prompted' | 'directed'
+	}
 
 /**
  * Accumulates streamed text/reasoning chunks for the assistant message(s)
@@ -737,6 +740,9 @@ export const useChatStore = defineStore('chat', () => {
 				over: true,
 				hasNext: hasNext,
 				hasPrevious: hasPrevious,
+				pal_id: message.pal_id,
+				pal_name: message.pal_name,
+				source: message.source,
 			}
 		}
 

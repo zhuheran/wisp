@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import { useThemeVars, NIcon, NText } from 'naive-ui'
 import { Bot20Regular } from '@vicons/fluent'
 import { useCharacterStore } from '../stores/character'
+import type { Character } from '../libs/types'
 
 const props = defineProps<{
   palIds: string[]
@@ -14,7 +15,7 @@ const characterStore = useCharacterStore()
 const activePals = computed(() =>
   props.palIds
     .map(id => characterStore.characters.find(c => c.id === id))
-    .filter(Boolean)
+    .filter((c): c is Character => c !== undefined)
 )
 </script>
 

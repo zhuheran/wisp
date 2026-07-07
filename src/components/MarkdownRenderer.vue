@@ -9,7 +9,7 @@ const props = defineProps<{
   over?: boolean;
 }>();
 
-const ready = defineModel("ready", {
+const ready = defineModel<boolean>("ready", {
   default: false,
   required: false,
 });

@@ -1,6 +1,5 @@
 <script lang="ts" setup>
 import {
-  NInput,
   NButton,
   NEmpty,
   NIcon,
@@ -8,11 +7,11 @@ import {
   NTag,
   NPopover,
   NSpace,
-  NText,
   NMention,
   useThemeVars,
   useMessage,
   type SelectOption,
+  type MentionOption,
 } from "naive-ui";
 import { Chat48Regular, Send20Regular, Stop24Regular, Toolbox24Regular } from "@vicons/fluent";
 import MessageBubble from "./MessageBubble.vue";
@@ -359,20 +358,12 @@ const mentionOptions = computed(() =>
 // value=name into text, but we need the actual ID for backend routing).
 const currentTargetPalIds = ref<string[]>([]);
 
-function onMention(option: { label: string; value: string }) {
+function onMention(option: MentionOption, _prefix: string) {
   const pal = characterStore.characters.find(c => c.name === option.value);
   if (!pal) return;
   mentionedPalIds.value.add(pal.id);
   currentTargetPalIds.value.push(pal.id);
   chatStore.addMentionedPal?.(pal.id);
-}
-
-function getPalName(palId: string): string {
-  return characterStore.characters.find(c => c.id === palId)?.name ?? palId;
-}
-
-function removePal(palId: string) {
-  mentionedPalIds.value.delete(palId);
 }
 
 onMounted(() => {
