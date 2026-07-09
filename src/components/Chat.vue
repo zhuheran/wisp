@@ -200,8 +200,15 @@ const props = defineProps({
 
 console.log(`[Chat] Message bubble culling enabled`);
 
+const onEnterPress = (event: KeyboardEvent) => {
+  if (event.isComposing || event.keyCode === 229) return;
+  event.preventDefault();
+  sendMessage();
+};
+
 	const sendMessage = () => {
   if (!chatStore.userInput.trim() && !imageInputRef.value?.hasImages) return;
+  if (chatStore.isStreaming) return;
 
   const images = imageInputRef.value?.getImagesForMessage?.() || [];
   // NMention internally transforms @pal into special markers,
@@ -241,17 +248,17 @@ console.log(`[Chat] Message bubble culling enabled`);
       beforeSend: () => {
         chatStore.clearUserInput();
         imageInputRef.value?.clearImages();
-        autoScrollWrapper.value?.scrollToBottom(false);
+        autoScrollWrapper.value?.scrollToBottom(true);
       },
       onReceiving: () => {
-        autoScrollWrapper.value?.scrollToBottom(false);
+        autoScrollWrapper.value?.scrollToBottom();
       },
       onFinish: () => {
         targetPalIds.forEach(id => {
           chatStore.addMentionedPal?.(id);
           mentionedPalIds.value.add(id);
         });
-        setTimeout(() => autoScrollWrapper.value?.scrollToBottom(false), 1000);
+        setTimeout(() => autoScrollWrapper.value?.scrollToBottom(), 1000);
       },
     })
     .catch((e) => {
@@ -267,14 +274,14 @@ const regenerateMessage = (messageId: string, insertGuidance = false) => {
       {
         beforeSend: () => {
           chatStore.clearUserInput();
-          autoScrollWrapper.value?.scrollToBottom(false);
+          autoScrollWrapper.value?.scrollToBottom(true);
         },
         onReceiving: () => {
-          autoScrollWrapper.value?.scrollToBottom(false);
+          autoScrollWrapper.value?.scrollToBottom();
         },
         onFinish: () => {
           setTimeout(
-            () => autoScrollWrapper.value?.scrollToBottom(false),
+            () => autoScrollWrapper.value?.scrollToBottom(),
             1000
           );
         },
@@ -288,13 +295,13 @@ const resendMessage = (messageId: string, text: string, derive: boolean) => {
   const callbacks = {
     beforeSend: () => {
       chatStore.clearUserInput();
-      autoScrollWrapper.value?.scrollToBottom(false);
+      autoScrollWrapper.value?.scrollToBottom(true);
     },
     onReceiving: () => {
       autoScrollWrapper.value?.scrollToBottom();
     },
     onFinish: () => {
-      setTimeout(() => autoScrollWrapper.value?.scrollToBottom(false), 1000);
+      setTimeout(() => autoScrollWrapper.value?.scrollToBottom(), 1000);
     },
   };
 
@@ -546,7 +553,8 @@ onMounted(() => {
             v-model:value="chatStore.userInput"
             :options="mentionOptions"
             @select="onMention"
-            @keyup.enter="sendMessage"
+            @keydown.enter="onEnterPress"
+            :disabled="chatStore.isStreaming"
             clearable
             round
             type="textarea"
