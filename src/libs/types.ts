@@ -392,3 +392,12 @@ export interface ConversationStreamResetEvent {
 	stream_id?: string | null;
 	message_id: string;
 }
+
+// ========== Skills Types ==========
+
+export interface SkillInfo {
+	name: string
+	description: string
+	enabled: boolean
+	path: string
+}

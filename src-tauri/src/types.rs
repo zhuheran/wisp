@@ -21,4 +21,6 @@ pub struct AppData {
     pub tool_registry: Arc<ToolRegistry>,
     pub software_registry: Arc<SoftwareToolRegistry>,
     pub unlocked_pals: HashMap<String, HashSet<String>>,
+    /// Installed Agent Skills (loaded from the skills directory).
+    pub skills: Vec<wisp_skills::Skill>,
 }

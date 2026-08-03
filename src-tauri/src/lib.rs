@@ -12,6 +12,7 @@ mod native_tools;
 mod orchestrator;
 mod registry_commands;
 mod settings_commands;
+mod skills_commands;
 mod types;
 
 use tauri::{Builder, Manager};
@@ -57,6 +58,21 @@ pub fn run() {
 
             let tool_registry = std::sync::Arc::new(ToolRegistry::new());
 
+            // Scan the skills directories (app-owned + ~/.agents/skills) and
+            // register skill load tools before AppData is managed so the
+            // conversation path sees them immediately.
+            let (skills, skill_errors) = {
+                let dirs = skills_commands::skills_dirs(app.handle())?;
+                skills_commands::load_skills_from_dirs(&dirs)
+            };
+            skills_commands::resync_registry(&tool_registry, &skills);
+            if !skill_errors.is_empty() {
+                eprintln!("[skills] {} skill(s) failed to load:", skill_errors.len());
+                for (name, err) in &skill_errors {
+                    eprintln!("  - {name}: {err}");
+                }
+            }
+
             let software_registry = {
                 let mut software_registry = SoftwareToolRegistry::new();
                 software_registry.register(native_tools::ConfigRead::new(std::sync::Arc::clone(
@@ -80,6 +96,7 @@ pub fn run() {
                 tool_registry,
                 software_registry,
                 unlocked_pals: HashMap::new(),
+                skills,
             }));
 
             app.manage(AbortRegistry::new());
@@ -195,6 +212,11 @@ pub fn run() {
             conversation_commands::conversation_edit_and_regenerate,
             conversation_commands::format_tool_call_markdown,
             abort::conversation_abort,
+            // Skills commands
+            skills_commands::skills_list,
+            skills_commands::skills_refresh,
+            skills_commands::skills_toggle,
+            skills_commands::skills_open_folder,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

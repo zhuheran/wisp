@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { Message, Conversation, Provider, Model, Character, ConversationSendRequest, ConversationRegenerateRequest, ConversationDeriveRequest } from "./types";
+import { Message, Conversation, Provider, Model, Character, ConversationSendRequest, ConversationRegenerateRequest, ConversationDeriveRequest, SkillInfo } from "./types";
 
 export async function hashContent(content: string) {
 	return invoke<string>('hash_content', { content })
@@ -451,4 +451,21 @@ export async function mcpSetChoreLlm(choreLlm: ChoreLlmRef | null) {
 
 export async function mcpGenerateToolDisplayNames(tools: ToolDisplayNameInput[]) {
 	return invoke<Record<string, string>>('mcp_generate_tool_display_names', { tools })
+}
+
+// Skills commands
+export async function skillsList(): Promise<SkillInfo[]> {
+	return invoke<SkillInfo[]>('skills_list', {})
+}
+
+export async function skillsRefresh(): Promise<SkillInfo[]> {
+	return invoke<SkillInfo[]>('skills_refresh', {})
+}
+
+export async function skillsToggle(name: string): Promise<SkillInfo[]> {
+	return invoke<SkillInfo[]>('skills_toggle', { name })
+}
+
+export async function skillsOpenFolder(): Promise<void> {
+	return invoke<void>('skills_open_folder', {})
 }

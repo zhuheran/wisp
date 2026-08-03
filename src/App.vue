@@ -17,6 +17,7 @@ import {
   Bot24Regular,
   Cube24Regular,
   PlugConnected24Regular,
+  Book24Regular,
   Settings24Regular,
 } from "@vicons/fluent";
 import useHighlightjs from "./composables/useHighlightjs";
@@ -28,6 +29,7 @@ import { useChatStore } from "./stores/chat";
 import { useProviderStore } from './stores/provider';
 import { useCharacterStore } from './stores/character';
 import { useMcpStore } from './stores/mcp';
+import { useSkillsStore } from './stores/skills';
 import { useSettingsStore } from './stores/settings';
 
 const osThemeRef = useOsTheme();
@@ -48,6 +50,9 @@ onMounted(() => {
     const mcpStore = useMcpStore();
     provide("McpStore", mcpStore);
     mcpStore.init()
+    const skillsStore = useSkillsStore();
+    provide("SkillsStore", skillsStore);
+    skillsStore.init()
     const settingsStore = useSettingsStore();
     provide("SettingsStore", settingsStore);
     settingsStore.init()
@@ -82,6 +87,11 @@ onMounted(() => {
               <router-link to="/mcp" active-class="sidebar-item-active">
                 <div class="sidebar-item">
                   <n-icon size="24"><PlugConnected24Regular /></n-icon>
+                </div>
+              </router-link>
+              <router-link to="/skills" active-class="sidebar-item-active">
+                <div class="sidebar-item">
+                  <n-icon size="24"><Book24Regular /></n-icon>
                 </div>
               </router-link>
               <router-link to="/settings" active-class="sidebar-item-active">

@@ -3,6 +3,7 @@ import ChatView from '../views/ChatView.vue'
 import PalsView from '../views/PalsView.vue'
 import ProvidersView from '../views/ProvidersView.vue'
 import McpView from '../views/McpView.vue'
+import SkillsView from '../views/SkillsView.vue'
 import SettingsView from '../views/SettingsView.vue'
 
 const router = createRouter({
@@ -31,6 +32,11 @@ const router = createRouter({
 			path: '/mcp',
 			name: 'mcp',
 			component: McpView
+		},
+		{
+			path: '/skills',
+			name: 'skills',
+			component: SkillsView
 		},
 		{
 			path: '/settings',

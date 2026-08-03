@@ -62,7 +62,9 @@ pub async fn orchestrate_multi_pal_round<R: tauri::Runtime>(
             .ok_or_else(|| format!("Pal not found: {}", pal_id))?;
 
         // Build context: existing conversation + previous pal replies in this round
-        let context = build_context_for_pal(pal, &replies, &conversation_history)?;
+        let enabled_skills = load_enabled_skills(app_handle)?;
+        let context =
+            build_context_for_pal(pal, &replies, &conversation_history, &enabled_skills)?;
 
         let message_id = format!("pal-{}-{}", pal_id, user_message_id);
 
@@ -161,14 +163,33 @@ pub async fn orchestrate_multi_pal_round<R: tauri::Runtime>(
     Ok(replies)
 }
 
+/// Load enabled skills from app state (advertised to pals as L1 metadata).
+fn load_enabled_skills<R: tauri::Runtime>(
+    app_handle: &tauri::AppHandle<R>,
+) -> Result<Vec<wisp_skills::Skill>, String> {
+    let state_mutex = app_handle.state::<Mutex<AppData>>();
+    let state = state_mutex
+        .lock()
+        .map_err(|e| format!("Failed to acquire app state: {}", e))?;
+    let enabled_set = state.tool_registry.enabled_set();
+    Ok(state
+        .skills
+        .iter()
+        .filter(|s| enabled_set.contains(&format!("skill:{}", s.name)))
+        .cloned()
+        .collect())
+}
+
 /// Build the message context for a specific pal, including:
 /// 1. The conversation history from DB (user messages, assistant replies, etc.)
 /// 2. The pal's system prompt as a system message
 /// 3. Previous pal replies in this round as assistant messages
+/// 4. L1 metadata of enabled skills (advertises loadable skill tools)
 pub fn build_context_for_pal(
     pal: &Character,
     previous_replies: &[PalReply],
     conversation_history: &[Message],
+    enabled_skills: &[wisp_skills::Skill],
 ) -> Result<Vec<Message>, String> {
     let mut context = Vec::new();
 
@@ -195,6 +216,27 @@ pub fn build_context_for_pal(
         context.push(Message {
             id: format!("{}-system", pal.id),
             text: pal.system_prompt.clone(),
+            reasoning: None,
+            sender: wisp_db::types::MessageRole::System,
+            timestamp: 0,
+            tokens: None,
+            embedding: None,
+            images: None,
+            tool_calls: None,
+            tool_call_id: None,
+            source: MessageSource::UserPrompted,
+            pal_id: None,
+            pal_name: None,
+        });
+    }
+
+    // 1.5 L1 skill metadata: advertise enabled skills so pals can load their
+    // instructions via the `skill:<name>` tool (progressive disclosure).
+    let skills_prompt = wisp_skills::assemble_skills_prompt(enabled_skills);
+    if !skills_prompt.is_empty() {
+        context.push(Message {
+            id: "skills-system".to_string(),
+            text: skills_prompt,
             reasoning: None,
             sender: wisp_db::types::MessageRole::System,
             timestamp: 0,
@@ -328,7 +370,9 @@ pub async fn run_director_check<R: tauri::Runtime>(
             };
 
             // Existing conversation history + previous pal replies as context
-            let context = build_context_for_pal(pal, pal_replies, &conversation_history)?;
+            let enabled_skills = load_enabled_skills(app_handle)?;
+            let context =
+                build_context_for_pal(pal, pal_replies, &conversation_history, &enabled_skills)?;
 
             let message_id = format!("directed-{}-{}", pal_id, user_message_id);
 
@@ -577,6 +621,7 @@ mod tests {
             tool_registry,
             software_registry,
             unlocked_pals: HashMap::new(),
+            skills: vec![],
         };
 
         handle.manage(Mutex::new(app_data));
@@ -591,7 +636,7 @@ mod tests {
         let pal = test_character("c1", "Code Reviewer", "You are a code reviewer.", "Reviews code");
         let replies = vec![];
 
-        let context = build_context_for_pal(&pal, &replies, &[]).unwrap();
+        let context = build_context_for_pal(&pal, &replies, &[], &[]).unwrap();
 
         // Interface guidance + pal system prompt
         assert_eq!(context.len(), 2);
@@ -609,7 +654,7 @@ mod tests {
             test_reply("c3", "Designer", "I can help with UI.", MessageSource::UserPrompted),
         ];
 
-        let context = build_context_for_pal(&pal, &replies, &[]).unwrap();
+        let context = build_context_for_pal(&pal, &replies, &[], &[]).unwrap();
 
         // Interface guidance + system prompt + 2 pal replies = 4 messages
         assert_eq!(context.len(), 4);
@@ -630,7 +675,7 @@ mod tests {
         let pal = test_character("c1", "Bot", "", "A simple bot");
         let replies = vec![];
 
-        let context = build_context_for_pal(&pal, &replies, &[]).unwrap();
+        let context = build_context_for_pal(&pal, &replies, &[], &[]).unwrap();
 
         assert_eq!(context.len(), 1);
         assert_eq!(context[0].sender, MessageRole::System);
@@ -641,10 +686,33 @@ mod tests {
         let pal = test_character("c1", "Bot", "You are a bot.", "A bot");
         let replies = vec![test_reply("c2", "Other", "hello", MessageSource::Directed)];
 
-        let context = build_context_for_pal(&pal, &replies, &[]).unwrap();
+        let context = build_context_for_pal(&pal, &replies, &[], &[]).unwrap();
 
         assert_eq!(context.len(), 3);
         assert_eq!(context[2].source, MessageSource::Directed);
+    }
+
+    #[test]
+    fn build_context_includes_enabled_skills_metadata() {
+        let pal = test_character("c1", "Bot", "You are a bot.", "A bot");
+        let skill = wisp_skills::Skill {
+            name: "code-review".to_string(),
+            description: "Reviews code. Use when reviewing code.".to_string(),
+            license: None,
+            compatibility: None,
+            allowed_tools: vec![],
+            path: std::path::PathBuf::from("/tmp/skills/code-review"),
+            body: "# Code Review\nChecklist...".to_string(),
+        };
+        let replies = vec![];
+
+        let context = build_context_for_pal(&pal, &replies, &[], &[skill]).unwrap();
+
+        // Interface guidance + pal system prompt + skills metadata = 3 messages
+        assert_eq!(context.len(), 3);
+        assert_eq!(context[2].sender, MessageRole::System);
+        assert!(context[2].text.contains("code-review"));
+        assert!(context[2].text.contains("Reviews code"));
     }
 
     #[test]
@@ -689,7 +757,7 @@ mod tests {
             },
         ];
 
-        let context = build_context_for_pal(&pal, &replies, &history).unwrap();
+        let context = build_context_for_pal(&pal, &replies, &history, &[]).unwrap();
 
         // Interface guidance + pal system prompt + 2 history messages + 1 pal reply = 5 messages
         assert_eq!(context.len(), 5);

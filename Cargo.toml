@@ -16,6 +16,7 @@ wisp-mcp = { path = "crates/wisp-mcp" }
 wisp-tool-registry = { path = "crates/wisp-tool-registry" }
 wisp-software-tools = { path = "crates/wisp-software-tools" }
 wisp-conversation = { path = "crates/wisp-conversation" }
+wisp-skills = { path = "crates/wisp-skills" }
 
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
