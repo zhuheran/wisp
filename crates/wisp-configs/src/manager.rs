@@ -59,7 +59,7 @@ pub enum ConfigError {
 pub struct ConfigManager {
     config_path: PathBuf,
     configs: Mutex<Config>,
-    app_handle: AppHandle,
+    app_handle: Option<AppHandle>,
 }
 
 impl ConfigManager {
@@ -74,6 +74,22 @@ impl ConfigManager {
             .map_err(|e| format!("Failed to create config directory: {}", e))?;
 
         let config_path = config_dir.join("configs.toml");
+        Self::from_path(config_path, Some(app_handle.clone()))
+    }
+
+    /// Create a ConfigManager backed by an explicit config file path.
+    ///
+    /// Without an `AppHandle`, `settings_updated` broadcasts are no-ops.
+    /// Primarily used by tests and headless tooling.
+    pub fn with_path(config_path: PathBuf) -> Result<Self, String> {
+        if let Some(parent) = config_path.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|e| format!("Failed to create config directory: {}", e))?;
+        }
+        Self::from_path(config_path, None)
+    }
+
+    fn from_path(config_path: PathBuf, app_handle: Option<AppHandle>) -> Result<Self, String> {
         let toml_content = fs::read_to_string(&config_path).unwrap_or_default();
 
         let mut configs = toml::from_str::<Config>(&toml_content).unwrap_or_default();
@@ -104,7 +120,7 @@ impl ConfigManager {
         let manager = Self {
             config_path,
             configs: Mutex::new(configs),
-            app_handle: app_handle.clone(),
+            app_handle,
         };
 
         if needs_save {
@@ -118,9 +134,9 @@ impl ConfigManager {
     /// Failures are silently ignored — emitting is best-effort and must never
     /// disrupt the save flow.
     fn emit_update(&self, key: &'static str, value: serde_json::Value) {
-        let _ = self
-            .app_handle
-            .emit("settings_updated", SettingsUpdatePayload { key, value });
+        if let Some(app_handle) = &self.app_handle {
+            let _ = app_handle.emit("settings_updated", SettingsUpdatePayload { key, value });
+        }
     }
 
     /// Add a new provider to the config. If the

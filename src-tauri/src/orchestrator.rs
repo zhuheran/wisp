@@ -11,6 +11,7 @@ use wisp_common::MessageSource;
 use wisp_configs::character::Character;
 use wisp_configs::provider::Provider;
 use wisp_conversation::director::{assemble_director_prompt, parse_director_response};
+use wisp_conversation::interface::INTERFACE_PROMPT;
 use wisp_db::types::{Message, MessageRole};
 
 #[derive(Debug, Clone)]
@@ -170,6 +171,24 @@ pub fn build_context_for_pal(
     conversation_history: &[Message],
 ) -> Result<Vec<Message>, String> {
     let mut context = Vec::new();
+
+    // 0. Interface rendering guidance (markdown/mermaid) applies to every
+    // reply shown in the chat UI, so it comes first for all pals.
+    context.push(Message {
+        id: "interface-system".to_string(),
+        text: INTERFACE_PROMPT.to_string(),
+        reasoning: None,
+        sender: wisp_db::types::MessageRole::System,
+        timestamp: 0,
+        tokens: None,
+        embedding: None,
+        images: None,
+        tool_calls: None,
+        tool_call_id: None,
+        source: MessageSource::UserPrompted,
+        pal_id: None,
+        pal_name: None,
+    });
 
     // 1. Prepend pal's system_prompt as a system message
     if !pal.system_prompt.is_empty() {
@@ -519,16 +538,29 @@ mod tests {
         let app = tauri::test::mock_app();
         let handle = app.handle().clone();
 
+        // Isolate the global key manager from the real app's keychain entries:
+        // the test binary cannot read items created by the app, and reusing a
+        // fixed name would collide with stale items from previous test runs.
+        std::env::set_var(
+            "WISP_KEYRING_SERVICE",
+            format!("wisp-test-{}", uuid::Uuid::new_v4()),
+        );
+
         let conversation_id = "test-conv".to_string();
         let mut chat = Chat::new_with_pool(create_memory_pool()).expect("chat");
         chat.create_conversation(&conversation_id, "Test", "desc")
             .expect("conversation created");
 
         let diagram_cache = DiagramCache::new().expect("diagram cache");
-        let _key_manager =
-            KeyManager::new("test-wisp", std::env::temp_dir().join("wisp-test-keyring.db"))
-                .expect("key manager");
-        let config_manager = ConfigManager::new(&handle).expect("config manager");
+        let _key_manager = KeyManager::new(
+            &format!("wisp-test-{}", uuid::Uuid::new_v4()),
+            std::env::temp_dir().join(format!("wisp-test-keyring-{}.db", uuid::Uuid::new_v4())),
+        )
+        .expect("key manager");
+        let config_manager = ConfigManager::with_path(
+            std::env::temp_dir().join(format!("wisp-config-{}.toml", std::process::id())),
+        )
+        .expect("config manager");
         let mcp_config_manager = McpConfigManager::new(&handle).expect("mcp config");
         let stdio_manager = Arc::new(McpStdioManager::new());
         let http_manager = Arc::new(McpHttpManager::new());
@@ -561,9 +593,12 @@ mod tests {
 
         let context = build_context_for_pal(&pal, &replies, &[]).unwrap();
 
-        assert_eq!(context.len(), 1);
+        // Interface guidance + pal system prompt
+        assert_eq!(context.len(), 2);
         assert_eq!(context[0].sender, MessageRole::System);
-        assert_eq!(context[0].text, "You are a code reviewer.");
+        assert!(context[0].text.contains("mermaid"), "should include interface rendering guidance");
+        assert_eq!(context[1].sender, MessageRole::System);
+        assert_eq!(context[1].text, "You are a code reviewer.");
     }
 
     #[test]
@@ -576,27 +611,29 @@ mod tests {
 
         let context = build_context_for_pal(&pal, &replies, &[]).unwrap();
 
-        // System message + 2 pal replies = 3 messages
-        assert_eq!(context.len(), 3);
+        // Interface guidance + system prompt + 2 pal replies = 4 messages
+        assert_eq!(context.len(), 4);
         assert_eq!(context[0].sender, MessageRole::System);
-        assert_eq!(context[1].sender, MessageRole::Assistant);
-        assert_eq!(context[1].text, "Let's focus on features.");
-        assert_eq!(context[1].pal_id, Some("c2".to_string()));
-        assert_eq!(context[1].pal_name, Some("PM".to_string()));
+        assert_eq!(context[1].sender, MessageRole::System);
         assert_eq!(context[2].sender, MessageRole::Assistant);
-        assert_eq!(context[2].text, "I can help with UI.");
-        assert_eq!(context[2].pal_id, Some("c3".to_string()));
-        assert_eq!(context[2].pal_name, Some("Designer".to_string()));
+        assert_eq!(context[2].text, "Let's focus on features.");
+        assert_eq!(context[2].pal_id, Some("c2".to_string()));
+        assert_eq!(context[2].pal_name, Some("PM".to_string()));
+        assert_eq!(context[3].sender, MessageRole::Assistant);
+        assert_eq!(context[3].text, "I can help with UI.");
+        assert_eq!(context[3].pal_id, Some("c3".to_string()));
+        assert_eq!(context[3].pal_name, Some("Designer".to_string()));
     }
 
     #[test]
-    fn build_context_without_system_prompt_omits_system_message() {
+    fn build_context_without_system_prompt_keeps_only_interface_guidance() {
         let pal = test_character("c1", "Bot", "", "A simple bot");
         let replies = vec![];
 
         let context = build_context_for_pal(&pal, &replies, &[]).unwrap();
 
-        assert_eq!(context.len(), 0);
+        assert_eq!(context.len(), 1);
+        assert_eq!(context[0].sender, MessageRole::System);
     }
 
     #[test]
@@ -606,8 +643,8 @@ mod tests {
 
         let context = build_context_for_pal(&pal, &replies, &[]).unwrap();
 
-        assert_eq!(context.len(), 2);
-        assert_eq!(context[1].source, MessageSource::Directed);
+        assert_eq!(context.len(), 3);
+        assert_eq!(context[2].source, MessageSource::Directed);
     }
 
     #[test]
@@ -654,18 +691,20 @@ mod tests {
 
         let context = build_context_for_pal(&pal, &replies, &history).unwrap();
 
-        // System prompt + 2 history messages + 1 pal reply = 4 messages
-        assert_eq!(context.len(), 4);
+        // Interface guidance + pal system prompt + 2 history messages + 1 pal reply = 5 messages
+        assert_eq!(context.len(), 5);
         assert_eq!(context[0].sender, MessageRole::System);
-        assert_eq!(context[0].text, "You are a bot.");
+        assert!(context[0].text.contains("mermaid"));
+        assert_eq!(context[1].sender, MessageRole::System);
+        assert_eq!(context[1].text, "You are a bot.");
         // History messages come next, in order
-        assert_eq!(context[1].sender, MessageRole::User);
-        assert_eq!(context[1].text, "Hello everyone!");
-        assert_eq!(context[2].sender, MessageRole::Assistant);
-        assert_eq!(context[2].text, "I can help!");
-        // Then pal replies
+        assert_eq!(context[2].sender, MessageRole::User);
+        assert_eq!(context[2].text, "Hello everyone!");
         assert_eq!(context[3].sender, MessageRole::Assistant);
-        assert_eq!(context[3].text, "a pal reply");
+        assert_eq!(context[3].text, "I can help!");
+        // Then pal replies
+        assert_eq!(context[4].sender, MessageRole::Assistant);
+        assert_eq!(context[4].text, "a pal reply");
     }
 
     // ── orchestrate_multi_pal_round tests ────────────────────
@@ -688,6 +727,7 @@ mod tests {
                     name: "gpt-4".to_string(),
                     display_name: "GPT-4".to_string(),
                     description: None,
+                    context_window: None,
                 },
                 model_info: ModelInfo::TextGeneration {
                     parameters: Default::default(),

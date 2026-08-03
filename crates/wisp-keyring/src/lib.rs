@@ -56,9 +56,15 @@ impl KeyManager {
 
     /// Process-wide singleton backed by the system keyring and an encrypted
     /// SQLite database stored at the platform's default data location.
+    ///
+    /// The keyring service name defaults to `"wisp"` and can be overridden
+    /// with the `WISP_KEYRING_SERVICE` environment variable — used by tests
+    /// to isolate from the real app's keychain entries.
     pub fn global() -> &'static KeyManager {
         GLOBAL.get_or_init(|| {
-            KeyManager::new("wisp", default_db_path())
+            let service_name = std::env::var("WISP_KEYRING_SERVICE")
+                .unwrap_or_else(|_| "wisp".to_string());
+            KeyManager::new(&service_name, default_db_path())
                 .expect("failed to initialize global key manager")
         })
     }

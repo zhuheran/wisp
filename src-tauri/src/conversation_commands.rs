@@ -12,6 +12,7 @@ use wisp_common::{MessageSource, ToolContent, ToolResult};
 use wisp_configs::character::Character;
 use wisp_configs::model::{ModelInfo, TextModelCapability};
 use wisp_configs::provider::Provider;
+use wisp_conversation::interface::{INTERFACE_PROMPT, REGENERATE_GUIDANCE};
 use wisp_conversation::payload::build_openai_messages_with_reasoning;
 use wisp_conversation::tool_parser::parse_tool_calls;
 use wisp_conversation::{trim_context, ConversationToolCall, ConversationToolResult};
@@ -221,66 +222,6 @@ pub async fn format_tool_call_markdown<R: tauri::Runtime>(
     Ok(software_registry.format_to_markdown(&name, &arguments, result.as_ref()))
 }
 
-fn build_enabled_tools_prompt(enabled_tools: &[ToolDefinition]) -> String {
-    if enabled_tools.is_empty() {
-        return String::new();
-    }
-
-    let mut tool_info: Vec<&ToolDefinition> = enabled_tools.iter().collect();
-    tool_info.sort_by(|a, b| a.name.cmp(&b.name));
-
-    let tool_lines: Vec<String> = tool_info
-        .into_iter()
-        .map(|tool| {
-            let desc = tool.description.as_deref().unwrap_or("No description");
-            let mut lines = vec![format!("  - **{}**: {desc}", tool.name)];
-
-            if let Some(props) = tool
-                .input_schema
-                .get("properties")
-                .and_then(|v| v.as_object())
-            {
-                let mut prop_names: Vec<&String> = props.keys().collect();
-                prop_names.sort();
-                for prop_name in prop_names {
-                    let prop = &props[prop_name];
-                    let desc = prop
-                        .get("description")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("");
-                    let type_str = prop
-                        .get("type")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("unknown");
-                    lines.push(format!("    - `{prop_name}` ({type_str}): {desc}"));
-                }
-            }
-
-            lines.join("\n")
-        })
-        .collect();
-
-    format!(
-        r#"## Available Tools
-
-You have access to the following tools. Use them via <|tool_calls|> when appropriate.
-
-### Tool List
-
-{}
-
-### How to Call
-
-Wrap a JSON array of tool calls in `<|tool_calls|>` tags:
-
-<|tool_calls|>
-[{{"name":"tool_name","arguments":{{"param":"value"}}}}]
-<|/tool_calls|>
-"#,
-        tool_lines.join("\n\n")
-    )
-}
-
 async fn resolve_enabled_mcp_tools<R: tauri::Runtime>(
     app_handle: &tauri::AppHandle<R>,
 ) -> Result<Vec<ToolDefinition>, String> {
@@ -298,6 +239,7 @@ async fn run_conversation_rounds<R: tauri::Runtime>(
     parameters: Option<HashMap<String, serde_json::Value>>,
     character: Option<Character>,
     stream_id: String,
+    guidance: Option<&str>,
 ) -> Result<String, String> {
     let result = run_conversation_rounds_inner(
         &app_handle,
@@ -308,6 +250,7 @@ async fn run_conversation_rounds<R: tauri::Runtime>(
         parameters,
         character,
         &stream_id,
+        guidance,
     )
     .await;
     app_handle.state::<AbortRegistry>().unregister(&stream_id);
@@ -323,6 +266,7 @@ async fn run_conversation_rounds_inner<R: tauri::Runtime>(
     parameters: Option<HashMap<String, serde_json::Value>>,
     character: Option<Character>,
     stream_id: &str,
+    guidance: Option<&str>,
 ) -> Result<String, String> {
     let pal_id = character.as_ref().map(|c| c.id.clone());
     let pal_name = character.as_ref().map(|c| c.name.clone());
@@ -378,6 +322,18 @@ async fn run_conversation_rounds_inner<R: tauri::Runtime>(
         let mut openai_messages =
             build_openai_messages_with_reasoning(&path, &reasoning_config, supports_native_tools);
 
+        // Regenerate guidance is a transient instruction: appended once as a
+        // trailing user message on the first round, never persisted to the
+        // thread so it cannot pollute the visible conversation or later edits.
+        if round == 0 {
+            if let Some(guidance) = guidance {
+                openai_messages.push(serde_json::json!({
+                    "role": "user",
+                    "content": guidance,
+                }));
+            }
+        }
+
         let tool_defs: Vec<LlmToolDefinition> = if supports_native_tools {
             enabled_tools
                 .iter()
@@ -394,10 +350,12 @@ async fn run_conversation_rounds_inner<R: tauri::Runtime>(
         let tools_prompt = if supports_native_tools {
             String::new()
         } else {
-            build_enabled_tools_prompt(&enabled_tools)
+            let state_mutex = app_handle.state::<Mutex<AppData>>();
+            let state = state_mutex.lock().map_err(|error| error.to_string())?;
+            state.tool_registry.build_tools_prompt()
         };
 
-        let mut system_prompt_sections = Vec::new();
+        let mut system_prompt_sections = vec![INTERFACE_PROMPT.to_string()];
         if let Some(character) = &character {
             if !character.system_prompt.trim().is_empty() {
                 system_prompt_sections.push(character.system_prompt.trim().to_string());
@@ -406,15 +364,13 @@ async fn run_conversation_rounds_inner<R: tauri::Runtime>(
         if !tools_prompt.is_empty() {
             system_prompt_sections.push(tools_prompt);
         }
-        if !system_prompt_sections.is_empty() {
-            openai_messages.insert(
-                0,
-                serde_json::json!({
-                    "role": "system",
-                    "content": system_prompt_sections.join("\n\n"),
-                }),
-            );
-        }
+        openai_messages.insert(
+            0,
+            serde_json::json!({
+                "role": "system",
+                "content": system_prompt_sections.join("\n\n"),
+            }),
+        );
 
         let assistant_message_id = Uuid::new_v4().to_string();
         {
@@ -827,6 +783,7 @@ pub async fn conversation_send_message_inner<R: tauri::Runtime>(
         request.parameters.clone(),
         request.character.clone(),
         stream_id.clone(),
+        None,
     )
     .await?;
 
@@ -903,7 +860,11 @@ pub async fn conversation_regenerate_message(
             .ok_or_else(|| "Cannot regenerate the root message".to_string())?
     };
 
-    let _ = request.insert_guidance;
+    let guidance = if request.insert_guidance {
+        Some(REGENERATE_GUIDANCE)
+    } else {
+        None
+    };
     let stream_id = request
         .stream_id
         .clone()
@@ -917,6 +878,7 @@ pub async fn conversation_regenerate_message(
         request.parameters,
         request.character,
         stream_id,
+        guidance,
     )
     .await
 }
@@ -1001,6 +963,7 @@ pub async fn conversation_edit_and_regenerate(
         request.parameters,
         request.character,
         stream_id,
+        None,
     )
     .await
 }
@@ -1026,16 +989,29 @@ mod tests {
         let app = tauri::test::mock_app();
         let handle = app.handle().clone();
 
+        // Isolate the global key manager from the real app's keychain entries:
+        // the test binary cannot read items created by the app, and reusing a
+        // fixed name would collide with stale items from previous test runs.
+        std::env::set_var(
+            "WISP_KEYRING_SERVICE",
+            format!("wisp-test-{}", uuid::Uuid::new_v4()),
+        );
+
         let conversation_id = "test-conv".to_string();
         let mut chat = Chat::new_with_pool(create_memory_pool()).expect("chat");
         chat.create_conversation(&conversation_id, "Test", "desc")
             .expect("conversation created");
 
         let diagram_cache = DiagramCache::new().expect("diagram cache");
-        let _key_manager =
-            KeyManager::new("test-wisp", std::env::temp_dir().join("wisp-test-keyring.db"))
-                .expect("key manager");
-        let config_manager = ConfigManager::new(&handle).expect("config manager");
+        let _key_manager = KeyManager::new(
+            &format!("wisp-test-{}", uuid::Uuid::new_v4()),
+            std::env::temp_dir().join(format!("wisp-test-keyring-{}.db", uuid::Uuid::new_v4())),
+        )
+        .expect("key manager");
+        let config_manager = ConfigManager::with_path(
+            std::env::temp_dir().join(format!("wisp-config-{}.toml", std::process::id())),
+        )
+        .expect("config manager");
         let mcp_config_manager = McpConfigManager::new(&handle).expect("mcp config");
         let stdio_manager = Arc::new(McpStdioManager::new());
         let http_manager = Arc::new(McpHttpManager::new());

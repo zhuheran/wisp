@@ -321,6 +321,7 @@ pub struct ConversationSendRequest {
 - [ ] Test edit-and-regenerate updates user text then creates new assistant branch.
 - [ ] Test derive creates sibling user message under old parent.
 - [ ] Preserve `INTERFACE_REGENERATE_INSERT` equivalent in Rust prompt construction.
+  - ✅ Done: `wisp_conversation::interface::{INTERFACE_PROMPT, REGENERATE_GUIDANCE}` — interface rendering guidance is prepended to every system prompt (main + pal paths); regenerate guidance is injected as a transient trailing user message on round 0 when `insert_guidance` is set.
 
 ---
 

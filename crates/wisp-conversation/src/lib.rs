@@ -1,5 +1,6 @@
 pub mod context_trim;
 pub mod director;
+pub mod interface;
 pub mod engine;
 pub mod payload;
 pub mod retry;
