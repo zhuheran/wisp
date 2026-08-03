@@ -16,6 +16,7 @@ fn sample_skill(name: &str) -> Skill {
         allowed_tools: Vec::new(),
         path: PathBuf::from("/tmp/skills").join(name),
         body: format!("# {name}\n\nInstructions body."),
+        resources: Vec::new(),
     }
 }
 
@@ -80,6 +81,40 @@ async fn tool_run_returns_body_for_known_skill() {
         result.content[0],
         ToolContent::Text { text: "# code-review\n\nInstructions body.".to_string() }
     );
+}
+
+#[tokio::test]
+async fn tool_run_appends_resource_list_when_present() {
+    let mut skill = sample_skill("web-search");
+    skill.resources = vec!["references/REFERENCE.md".to_string(), "scripts/search.py".to_string()];
+    let tool = LoadSkillTool::new(vec![skill]);
+
+    let result = tool
+        .run(serde_json::json!({"skill_name": "web-search"}))
+        .await
+        .expect("run succeeds");
+    let text = match &result.content[0] {
+        ToolContent::Text { text } => text.clone(),
+        _ => panic!("expected text"),
+    };
+    assert!(text.contains("# web-search"), "should include the body");
+    assert!(text.contains("## Skill resources"), "should list resources");
+    assert!(text.contains("- references/REFERENCE.md"));
+    assert!(text.contains("- scripts/search.py"));
+}
+
+#[tokio::test]
+async fn tool_run_omits_resource_section_when_empty() {
+    let tool = tool_with_two_skills(); // sample skills have no resources
+    let result = tool
+        .run(serde_json::json!({"skill_name": "web-search"}))
+        .await
+        .expect("run succeeds");
+    let text = match &result.content[0] {
+        ToolContent::Text { text } => text.clone(),
+        _ => panic!("expected text"),
+    };
+    assert!(!text.contains("Skill resources"), "no resource section without resources");
 }
 
 #[tokio::test]

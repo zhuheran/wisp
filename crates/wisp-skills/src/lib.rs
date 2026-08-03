@@ -34,6 +34,8 @@ pub struct Skill {
     pub path: PathBuf,
     /// SKILL.md 正文（frontmatter 之后的内容）。
     pub body: String,
+    /// skill 目录内资源文件的相对路径（递归扫描，排除 SKILL.md，排序）。
+    pub resources: Vec<String>,
 }
 
 /// skill 加载/校验错误。
@@ -196,7 +198,37 @@ pub fn load_skill(dir: &Path) -> Result<Skill, SkillError> {
         allowed_tools: fm.allowed_tools,
         path: dir.to_path_buf(),
         body,
+        resources: scan_resources(dir),
     })
+}
+
+/// 递归收集 skill 目录内的资源文件（相对路径，`/` 分隔，排序），
+/// 排除 `SKILL.md`、隐藏文件（`.` 开头，如 `.DS_Store`）和缓存目录
+/// （`__pycache__`）。
+fn scan_resources(dir: &Path) -> Vec<String> {
+    fn walk(base: &Path, current: &Path, out: &mut Vec<String>) {
+        let Ok(entries) = std::fs::read_dir(current) else { return };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let file_name = entry.file_name();
+            let name = file_name.to_string_lossy();
+            if name.starts_with('.') || name == "__pycache__" {
+                continue; // 隐藏文件 / 缓存目录
+            }
+            if path.is_dir() {
+                walk(base, &path, out);
+            } else if name != "SKILL.md" {
+                if let Ok(rel) = path.strip_prefix(base) {
+                    out.push(rel.components().map(|c| c.as_os_str().to_string_lossy()).collect::<Vec<_>>().join("/"));
+                }
+            }
+        }
+    }
+
+    let mut resources = Vec::new();
+    walk(dir, dir, &mut resources);
+    resources.sort();
+    resources
 }
 
 /// 扫描 `dir` 下的所有 skill 子目录；宽容模式——单目录失败不影响其他。
@@ -296,11 +328,13 @@ Pass the exact name as the skill_name argument."
             .ok_or_else(|| {
                 ToolError::ExecutionFailed("missing 'skill_name' argument".to_string())
             })?;
-        let body = self
-            .find_body(name)
+        let skill = self
+            .skills
+            .iter()
+            .find(|s| s.name == name)
             .ok_or_else(|| ToolError::NotFound(name.to_string()))?;
         Ok(ToolResult {
-            content: vec![ToolContent::Text { text: body.to_string() }],
+            content: vec![ToolContent::Text { text: load_result_text(skill) }],
             is_error: false,
         })
     }
@@ -314,8 +348,8 @@ Pass the exact name as the skill_name argument."
         arguments
             .get("skill_name")
             .and_then(|v| v.as_str())
-            .and_then(|n| self.find_body(n))
-            .map(ToOwned::to_owned)
+            .and_then(|n| self.skills.iter().find(|s| s.name == n))
+            .map(load_result_text)
             .unwrap_or_default()
     }
 
@@ -328,8 +362,134 @@ Pass the exact name as the skill_name argument."
         arguments
             .get("skill_name")
             .and_then(|v| v.as_str())
-            .and_then(|n| self.find_body(n))
-            .map(ToOwned::to_owned)
+            .and_then(|n| self.skills.iter().find(|s| s.name == n))
+            .map(load_result_text)
             .unwrap_or_default()
     }
+}
+
+/// 正文 + 资源清单（渐进式披露 L3：模型从清单里决定按需读取哪个文件）。
+fn load_result_text(skill: &Skill) -> String {
+    let mut out = skill.body.clone();
+    if !skill.resources.is_empty() {
+        out.push_str("\n\n## Skill resources\n");
+        for resource in &skill.resources {
+            out.push_str(&format!("- {resource}\n"));
+        }
+    }
+    out
+}
+
+/// 读取 skill 目录内资源文件的 `NativeTool` 实现（单例）。
+///
+/// 渐进式披露 L3：`load_skill` 返回正文 + 资源清单后，模型用
+/// `read_skill_resources(skill_name, path)` 按需读取具体文件（
+/// references/scripts/assets 等）。安全约束：路径必须解析在 skill
+/// 目录内（防目录穿越），只读 UTF-8 文本（脚本按文本阅读、不执行），
+/// 单文件 ≤ [`MAX_RESOURCE_SIZE`] 字节。
+pub struct ReadSkillResourcesTool {
+    skills: Vec<Skill>,
+}
+
+/// 单文件大小上限（512 KiB）——防止超大文件撑爆工具结果/上下文。
+pub const MAX_RESOURCE_SIZE: u64 = 512 * 1024;
+
+impl ReadSkillResourcesTool {
+    /// 工具名（常量，符合 `^[a-zA-Z0-9_-]+$`）。
+    pub const TOOL_NAME: &'static str = "read_skill_resources";
+
+    pub fn new(skills: Vec<Skill>) -> Self {
+        Self { skills }
+    }
+}
+
+#[async_trait]
+impl NativeTool for ReadSkillResourcesTool {
+    fn name(&self) -> &str {
+        Self::TOOL_NAME
+    }
+
+    fn description(&self) -> &str {
+        "Read a resource file inside a skill's directory (references/, scripts/, \
+assets/). The file list is returned by load_skill. Pass the skill_name and \
+the resource path exactly as listed."
+    }
+
+    fn schema(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "skill_name": {
+                    "type": "string",
+                    "enum": self.skills.iter().map(|s| s.name.clone()).collect::<Vec<_>>(),
+                    "description": "The name of the skill the resource belongs to",
+                },
+                "path": {
+                    "type": "string",
+                    "description": "Relative path of the resource file inside the skill directory",
+                },
+            },
+            "required": ["skill_name", "path"],
+        })
+    }
+
+    async fn run(&self, args: Value) -> Result<ToolResult, ToolError> {
+        let name = args
+            .get("skill_name")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| {
+                ToolError::ExecutionFailed("missing 'skill_name' argument".to_string())
+            })?;
+        let path = args
+            .get("path")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| ToolError::ExecutionFailed("missing 'path' argument".to_string()))?;
+        let skill = self
+            .skills
+            .iter()
+            .find(|s| s.name == name)
+            .ok_or_else(|| ToolError::NotFound(name.to_string()))?;
+
+        let text = read_resource(&skill.path, path)?;
+        Ok(ToolResult {
+            content: vec![ToolContent::Text { text }],
+            is_error: false,
+        })
+    }
+}
+
+/// 读取 skill 目录内相对路径 `rel` 的文本文件。
+///
+/// 校验：相对路径 + canonicalize 后必须仍在 skill 目录内（防 `..` 穿越）；
+/// 必须是 UTF-8 文本；大小 ≤ [`MAX_RESOURCE_SIZE`]。
+fn read_resource(base: &Path, rel: &str) -> Result<String, ToolError> {
+    let rel_path = Path::new(rel);
+    if rel_path.is_absolute() {
+        return Err(ToolError::ExecutionFailed(format!(
+            "resource path must be relative: {rel}"
+        )));
+    }
+    let base_canon = base.canonicalize().map_err(|e| {
+        ToolError::ExecutionFailed(format!("skill directory unavailable: {e}"))
+    })?;
+    let candidate = base_canon.join(rel_path);
+    let candidate_canon = candidate.canonicalize().map_err(|_| {
+        ToolError::ExecutionFailed(format!("resource not found: {rel}"))
+    })?;
+    if !candidate_canon.starts_with(&base_canon) {
+        return Err(ToolError::ExecutionFailed(format!(
+            "resource path escapes the skill directory: {rel}"
+        )));
+    }
+    let len = std::fs::metadata(&candidate_canon).map_err(|e| {
+        ToolError::ExecutionFailed(format!("resource unreadable: {e}"))
+    })?.len();
+    if len > MAX_RESOURCE_SIZE {
+        return Err(ToolError::ExecutionFailed(format!(
+            "resource exceeds {MAX_RESOURCE_SIZE} bytes: {rel}"
+        )));
+    }
+    std::fs::read_to_string(&candidate_canon).map_err(|e| {
+        ToolError::ExecutionFailed(format!("resource is not readable text: {e}"))
+    })
 }

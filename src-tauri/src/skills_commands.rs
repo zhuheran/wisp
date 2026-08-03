@@ -8,7 +8,7 @@ use serde_json::Value;
 use tauri::{AppHandle, Manager};
 use tauri_plugin_opener::OpenerExt;
 use wisp_common::{ToolError, ToolResult};
-use wisp_skills::{load_skills, LoadSkillTool, Skill, SkillError};
+use wisp_skills::{load_skills, LoadSkillTool, ReadSkillResourcesTool, Skill, SkillError};
 use wisp_software_tools::NativeTool;
 use wisp_tool_registry::{ToolDefinition, ToolHandler, ToolRegistry};
 
@@ -69,10 +69,10 @@ pub(crate) fn load_skills_from_dirs(
     (skills, errors)
 }
 
-/// `NativeTool` adapter used to register `LoadSkillTool` into the shared
+/// `NativeTool` adapter used to register skill tools into the shared
 /// `ToolRegistry` (mirrors `wisp_software_tools::NativeToolAdapter`).
 struct SkillToolHandler {
-    tool: LoadSkillTool,
+    tool: Box<dyn NativeTool>,
 }
 
 #[async_trait]
@@ -82,7 +82,7 @@ impl ToolHandler for SkillToolHandler {
     }
 }
 
-fn build_definition(tool: &LoadSkillTool) -> ToolDefinition {
+fn build_definition(tool: &dyn NativeTool) -> ToolDefinition {
     ToolDefinition {
         name: tool.name().to_string(),
         description: Some(tool.description().to_string()),
@@ -96,19 +96,23 @@ fn build_definition(tool: &LoadSkillTool) -> ToolDefinition {
     }
 }
 
-/// (Re-)register the single `load_skill` tool for the enabled skills.
+/// (Re-)register the `load_skill` and `read_skill_resources` tools for the
+/// enabled skills.
 ///
-/// Only enabled skills are exposed via the tool's `skill_name` enum; the
+/// Only enabled skills are exposed via the tools' `skill_name` enums; the
 /// per-skill enabled set lives in `AppData.enabled_skills`. Stale tools are
-/// unregistered: the current `load_skill` entry (re-registered with the new
-/// schema) and any `skill_*` tools left over from the earlier one-tool-per-
-/// skill design.
+/// unregistered: the current entries (re-registered with the new schema) and
+/// any `skill_*` tools left over from the earlier one-tool-per-skill design.
 pub(crate) fn resync_registry(registry: &ToolRegistry, skills: &[Skill], enabled: &HashSet<String>) {
     for name in registry
         .list_tools()
         .into_iter()
         .map(|t| t.name)
-        .filter(|n| n == LoadSkillTool::TOOL_NAME || n.starts_with("skill_"))
+        .filter(|n| {
+            n == LoadSkillTool::TOOL_NAME
+                || n == ReadSkillResourcesTool::TOOL_NAME
+                || n.starts_with("skill_")
+        })
         .collect::<Vec<_>>()
     {
         registry.unregister(&name);
@@ -123,10 +127,15 @@ pub(crate) fn resync_registry(registry: &ToolRegistry, skills: &[Skill], enabled
         return;
     }
 
-    let tool = LoadSkillTool::new(enabled_skills);
-    let definition = build_definition(&tool);
-    let handler = Arc::new(SkillToolHandler { tool }) as Arc<dyn ToolHandler>;
-    registry.register(definition, handler, Vec::new());
+    let tools: Vec<Box<dyn NativeTool>> = vec![
+        Box::new(LoadSkillTool::new(enabled_skills.clone())),
+        Box::new(ReadSkillResourcesTool::new(enabled_skills)),
+    ];
+    for tool in tools {
+        let definition = build_definition(tool.as_ref());
+        let handler = Arc::new(SkillToolHandler { tool }) as Arc<dyn ToolHandler>;
+        registry.register(definition, handler, Vec::new());
+    }
 }
 
 fn collect_skill_infos(skills: &[Skill], enabled: &HashSet<String>) -> Vec<SkillInfo> {
@@ -219,6 +228,7 @@ mod tests {
             allowed_tools: vec![],
             path: PathBuf::from("/tmp/skills").join(name),
             body: "# body".to_string(),
+            resources: vec![],
         }
     }
 
@@ -284,18 +294,24 @@ mod tests {
     }
 
     #[test]
-    fn resync_registers_single_tool_with_enabled_enum() {
+    fn resync_registers_tools_with_enabled_enum() {
         let registry = ToolRegistry::new();
         let skills = vec![skill("alpha", "A"), skill("beta", "B")];
 
         resync_registry(&registry, &skills, &enabled(&["alpha"]));
 
-        // Exactly one tool, containing only enabled skills.
+        // Exactly two tools, both exposing only enabled skills.
         let tools = registry.list_tools();
-        assert_eq!(tools.len(), 1);
-        assert_eq!(tools[0].name, "load_skill");
-        let schema = &tools[0].input_schema;
-        assert_eq!(schema["properties"]["skill_name"]["enum"], serde_json::json!(["alpha"]));
+        let mut names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
+        names.sort_unstable();
+        assert_eq!(names, vec!["load_skill", "read_skill_resources"]);
+        for tool in &tools {
+            let schema = &tool.input_schema;
+            assert_eq!(
+                schema["properties"]["skill_name"]["enum"],
+                serde_json::json!(["alpha"])
+            );
+        }
     }
 
     #[test]
@@ -325,7 +341,9 @@ mod tests {
                 metadata: HashMap::new(),
                 requires_confirmation: false,
             },
-            Arc::new(SkillToolHandler { tool: LoadSkillTool::new(vec![]) }),
+            Arc::new(SkillToolHandler {
+                tool: Box::new(LoadSkillTool::new(vec![])),
+            }),
             Vec::new(),
         );
 
@@ -334,10 +352,15 @@ mod tests {
         resync_registry(&registry, &skills, &enabled(&["beta"]));
 
         let tools = registry.list_tools();
-        assert_eq!(tools.len(), 1, "stale skill_alpha must be removed");
-        assert_eq!(tools[0].name, "load_skill");
-        let schema = &tools[0].input_schema;
-        assert_eq!(schema["properties"]["skill_name"]["enum"], serde_json::json!(["beta"]));
+        assert_eq!(tools.len(), 2, "stale skill_alpha must be removed");
+        for tool in &tools {
+            assert_ne!(tool.name, "skill_alpha");
+            let schema = &tool.input_schema;
+            assert_eq!(
+                schema["properties"]["skill_name"]["enum"],
+                serde_json::json!(["beta"])
+            );
+        }
     }
 
     #[test]
@@ -366,6 +389,11 @@ mod tests {
 
         let (skills, errors) = load_skills(&dir);
         println!("loaded {} skills, {} errors", skills.len(), errors.len());
+        let with_resources = skills.iter().filter(|s| !s.resources.is_empty()).count();
+        println!("{with_resources} skills have resource files");
+        for skill in skills.iter().take(3).filter(|s| !s.resources.is_empty()) {
+            println!("  {}: {}", skill.name, skill.resources.join(", "));
+        }
         for (name, err) in &errors {
             println!("  FAIL {name}: {err}");
         }

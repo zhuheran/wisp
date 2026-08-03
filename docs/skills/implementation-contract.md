@@ -71,25 +71,34 @@ metadata:           # 可选，V1 不解析（跳过该键及其缩进子行）
 - 无 frontmatter 或前后 `---` 缺失 → `MissingFrontmatter`
 - name 校验：1-64 字符，仅 `[a-z0-9-]`，不以 `-` 开头/结尾，无连续 `--`
 
-### 1.5 `LoadSkillTool`（NativeTool 实现，同 crate，**单工具设计**）
+### 1.5 `LoadSkillTool` 与 `ReadSkillResourcesTool`（NativeTool 实现，同 crate，**单工具设计**）
 
-一个 `load_skill` 工具承载所有已启用 skill，通过 `skill_name` 参数选择（避免每个 skill 一个工具导致工具列表膨胀、逼近 API 工具数量上限；skill 是"加载内容"而非"执行动作"）。触发流程（渐进式披露）：system prompt 里的 L1 清单（name + description）让模型决定加载哪个 skill → 调用 `load_skill(skill_name)` → 正文作为工具结果进入上下文。
+**`load_skill`**：一个工具承载所有已启用 skill，通过 `skill_name` 参数选择（避免每个 skill 一个工具导致工具列表膨胀、逼近 API 工具数量上限；skill 是"加载内容"而非"执行动作"）。触发流程（渐进式披露）：system prompt 里的 L1 清单（name + description）让模型决定加载哪个 skill → 调用 `load_skill(skill_name)` → 返回 SKILL.md 正文 + **资源清单**（`## Skill resources`，模型按需决定读取哪个文件）。
+
+**`read_skill_resources`**（渐进式披露 L3）：读取 skill 目录内的资源文件（references/scripts/assets 等）。
 
 ```rust
 pub struct LoadSkillTool { skills: Vec<Skill> }
-
 impl LoadSkillTool {
-    pub const TOOL_NAME: &'static str = "load_skill";  // 符合 ^[a-zA-Z0-9_-]+$
+    pub const TOOL_NAME: &'static str = "load_skill";
     pub fn new(skills: Vec<Skill>) -> Self;
 }
+
+pub struct ReadSkillResourcesTool { skills: Vec<Skill> }
+impl ReadSkillResourcesTool {
+    pub const TOOL_NAME: &'static str = "read_skill_resources";
+    pub fn new(skills: Vec<Skill>) -> Self;
+}
+
+pub const MAX_RESOURCE_SIZE: u64 = 512 * 1024;  // 单文件上限
 ```
 
-- `name()` 返回常量 `"load_skill"`（不随 skill 集合变化）
-- `description()`：说明从 system prompt 的 `Available skills` 清单取名字
-- `schema()`：`{ skill_name: { type: string, enum: [已启用 skill 名...] }, required: [skill_name] }`——enum 随启用状态动态生成
-- `run()`：按 `skill_name` 返回对应正文；未知名 → `ToolError::NotFound`；缺参 → `ToolError::ExecutionFailed`
-- `format_to_text`/`format_to_markdown`：按参数中的 `skill_name` 返回正文
-- 无状态（幂等/去重由上层决定）
+- 工具名均为常量（符合 `^[a-zA-Z0-9_-]+$`，不随 skill 集合变化）
+- `load_skill` schema：`{ skill_name: { type: string, enum: [...] } }`，enum 随启用状态动态生成
+- `read_skill_resources` schema：`{ skill_name: { enum }, path: string }`，`required: [skill_name, path]`
+- `read_skill_resources` 安全约束：路径必须解析在 skill 目录内（canonicalize 前缀校验，防 `..` 穿越/绝对路径）；只读 UTF-8 文本（脚本按文本阅读、**不执行**）；大小 ≤ `MAX_RESOURCE_SIZE`；未知名/缺参/二进制/超大 → 错误
+- `Skill.resources`：load_skill 时递归扫描目录收集（相对路径、排序），排除 `SKILL.md`、隐藏文件、`__pycache__`
+- 两个工具均无状态（幂等/去重由上层决定）
 
 ### 1.6 测试要求（TDD，red-green-refactor）
 
@@ -113,7 +122,7 @@ skills_open_folder(app_handle) -> Result<(), String>  // 打开系统文件管�
 ```
 
 - skills 扫描目录（按优先级）：`app_data_dir()/skills`（应用自有，可写，打开文件夹命令指向这里）+ `~/.agents/skills`（全局 Agent Skills 目录，只读扫描，与 Claude Code/Zed 共享）；同名 skill 应用目录优先
-- 注册进 `ToolRegistry`：**单个** `load_skill` 工具（`LoadSkillTool::TOOL_NAME`），enum 只含启用的 skill；per-skill 启用状态存 `AppData.enabled_skills`，refresh 保留启用状态、新 skill 默认启用
+- 注册进 `ToolRegistry`：**两个**单例工具——`load_skill`（`LoadSkillTool::TOOL_NAME`）+ `read_skill_resources`（`ReadSkillResourcesTool::TOOL_NAME`），两者的 `skill_name` enum 都只含启用的 skill；per-skill 启用状态存 `AppData.enabled_skills`，refresh 保留启用状态、新 skill 默认启用
 - `skills_list` 返回按 name 排序
 
 ## 3. 前端（子 agent 实现，不需要测试）

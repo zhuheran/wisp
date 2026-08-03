@@ -57,3 +57,60 @@ fn stray_files_are_ignored() {
     assert_eq!(skills[0].name, "good");
     assert!(errors.is_empty());
 }
+
+#[test]
+fn resources_are_scanned_recursively_excluding_skill_md() {
+    let tmp = TempDir::new();
+    let dir = tmp.path().join("good");
+    create_skill_dir(tmp.path(), "good", &skill_md(&["name: good", "description: d"], "body"));
+    fs::create_dir_all(dir.join("references")).unwrap();
+    fs::write(dir.join("references/REFERENCE.md"), "ref").unwrap();
+    fs::create_dir_all(dir.join("scripts")).unwrap();
+    fs::write(dir.join("scripts/extract.py"), "print(1)").unwrap();
+    fs::write(dir.join("notes.md"), "note").unwrap();
+
+    let (skills, _) = load_skills(tmp.path());
+    let skill = &skills[0];
+    assert_eq!(
+        skill.resources,
+        vec![
+            "notes.md".to_string(),
+            "references/REFERENCE.md".to_string(),
+            "scripts/extract.py".to_string(),
+        ],
+        "resources should be sorted, recursive, and exclude SKILL.md"
+    );
+}
+
+#[test]
+fn skill_without_resources_has_empty_list() {
+    let tmp = TempDir::new();
+    create_skill_dir(tmp.path(), "good", &skill_md(&["name: good", "description: d"], "body"));
+
+    let (skills, _) = load_skills(tmp.path());
+    assert!(skills[0].resources.is_empty());
+}
+
+#[test]
+fn resources_filter_out_hidden_and_cache_files() {
+    let tmp = TempDir::new();
+    let dir = tmp.path().join("good");
+    create_skill_dir(tmp.path(), "good", &skill_md(&["name: good", "description: d"], "body"));
+    fs::create_dir_all(dir.join("references")).unwrap();
+    fs::write(dir.join("references/REFERENCE.md"), "ref").unwrap();
+    fs::write(dir.join("notes.md"), "note").unwrap();
+    fs::write(dir.join(".hidden.md"), "hidden").unwrap();
+    fs::write(dir.join(".DS_Store"), "junk").unwrap();
+    fs::create_dir_all(dir.join("__pycache__")).unwrap();
+    fs::write(dir.join("__pycache__/x.pyc"), "junk").unwrap();
+
+    let (skills, _) = load_skills(tmp.path());
+    assert_eq!(
+        skills[0].resources,
+        vec![
+            "notes.md".to_string(),
+            "references/REFERENCE.md".to_string(),
+        ],
+        "hidden and cache files must be excluded"
+    );
+}

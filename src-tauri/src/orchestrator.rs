@@ -703,6 +703,7 @@ mod tests {
             allowed_tools: vec![],
             path: std::path::PathBuf::from("/tmp/skills/code-review"),
             body: "# Code Review\nChecklist...".to_string(),
+            resources: vec![],
         };
         let replies = vec![];
 

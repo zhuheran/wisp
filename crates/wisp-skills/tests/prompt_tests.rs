@@ -13,6 +13,7 @@ fn make_skill(name: &str, description: &str) -> Skill {
         allowed_tools: Vec::new(),
         path: PathBuf::from("/tmp").join(name),
         body: String::new(),
+        resources: Vec::new(),
     }
 }
 
