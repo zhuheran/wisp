@@ -59,13 +59,16 @@ pub fn run() {
             let tool_registry = std::sync::Arc::new(ToolRegistry::new());
 
             // Scan the skills directories (app-owned + ~/.agents/skills) and
-            // register skill load tools before AppData is managed so the
-            // conversation path sees them immediately.
+            // register the load_skill tool before AppData is managed so the
+            // conversation path sees them immediately. Newly scanned skills
+            // default to enabled.
             let (skills, skill_errors) = {
                 let dirs = skills_commands::skills_dirs(app.handle())?;
                 skills_commands::load_skills_from_dirs(&dirs)
             };
-            skills_commands::resync_registry(&tool_registry, &skills);
+            let enabled_skills: std::collections::HashSet<String> =
+                skills.iter().map(|s| s.name.clone()).collect();
+            skills_commands::resync_registry(&tool_registry, &skills, &enabled_skills);
             if !skill_errors.is_empty() {
                 eprintln!("[skills] {} skill(s) failed to load:", skill_errors.len());
                 for (name, err) in &skill_errors {
@@ -97,6 +100,7 @@ pub fn run() {
                 software_registry,
                 unlocked_pals: HashMap::new(),
                 skills,
+                enabled_skills,
             }));
 
             app.manage(AbortRegistry::new());

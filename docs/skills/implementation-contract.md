@@ -71,23 +71,25 @@ metadata:           # 可选，V1 不解析（跳过该键及其缩进子行）
 - 无 frontmatter 或前后 `---` 缺失 → `MissingFrontmatter`
 - name 校验：1-64 字符，仅 `[a-z0-9-]`，不以 `-` 开头/结尾，无连续 `--`
 
-### 1.5 `SkillLoadTool`（NativeTool 实现，同 crate）
+### 1.5 `LoadSkillTool`（NativeTool 实现，同 crate，**单工具设计**）
+
+一个 `load_skill` 工具承载所有已启用 skill，通过 `skill_name` 参数选择（避免每个 skill 一个工具导致工具列表膨胀、逼近 API 工具数量上限；skill 是"加载内容"而非"执行动作"）。触发流程（渐进式披露）：system prompt 里的 L1 清单（name + description）让模型决定加载哪个 skill → 调用 `load_skill(skill_name)` → 正文作为工具结果进入上下文。
 
 ```rust
-pub struct SkillLoadTool { name: String, description: String, body: String }
+pub struct LoadSkillTool { skills: Vec<Skill> }
 
-impl SkillLoadTool {
-    pub fn new(skill: &Skill) -> Self;
-    // name  = format!("skill:{}", skill.name)
-    // description = skill.description 原样（规范要求 description 已含"做什么+何时用"）
-    // body  = skill.body
+impl LoadSkillTool {
+    pub const TOOL_NAME: &'static str = "load_skill";  // 符合 ^[a-zA-Z0-9_-]+$
+    pub fn new(skills: Vec<Skill>) -> Self;
 }
 ```
 
-- `schema()` 返回零参 `{"type":"object","properties":{}}`
-- `run()` 返回 `Ok(ToolResult { content: vec![ToolContent::Text { text: body }], is_error: false })`
-- `format_to_text` 返回正文原文；`format_to_markdown` 返回正文原文（无需自定义）
-- 无状态（幂等/去重由上层决定，本 crate 不做）
+- `name()` 返回常量 `"load_skill"`（不随 skill 集合变化）
+- `description()`：说明从 system prompt 的 `Available skills` 清单取名字
+- `schema()`：`{ skill_name: { type: string, enum: [已启用 skill 名...] }, required: [skill_name] }`——enum 随启用状态动态生成
+- `run()`：按 `skill_name` 返回对应正文；未知名 → `ToolError::NotFound`；缺参 → `ToolError::ExecutionFailed`
+- `format_to_text`/`format_to_markdown`：按参数中的 `skill_name` 返回正文
+- 无状态（幂等/去重由上层决定）
 
 ### 1.6 测试要求（TDD，red-green-refactor）
 
@@ -111,7 +113,7 @@ skills_open_folder(app_handle) -> Result<(), String>  // 打开系统文件管�
 ```
 
 - skills 扫描目录（按优先级）：`app_data_dir()/skills`（应用自有，可写，打开文件夹命令指向这里）+ `~/.agents/skills`（全局 Agent Skills 目录，只读扫描，与 Claude Code/Zed 共享）；同名 skill 应用目录优先
-- 注册进 `ToolRegistry`（工具名 `skill:{name}`，启用状态存 registry；refresh 保留启用状态）
+- 注册进 `ToolRegistry`：**单个** `load_skill` 工具（`LoadSkillTool::TOOL_NAME`），enum 只含启用的 skill；per-skill 启用状态存 `AppData.enabled_skills`，refresh 保留启用状态、新 skill 默认启用
 - `skills_list` 返回按 name 排序
 
 ## 3. 前端（子 agent 实现，不需要测试）

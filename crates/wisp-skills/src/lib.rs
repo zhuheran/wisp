@@ -237,44 +237,70 @@ pub fn assemble_skills_prompt(skills: &[Skill]) -> String {
     lines.join("\n")
 }
 
-/// 把 skill 正文暴露为可调用工具的 `NativeTool` 实现。
+/// 把 skill 正文暴露为可调用工具的 `NativeTool` 实现（单例）。
 ///
-/// 工具名 `skill:{name}`；调用返回 SKILL.md 正文（渐进式披露：模型先见
-/// description，调用后才读到正文）。无状态，幂等/去重由上层决定。
-pub struct SkillLoadTool {
-    name: String,
-    description: String,
-    body: String,
+/// 设计：**一个** `load_skill` 工具承载所有已启用 skill，通过 `skill_name`
+/// 参数选择——每个 skill 一个工具的方案会让工具列表随 skill 数量膨胀
+/// （逼近 API 工具上限），且 skill 是"加载内容"而非"执行动作"，与工具语义
+/// 不符。触发流程（渐进式披露）：system prompt 里的 L1 清单
+/// （name + description）让模型决定加载哪个 skill → 调用
+/// `load_skill(skill_name)` → 正文作为工具结果进入上下文。无状态，
+/// 幂等/去重由上层决定。
+pub struct LoadSkillTool {
+    skills: Vec<Skill>,
 }
 
-impl SkillLoadTool {
-    pub fn new(skill: &Skill) -> Self {
-        Self {
-            name: format!("skill:{}", skill.name),
-            description: skill.description.clone(),
-            body: skill.body.clone(),
-        }
+impl LoadSkillTool {
+    /// 工具名（常量，不随 skill 集合变化；符合 `^[a-zA-Z0-9_-]+$`）。
+    pub const TOOL_NAME: &'static str = "load_skill";
+
+    pub fn new(skills: Vec<Skill>) -> Self {
+        Self { skills }
+    }
+
+    fn find_body(&self, name: &str) -> Option<&str> {
+        self.skills.iter().find(|s| s.name == name).map(|s| s.body.as_str())
     }
 }
 
 #[async_trait]
-impl NativeTool for SkillLoadTool {
+impl NativeTool for LoadSkillTool {
     fn name(&self) -> &str {
-        &self.name
+        Self::TOOL_NAME
     }
 
     fn description(&self) -> &str {
-        // description 原样（规范要求 description 已含"做什么+何时用"）。
-        &self.description
+        "Load a skill's instructions by name. Available skills (name and when \
+to use them) are listed in the system prompt under \"Available skills\". \
+Pass the exact name as the skill_name argument."
     }
 
     fn schema(&self) -> Value {
-        serde_json::json!({"type": "object", "properties": {}})
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "skill_name": {
+                    "type": "string",
+                    "enum": self.skills.iter().map(|s| s.name.clone()).collect::<Vec<_>>(),
+                    "description": "The name of the skill to load",
+                }
+            },
+            "required": ["skill_name"],
+        })
     }
 
-    async fn run(&self, _args: Value) -> Result<ToolResult, ToolError> {
+    async fn run(&self, args: Value) -> Result<ToolResult, ToolError> {
+        let name = args
+            .get("skill_name")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| {
+                ToolError::ExecutionFailed("missing 'skill_name' argument".to_string())
+            })?;
+        let body = self
+            .find_body(name)
+            .ok_or_else(|| ToolError::NotFound(name.to_string()))?;
         Ok(ToolResult {
-            content: vec![ToolContent::Text { text: self.body.clone() }],
+            content: vec![ToolContent::Text { text: body.to_string() }],
             is_error: false,
         })
     }
@@ -282,19 +308,28 @@ impl NativeTool for SkillLoadTool {
     fn format_to_text(
         &self,
         _name: &str,
-        _arguments: &Value,
+        arguments: &Value,
         _result: Option<&ToolResult>,
     ) -> String {
-        // 返回正文原文（默认 formatter 会加 `[name] success` 头，不符合契约）。
-        self.body.clone()
+        arguments
+            .get("skill_name")
+            .and_then(|v| v.as_str())
+            .and_then(|n| self.find_body(n))
+            .map(ToOwned::to_owned)
+            .unwrap_or_default()
     }
 
     fn format_to_markdown(
         &self,
         _name: &str,
-        _arguments: &Value,
+        arguments: &Value,
         _result: Option<&ToolResult>,
     ) -> String {
-        self.body.clone()
+        arguments
+            .get("skill_name")
+            .and_then(|v| v.as_str())
+            .and_then(|n| self.find_body(n))
+            .map(ToOwned::to_owned)
+            .unwrap_or_default()
     }
 }

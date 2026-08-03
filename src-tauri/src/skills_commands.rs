@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -8,7 +8,7 @@ use serde_json::Value;
 use tauri::{AppHandle, Manager};
 use tauri_plugin_opener::OpenerExt;
 use wisp_common::{ToolError, ToolResult};
-use wisp_skills::{load_skills, SkillError, SkillLoadTool};
+use wisp_skills::{load_skills, LoadSkillTool, Skill, SkillError};
 use wisp_software_tools::NativeTool;
 use wisp_tool_registry::{ToolDefinition, ToolHandler, ToolRegistry};
 
@@ -54,8 +54,8 @@ fn home_dir() -> Option<PathBuf> {
 /// exists in multiple directories, the first (higher-priority) one wins.
 pub(crate) fn load_skills_from_dirs(
     dirs: &[PathBuf],
-) -> (Vec<wisp_skills::Skill>, Vec<(String, SkillError)>) {
-    let mut skills: Vec<wisp_skills::Skill> = Vec::new();
+) -> (Vec<Skill>, Vec<(String, SkillError)>) {
+    let mut skills: Vec<Skill> = Vec::new();
     let mut errors: Vec<(String, SkillError)> = Vec::new();
     for dir in dirs {
         let (found, dir_errors) = load_skills(dir);
@@ -69,10 +69,10 @@ pub(crate) fn load_skills_from_dirs(
     (skills, errors)
 }
 
-/// `NativeTool` adapter used to register `SkillLoadTool`s into the shared
+/// `NativeTool` adapter used to register `LoadSkillTool` into the shared
 /// `ToolRegistry` (mirrors `wisp_software_tools::NativeToolAdapter`).
 struct SkillToolHandler {
-    tool: SkillLoadTool,
+    tool: LoadSkillTool,
 }
 
 #[async_trait]
@@ -82,7 +82,7 @@ impl ToolHandler for SkillToolHandler {
     }
 }
 
-fn build_definition(tool: &SkillLoadTool) -> ToolDefinition {
+fn build_definition(tool: &LoadSkillTool) -> ToolDefinition {
     ToolDefinition {
         name: tool.name().to_string(),
         description: Some(tool.description().to_string()),
@@ -96,41 +96,46 @@ fn build_definition(tool: &SkillLoadTool) -> ToolDefinition {
     }
 }
 
-/// Register every loaded skill into the tool registry. `ToolRegistry::register`
-/// preserves the enabled state of already-registered tools (so a refresh keeps
-/// the user's toggles); tools whose skill directories disappeared are
-/// unregistered; newly scanned skills default to enabled.
-pub(crate) fn resync_registry(registry: &ToolRegistry, skills: &[wisp_skills::Skill]) {
-    let existing: Vec<String> = registry
+/// (Re-)register the single `load_skill` tool for the enabled skills.
+///
+/// Only enabled skills are exposed via the tool's `skill_name` enum; the
+/// per-skill enabled set lives in `AppData.enabled_skills`. Stale tools are
+/// unregistered: the current `load_skill` entry (re-registered with the new
+/// schema) and any `skill_*` tools left over from the earlier one-tool-per-
+/// skill design.
+pub(crate) fn resync_registry(registry: &ToolRegistry, skills: &[Skill], enabled: &HashSet<String>) {
+    for name in registry
         .list_tools()
         .into_iter()
-        .filter(|t| t.name.starts_with("skill:"))
         .map(|t| t.name)
-        .collect();
-    let current: std::collections::HashSet<String> =
-        skills.iter().map(|s| format!("skill:{}", s.name)).collect();
+        .filter(|n| n == LoadSkillTool::TOOL_NAME || n.starts_with("skill_"))
+        .collect::<Vec<_>>()
+    {
+        registry.unregister(&name);
+    }
 
-    for name in existing {
-        if !current.contains(&name) {
-            registry.unregister(&name);
-        }
+    let enabled_skills: Vec<Skill> = skills
+        .iter()
+        .filter(|s| enabled.contains(&s.name))
+        .cloned()
+        .collect();
+    if enabled_skills.is_empty() {
+        return;
     }
-    for skill in skills {
-        let tool = SkillLoadTool::new(skill);
-        let definition = build_definition(&tool);
-        let handler = Arc::new(SkillToolHandler { tool }) as Arc<dyn ToolHandler>;
-        registry.register(definition, handler, Vec::new());
-    }
+
+    let tool = LoadSkillTool::new(enabled_skills);
+    let definition = build_definition(&tool);
+    let handler = Arc::new(SkillToolHandler { tool }) as Arc<dyn ToolHandler>;
+    registry.register(definition, handler, Vec::new());
 }
 
-fn collect_skill_infos(skills: &[wisp_skills::Skill], registry: &ToolRegistry) -> Vec<SkillInfo> {
-    let enabled_set = registry.enabled_set();
+fn collect_skill_infos(skills: &[Skill], enabled: &HashSet<String>) -> Vec<SkillInfo> {
     let mut infos: Vec<SkillInfo> = skills
         .iter()
         .map(|s| SkillInfo {
             name: s.name.clone(),
             description: s.description.clone(),
-            enabled: enabled_set.contains(&format!("skill:{}", s.name)),
+            enabled: enabled.contains(&s.name),
             path: s.path.display().to_string(),
         })
         .collect();
@@ -143,12 +148,12 @@ fn collect_skill_infos(skills: &[wisp_skills::Skill], registry: &ToolRegistry) -
 pub async fn skills_list(app_handle: AppHandle) -> Result<Vec<SkillInfo>, String> {
     let state = app_handle.state::<Mutex<AppData>>();
     let state = state.lock().map_err(|e| e.to_string())?;
-    Ok(collect_skill_infos(&state.skills, &state.tool_registry))
+    Ok(collect_skill_infos(&state.skills, &state.enabled_skills))
 }
 
-/// Re-scan the skills directory, update the registered tools, and return the
-/// new list. Scan errors are reported per-skill through the returned list's
-/// absence; the directory itself is created if missing.
+/// Re-scan the skills directories, update the registered tool, and return the
+/// new list. Skills that were enabled stay enabled; newly discovered skills
+/// default to enabled; removed skills drop out.
 #[tauri::command]
 pub async fn skills_refresh(app_handle: AppHandle) -> Result<Vec<SkillInfo>, String> {
     let dirs = skills_dirs(&app_handle)?;
@@ -156,26 +161,33 @@ pub async fn skills_refresh(app_handle: AppHandle) -> Result<Vec<SkillInfo>, Str
 
     let state_mutex = app_handle.state::<Mutex<AppData>>();
     let mut state = state_mutex.lock().map_err(|e| e.to_string())?;
-    resync_registry(&state.tool_registry, &skills);
+
+    let found: HashSet<String> = skills.iter().map(|s| s.name.clone()).collect();
+    let mut enabled = std::mem::take(&mut state.enabled_skills);
+    enabled.extend(found);
+
+    resync_registry(&state.tool_registry, &skills, &enabled);
     state.skills = skills;
-    Ok(collect_skill_infos(&state.skills, &state.tool_registry))
+    state.enabled_skills = enabled;
+    Ok(collect_skill_infos(&state.skills, &state.enabled_skills))
 }
 
-/// Toggle a skill's enabled state (enabled skills are injected into the
-/// system prompt as L1 metadata and registered as callable tools).
+/// Toggle a skill's enabled state (enabled skills are advertised in the
+/// system prompt as L1 metadata and exposed via the `load_skill` tool).
 #[tauri::command]
 pub async fn skills_toggle(app_handle: AppHandle, name: String) -> Result<Vec<SkillInfo>, String> {
-    let tool_name = format!("skill:{name}");
     let state_mutex = app_handle.state::<Mutex<AppData>>();
-    let state = state_mutex.lock().map_err(|e| e.to_string())?;
+    let mut state = state_mutex.lock().map_err(|e| e.to_string())?;
 
     if !state.skills.iter().any(|s| s.name == name) {
         return Err(format!("Skill not found: {name}"));
     }
 
-    let currently_enabled = state.tool_registry.enabled_set().contains(&tool_name);
-    state.tool_registry.set_tool_enabled(&tool_name, !currently_enabled);
-    Ok(collect_skill_infos(&state.skills, &state.tool_registry))
+    if !state.enabled_skills.remove(&name) {
+        state.enabled_skills.insert(name);
+    }
+    resync_registry(&state.tool_registry, &state.skills, &state.enabled_skills);
+    Ok(collect_skill_infos(&state.skills, &state.enabled_skills))
 }
 
 /// Open the app-owned skills directory in the system file manager (the
@@ -198,8 +210,8 @@ mod tests {
     use super::*;
     use std::fs;
 
-    fn skill(name: &str, description: &str) -> wisp_skills::Skill {
-        wisp_skills::Skill {
+    fn skill(name: &str, description: &str) -> Skill {
+        Skill {
             name: name.to_string(),
             description: description.to_string(),
             license: None,
@@ -208,6 +220,10 @@ mod tests {
             path: PathBuf::from("/tmp/skills").join(name),
             body: "# body".to_string(),
         }
+    }
+
+    fn enabled(names: &[&str]) -> HashSet<String> {
+        names.iter().map(|n| n.to_string()).collect()
     }
 
     fn temp_root() -> PathBuf {
@@ -239,8 +255,7 @@ mod tests {
 
         assert!(errors.is_empty(), "unexpected errors: {errors:?}");
         // Order is filesystem-dependent; assert presence, dedup, and priority.
-        let names: std::collections::HashSet<String> =
-            skills.iter().map(|s| s.name.clone()).collect();
+        let names: HashSet<String> = skills.iter().map(|s| s.name.clone()).collect();
         assert_eq!(names.len(), 3);
         assert!(names.contains("alpha"));
         assert!(names.contains("beta"));
@@ -269,53 +284,67 @@ mod tests {
     }
 
     #[test]
-    fn resync_registers_new_skills_as_enabled() {
+    fn resync_registers_single_tool_with_enabled_enum() {
         let registry = ToolRegistry::new();
         let skills = vec![skill("alpha", "A"), skill("beta", "B")];
 
-        resync_registry(&registry, &skills);
+        resync_registry(&registry, &skills, &enabled(&["alpha"]));
 
-        assert!(registry.get_tool("skill:alpha").is_some());
-        assert!(registry.get_tool("skill:beta").is_some());
-        assert!(registry.enabled_set().contains("skill:alpha"));
-        assert!(registry.enabled_set().contains("skill:beta"));
+        // Exactly one tool, containing only enabled skills.
+        let tools = registry.list_tools();
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0].name, "load_skill");
+        let schema = &tools[0].input_schema;
+        assert_eq!(schema["properties"]["skill_name"]["enum"], serde_json::json!(["alpha"]));
     }
 
     #[test]
-    fn resync_preserves_enabled_state_across_refresh() {
+    fn resync_with_no_enabled_skills_registers_nothing() {
         let registry = ToolRegistry::new();
-        resync_registry(&registry, &[skill("alpha", "A")]);
-        registry.set_tool_enabled("skill:alpha", false);
+        let skills = vec![skill("alpha", "A")];
 
-        // Same skill rescanned: enabled state must survive.
-        resync_registry(&registry, &[skill("alpha", "A updated")]);
+        resync_registry(&registry, &skills, &enabled(&[]));
 
-        assert!(!registry.enabled_set().contains("skill:alpha"));
-        // Definition updated with the new description.
-        let tool = registry.get_tool("skill:alpha").expect("tool");
-        assert_eq!(tool.description.as_deref(), Some("A updated"));
+        assert!(registry.list_tools().is_empty());
     }
 
     #[test]
-    fn resync_unregisters_removed_skills() {
+    fn resync_updates_enum_and_cleans_stale_tools() {
         let registry = ToolRegistry::new();
-        resync_registry(&registry, &[skill("alpha", "A"), skill("beta", "B")]);
+        let skills = vec![skill("alpha", "A"), skill("beta", "B")];
 
-        // beta's directory disappeared.
-        resync_registry(&registry, &[skill("alpha", "A")]);
+        // First scan: both enabled.
+        resync_registry(&registry, &skills, &enabled(&["alpha", "beta"]));
+        // Legacy one-tool-per-skill entry from the previous design.
+        registry.register(
+            ToolDefinition {
+                name: "skill_alpha".to_string(),
+                description: Some("stale".to_string()),
+                input_schema: serde_json::json!({"type": "object"}),
+                annotations: None,
+                metadata: HashMap::new(),
+                requires_confirmation: false,
+            },
+            Arc::new(SkillToolHandler { tool: LoadSkillTool::new(vec![]) }),
+            Vec::new(),
+        );
 
-        assert!(registry.get_tool("skill:alpha").is_some());
-        assert!(registry.get_tool("skill:beta").is_none());
+        // Second scan: alpha disabled, beta updated.
+        let skills = vec![skill("alpha", "A updated"), skill("beta", "B")];
+        resync_registry(&registry, &skills, &enabled(&["beta"]));
+
+        let tools = registry.list_tools();
+        assert_eq!(tools.len(), 1, "stale skill_alpha must be removed");
+        assert_eq!(tools[0].name, "load_skill");
+        let schema = &tools[0].input_schema;
+        assert_eq!(schema["properties"]["skill_name"]["enum"], serde_json::json!(["beta"]));
     }
 
     #[test]
     fn collect_infos_sorts_by_name_and_marks_enabled() {
-        let registry = ToolRegistry::new();
         let skills = vec![skill("beta", "B"), skill("alpha", "A")];
-        resync_registry(&registry, &skills);
-        registry.set_tool_enabled("skill:beta", false);
 
-        let infos = collect_skill_infos(&skills, &registry);
+        let infos = collect_skill_infos(&skills, &enabled(&["alpha"]));
 
         assert_eq!(infos.len(), 2);
         assert_eq!(infos[0].name, "alpha");

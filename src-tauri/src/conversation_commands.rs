@@ -362,16 +362,15 @@ async fn run_conversation_rounds_inner<R: tauri::Runtime>(
             }
         }
         // L1 skill metadata: enabled skills are advertised (name + description)
-        // so the model can decide to load a skill's instructions via its
-        // `skill:<name>` tool (progressive disclosure).
+        // so the model can decide to load a skill's instructions via the
+        // `load_skill` tool (progressive disclosure).
         {
             let state_mutex = app_handle.state::<Mutex<AppData>>();
             let state = state_mutex.lock().map_err(|error| error.to_string())?;
-            let enabled_set = state.tool_registry.enabled_set();
             let enabled_skills: Vec<wisp_skills::Skill> = state
                 .skills
                 .iter()
-                .filter(|s| enabled_set.contains(&format!("skill:{}", s.name)))
+                .filter(|s| state.enabled_skills.contains(&s.name))
                 .cloned()
                 .collect();
             let skills_prompt = wisp_skills::assemble_skills_prompt(&enabled_skills);
@@ -1047,6 +1046,7 @@ mod tests {
             software_registry,
             unlocked_pals: HashMap::new(),
             skills: vec![],
+            enabled_skills: std::collections::HashSet::new(),
         };
 
         handle.manage(Mutex::new(app_data));

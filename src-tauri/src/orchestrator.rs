@@ -171,11 +171,10 @@ fn load_enabled_skills<R: tauri::Runtime>(
     let state = state_mutex
         .lock()
         .map_err(|e| format!("Failed to acquire app state: {}", e))?;
-    let enabled_set = state.tool_registry.enabled_set();
     Ok(state
         .skills
         .iter()
-        .filter(|s| enabled_set.contains(&format!("skill:{}", s.name)))
+        .filter(|s| state.enabled_skills.contains(&s.name))
         .cloned()
         .collect())
 }
@@ -231,7 +230,7 @@ pub fn build_context_for_pal(
     }
 
     // 1.5 L1 skill metadata: advertise enabled skills so pals can load their
-    // instructions via the `skill:<name>` tool (progressive disclosure).
+    // instructions via the `load_skill` tool (progressive disclosure).
     let skills_prompt = wisp_skills::assemble_skills_prompt(enabled_skills);
     if !skills_prompt.is_empty() {
         context.push(Message {
@@ -622,6 +621,7 @@ mod tests {
             software_registry,
             unlocked_pals: HashMap::new(),
             skills: vec![],
+            enabled_skills: std::collections::HashSet::new(),
         };
 
         handle.manage(Mutex::new(app_data));

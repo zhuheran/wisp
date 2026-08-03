@@ -21,6 +21,9 @@ pub struct AppData {
     pub tool_registry: Arc<ToolRegistry>,
     pub software_registry: Arc<SoftwareToolRegistry>,
     pub unlocked_pals: HashMap<String, HashSet<String>>,
-    /// Installed Agent Skills (loaded from the skills directory).
+    /// Installed Agent Skills (loaded from the skills directories).
     pub skills: Vec<wisp_skills::Skill>,
+    /// Names of enabled skills. Only enabled skills are advertised in the
+    /// L1 metadata and exposed via the `load_skill` tool's enum.
+    pub enabled_skills: std::collections::HashSet<String>,
 }
