@@ -16,3 +16,4 @@ serde.workspace = true
 serde_json.workspace = true
 uuid.workspace = true
 tauri.workspace = true
+rig-core.workspace = true
