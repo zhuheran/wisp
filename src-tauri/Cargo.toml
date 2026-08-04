@@ -23,6 +23,7 @@ wisp-tool-registry.workspace = true
 wisp-software-tools.workspace = true
 wisp-conversation.workspace = true
 wisp-skills.workspace = true
+rig-core.workspace = true
 
 tauri = { version = "2.11", features = ["macos-private-api", "test"] }
 tauri-plugin-opener = "2.5"

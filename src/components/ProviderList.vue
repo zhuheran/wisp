@@ -1,220 +1,207 @@
 <script lang="ts" setup>
-import { NButton, NInput, NModal, NSelect, useMessage, useDialog, useThemeVars } from 'naive-ui'
-import { ref } from 'vue'
-import { Menu, MenuItem } from '@tauri-apps/api/menu'
-import { useProviderStore } from '../stores/provider';
-import { ApiType, Provider } from '../libs/types'
+import { NButton, NEmpty, NIcon, NText, NTooltip, useThemeVars } from 'naive-ui'
+import { Add24Regular } from '@vicons/fluent'
+import { computed } from 'vue'
+import type { Provider } from '../libs/types'
+import { providerDescriptor } from '../libs/provider-descriptors'
+import { useProviderStore } from '../stores/provider'
 
-const message = useMessage()
-const theme = useThemeVars()
-const dialog = useDialog()
-const providerStore = useProviderStore()
-const showAddProvider = ref(false)
-const newProvider = ref<{
-  name: string
-  display_name: string
-  base_url: string
-  api_type: ApiType
-}>({
-  name: '',
-  display_name: '',
-  base_url: '',
-  api_type: 'open_ai_compatible'
-})
-
-const apiTypeOptions: { label: string; value: ApiType }[] = [
-  { label: 'OpenAI', value: 'open_ai' },
-  { label: 'DeepSeek', value: 'deep_seek' },
-  { label: 'OpenAI Compatible', value: 'open_ai_compatible' }
-]
-const selectedProvider = ref<string | null>(null)
-
-const handleAddProvider = async () => {
-  try {
-    // Create new provider with required fields
-    const provider: Provider = {
-      name: newProvider.value.name,
-      display_name: newProvider.value.display_name,
-      base_url: newProvider.value.base_url || '',
-      api_type: newProvider.value.api_type,
-      models: []
-    }
-    await providerStore.createProvider(provider)
-    message.success('Provider added')
-    showAddProvider.value = false
-    newProvider.value = {
-      name: '',
-      display_name: '',
-      base_url: '',
-      api_type: 'open_ai_compatible'
-    }
-  } catch (e) {
-    message.error(`Failed to add provider: ${e}`)
-  }
-}
-
-const emit = defineEmits<{
-  (e: 'select', providerName: string): void
+const props = defineProps<{
+  selected: string | null
 }>()
 
+const emit = defineEmits<{
+  'update:selected': [name: string]
+  delete: [provider: Provider]
+  add: []
+}>()
+
+const theme = useThemeVars()
+const providerStore = useProviderStore()
+
+const providerCountLabel = computed(() => {
+  const count = providerStore.providers.length
+  return `${count} provider${count === 1 ? '' : 's'}`
+})
+
+
+
 const handleSelect = (provider: Provider) => {
-  selectedProvider.value = provider.name
-  emit('select', provider.name)
+  emit('update:selected', provider.name)
 }
 
-const confirmDeletion = (name: string) => {
-  return new Promise<boolean>((resolve) => {
-    dialog.warning({
-      title: 'Confirm',
-      content: `Delete provider ${name}? This will also remove all associated models.`,
-      positiveText: 'Confirm',
-      negativeText: 'Cancel',
-      onPositiveClick: () => resolve(true),
-      onNegativeClick: () => resolve(false)
-    })
-  })
-}
-
-const handleDeleteProvider = async (provider: Provider) => {
-  const confirmed = await confirmDeletion(provider.name)
-  if (!confirmed) return
-
-  try {
-    await providerStore.deleteProvider(provider.name)
-    message.success(`Deleted provider ${provider.name}`)
-  } catch (e) {
-    message.error(`Failed to delete provider: ${e}`)
+const handleKeydown = (event: KeyboardEvent, provider: Provider) => {
+  if (event.key === 'Enter' || event.key === ' ') {
+    event.preventDefault()
+    handleSelect(provider)
   }
 }
 
-const showContextMenu = async (e: MouseEvent, provider: Provider) => {
-  e.stopPropagation()
-
-  const menu = await Menu.new()
-  await menu.append(
-    await MenuItem.new({
-      text: 'Delete',
-      action: () => handleDeleteProvider(provider)
-    })
-  )
-
-  await menu.popup()
+const handleContextMenu = (event: MouseEvent, provider: Provider) => {
+  event.preventDefault()
+  event.stopPropagation()
+  emit('delete', provider)
 }
 </script>
 
 <template>
-  <div class="container">
-    <div class="list-container">
-      <div class="provider-list">
-        <div
-          v-for="provider in providerStore.providers"
-          :class="['provider-item', (selectedProvider === provider.name) ? 'selected' : '']"
-          :key="provider.name"
-          :tabindex="0"
-          @keypress.enter="handleSelect(provider)"
-          @click="handleSelect(provider)"
-          @contextmenu="e => { e.preventDefault(); showContextMenu(e, provider) }"
-        >
-          <div class="item-title">{{ provider.display_name }}</div>
+  <section class="provider-list-panel" aria-label="Configured providers">
+    <div class="list-heading">
+      <div class="list-heading-copy">
+        <div class="list-title">Providers</div>
+        <n-text depth="3" class="list-count">{{ providerCountLabel }}</n-text>
+      </div>
+      <n-tooltip>
+        <template #trigger>
+          <n-button
+            tertiary
+            circle
+            aria-label="Add provider"
+            @click="emit('add')"
+          >
+            <template #icon>
+              <n-icon><Add24Regular /></n-icon>
+            </template>
+          </n-button>
+        </template>
+        Add provider
+      </n-tooltip>
+    </div>
+
+    <div v-if="providerStore.providers.length" class="provider-list" role="listbox" aria-label="Providers">
+      <div
+        v-for="provider in providerStore.providers"
+        :key="provider.name"
+        class="provider-item"
+        :class="{ selected: props.selected === provider.name }"
+        role="option"
+        :aria-selected="props.selected === provider.name"
+        tabindex="0"
+        @click="handleSelect(provider)"
+        @keydown="handleKeydown($event, provider)"
+        @contextmenu="handleContextMenu($event, provider)"
+      >
+        <div class="item-main">
+          <div class="item-title" :title="provider.display_name">
+            {{ provider.display_name }}
+          </div>
           <div class="item-description">
-            {{ provider.models.length }} models
+            {{ providerDescriptor(provider.api_type).label }}
+            <span aria-hidden="true">·</span>
+            {{ provider.models.length }} model{{ provider.models.length === 1 ? '' : 's' }}
           </div>
         </div>
       </div>
-      <div style="width: 100%">
-        <n-button
-          type="primary"
-          dashed
-          style="width: 100%"
-          @click="showAddProvider = true"
-        >
-          Add Provider
-        </n-button>
-      </div>
     </div>
 
-    <n-modal v-model:show="showAddProvider">
-      <n-card style="width: 600px" title="Add Provider">
-        <div style="display: flex; flex-direction: column; gap: 12px">
-          <n-input
-            v-model:value="newProvider.name"
-            placeholder="Provider ID (e.g. openai)"
-          />
-          <n-input
-            v-model:value="newProvider.display_name"
-            placeholder="Display Name (e.g. OpenAI)"
-          />
-          <n-input
-            v-model:value="newProvider.base_url"
-            placeholder="Base URL (optional)"
-          />
-          <n-select
-            v-model:value="newProvider.api_type"
-            :options="apiTypeOptions"
-            placeholder="API Type"
-          />
-          <n-button type="primary" @click="handleAddProvider">
-            Add Provider
-          </n-button>
-        </div>
-      </n-card>
-    </n-modal>
-  </div>
+    <n-empty
+      v-else
+      class="empty-list"
+      description="Add a provider to get started"
+    />
+
+    <div class="list-hint">Right-click a provider to delete it.</div>
+  </section>
 </template>
 
 <style scoped>
-.container {
-  height: 100%;
-  width: 100%;
-}
-
-.list-container {
-  width: 100%;
-  height: 100%;
+.provider-list-panel {
   display: flex;
   flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  box-sizing: border-box;
+}
+
+.list-heading {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 14px 16px 12px;
+  border-bottom: 1px solid v-bind('theme.dividerColor');
+}
+
+.list-heading-copy {
+  min-width: 0;
+}
+
+.list-title {
+  color: v-bind('theme.textColor1');
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.list-count,
+.item-description,
+.list-hint {
+  color: v-bind('theme.textColor3');
+  font-size: 0.8rem;
+  line-height: 1.4;
 }
 
 .provider-list {
-  flex-grow: 1;
+  min-height: 0;
+  flex: 1;
   overflow-y: auto;
-  box-sizing: border-box;
+  padding: 8px;
 }
 
 .provider-item {
-  width: 100%;
-  height: 4em;
-  padding: 8px 4px 8px 12px;
+  display: flex;
+  min-height: 64px;
+  align-items: center;
   box-sizing: border-box;
-  display: grid;
-  grid-template-columns: auto;
-  grid-template-rows: auto auto;
+  padding: 10px 12px;
+  border-radius: v-bind('theme.borderRadius');
+  cursor: pointer;
+  outline: none;
+  transition: background-color 0.2s v-bind('theme.cubicBezierEaseInOut');
 }
 
-.provider-item:hover {
+.provider-item:hover,
+.provider-item:focus-visible {
   background-color: v-bind('theme.hoverColor');
 }
 
+.provider-item.selected {
+  background-color: v-bind('theme.actionColor');
+  box-shadow: v-bind('theme.boxShadow1');
+}
+
+.item-main {
+  min-width: 0;
+}
+
 .item-title {
-  grid-column: 1 / 2;
-  grid-row: 1 / 2;
   overflow: hidden;
+  color: v-bind('theme.textColor1');
+  font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-weight: 500;
 }
 
 .item-description {
-  grid-column: 1 / 2;
-  grid-row: 2 / 3;
   overflow: hidden;
+  margin-top: 4px;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 0.9em;
-  color: v-bind('theme.textColor2');
 }
 
-.selected {
-  background-color: v-bind("theme.actionColor") !important;
+.empty-list {
+  margin: 32px 16px;
+}
+
+.list-hint {
+  flex-shrink: 0;
+  padding: 10px 16px 14px;
+  border-top: 1px solid v-bind('theme.dividerColor');
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .provider-item {
+    transition: none;
+  }
 }
 </style>

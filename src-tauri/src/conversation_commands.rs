@@ -10,15 +10,12 @@ use crate::orchestrator;
 use crate::types::AppData;
 use wisp_common::{MessageSource, ToolContent, ToolResult};
 use wisp_configs::character::Character;
-use wisp_configs::model::{ModelInfo, TextModelCapability};
 use wisp_configs::provider::Provider;
 use wisp_conversation::interface::{INTERFACE_PROMPT, REGENERATE_GUIDANCE};
 use wisp_conversation::payload::build_openai_messages_with_reasoning;
-use wisp_conversation::tool_parser::parse_tool_calls;
-use wisp_conversation::{trim_context, ConversationToolCall, ConversationToolResult};
+use wisp_conversation::{trim_context, ConversationToolCall};
 use wisp_db::types::{ImageContent, Message, MessageRole};
-use wisp_llm::ToolDefinition as LlmToolDefinition;
-use wisp_llm::{backend_for, resolve_parameters, StreamCallbacks, StreamRequest, ToolChoice};
+use wisp_llm::{reasoning_config_for, resolve_parameters, StreamCallbacks};
 use wisp_tool_registry::ToolDefinition;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -230,6 +227,23 @@ async fn resolve_enabled_mcp_tools<R: tauri::Runtime>(
     Ok(state.tool_registry.list_enabled_tools())
 }
 
+/// Map rig-aggregated tool calls (fully parsed arguments) onto the persisted
+/// conversation tool-call shape.
+fn conversation_tool_calls(rig_calls: &[rig_core::message::ToolCall]) -> Vec<ConversationToolCall> {
+    rig_calls
+        .iter()
+        .map(|call| ConversationToolCall {
+            // Prefer the provider-issued call id (survives OpenAI Responses ↔
+            // chat-completions history replay) over the rig-level id.
+            id: call.call_id.clone().unwrap_or_else(|| call.id.clone()),
+            name: call.function.name.clone(),
+            arguments: call.function.arguments.clone(),
+            qualified_name: None,
+            result: None,
+        })
+        .collect()
+}
+
 async fn run_conversation_rounds<R: tauri::Runtime>(
     app_handle: tauri::AppHandle<R>,
     conversation_id: String,
@@ -279,6 +293,11 @@ async fn run_conversation_rounds_inner<R: tauri::Runtime>(
     };
     let max_rounds = loop_config.max_tool_rounds.max(1);
     for round in 0..max_rounds {
+        // Abort between rounds (e.g. while a tool is executing) ends the run
+        // gracefully without creating a new draft message.
+        if cancel.is_cancelled() {
+            return Ok(current_leaf_id);
+        }
         let path = {
             let state_mutex = app_handle.state::<Mutex<AppData>>();
             let mut state = state_mutex.lock().map_err(|error| {
@@ -307,20 +326,9 @@ async fn run_conversation_rounds_inner<R: tauri::Runtime>(
         let path = trim_context(path, context_window, loop_config.context_window_sliding_ratio);
 
         let enabled_tools = resolve_enabled_mcp_tools(app_handle).await?;
-        let supports_native_tools = model_config
-            .as_ref()
-            .map(|m| match &m.model_info {
-                ModelInfo::TextGeneration { capabilities, .. } => {
-                    capabilities.contains(&TextModelCapability::ToolUse)
-                },
-                _ => false,
-            })
-            .unwrap_or(false);
 
-        let backend = backend_for(&provider);
-        let reasoning_config = backend.reasoning_config();
-        let mut openai_messages =
-            build_openai_messages_with_reasoning(&path, &reasoning_config, supports_native_tools);
+        let reasoning_config = reasoning_config_for(&provider);
+        let mut openai_messages = build_openai_messages_with_reasoning(&path, &reasoning_config);
 
         // Regenerate guidance is a transient instruction: appended once as a
         // trailing user message on the first round, never persisted to the
@@ -334,25 +342,20 @@ async fn run_conversation_rounds_inner<R: tauri::Runtime>(
             }
         }
 
-        let tool_defs: Vec<LlmToolDefinition> = if supports_native_tools {
-            enabled_tools
-                .iter()
-                .map(|t| LlmToolDefinition {
-                    name: t.name.clone(),
-                    description: t.description.clone().unwrap_or_default(),
-                    parameters: t.input_schema.clone(),
-                })
-                .collect()
+        // rig speaks native tool calls (OpenAI-compatible `tools`/`tool_choice`)
+        // for every text model; the legacy `<|tool_calls|>` text protocol is gone.
+        let tool_defs: Vec<rig_core::completion::ToolDefinition> = enabled_tools
+            .iter()
+            .map(|t| rig_core::completion::ToolDefinition {
+                name: t.name.clone(),
+                description: t.description.clone().unwrap_or_default(),
+                parameters: t.input_schema.clone(),
+            })
+            .collect();
+        let tool_choice = if tool_defs.is_empty() {
+            None
         } else {
-            Vec::new()
-        };
-
-        let tools_prompt = if supports_native_tools {
-            String::new()
-        } else {
-            let state_mutex = app_handle.state::<Mutex<AppData>>();
-            let state = state_mutex.lock().map_err(|error| error.to_string())?;
-            state.tool_registry.build_tools_prompt()
+            Some(rig_core::message::ToolChoice::Auto)
         };
 
         let mut system_prompt_sections = vec![INTERFACE_PROMPT.to_string()];
@@ -377,9 +380,6 @@ async fn run_conversation_rounds_inner<R: tauri::Runtime>(
             if !skills_prompt.is_empty() {
                 system_prompt_sections.push(skills_prompt);
             }
-        }
-        if !tools_prompt.is_empty() {
-            system_prompt_sections.push(tools_prompt);
         }
         openai_messages.insert(
             0,
@@ -436,12 +436,15 @@ async fn run_conversation_rounds_inner<R: tauri::Runtime>(
                 }
             }
 
-            let request = StreamRequest {
-                messages: openai_messages.clone(),
-                model: model.clone(),
-                provider: provider.clone(),
-                parameters: resolve_parameters(model_config, parameters.as_ref()),
-                callbacks: StreamCallbacks {
+            match wisp_llm::stream(
+                &provider,
+                model.clone(),
+                openai_messages.clone(),
+                resolve_parameters(model_config, parameters.as_ref()),
+                tool_defs.clone(),
+                tool_choice.clone(),
+                cancel.clone(),
+                StreamCallbacks {
                     on_content: Arc::new({
                         let assistant_msg_id = assistant_message_id.clone();
                         let sid = stream_id.to_string();
@@ -473,12 +476,9 @@ async fn run_conversation_rounds_inner<R: tauri::Runtime>(
                         }
                     }),
                 },
-                cancel: cancel.clone(),
-                tools: tool_defs.clone(),
-                tool_choice: ToolChoice::Auto,
-            };
-
-            match backend.stream(request).await {
+            )
+            .await
+            {
                 Ok(result) => {
                     outcome = Some(result);
                     break;
@@ -503,47 +503,18 @@ async fn run_conversation_rounds_inner<R: tauri::Runtime>(
         }
         let outcome = outcome.expect("at least one stream attempt was made");
 
-        let parsed = parse_tool_calls(&outcome.text);
-        let native_calls = wisp_conversation::merge_tool_call_deltas(&outcome.tool_call_deltas);
-        let has_native = !native_calls.is_empty();
-        let mut calls = parsed
-            .calls
-            .into_iter()
-            .filter(|call| !call.name.trim().is_empty())
-            .filter(|call| call.arguments.is_object())
-            .collect::<Vec<_>>();
-        if has_native {
-            calls = native_calls;
-        }
-
-        // 文本协议兜底：模型输出了 `<|tool_calls|>` 标签但 JSON 解析失败 / 没有任何
-        // 有效调用。此时不能把原始标签文本当作普通助手消息展示，而是合成一个"工具
-        // 调用解析失败"的结果（is_error = true），沿用既有失败渲染 + 回传给 LLM 的路径。
-        if calls.is_empty() && !has_native && !parsed.failed_blocks.is_empty() {
-            calls = parsed
-                .failed_blocks
-                .iter()
-                .map(|block| ConversationToolCall {
-                    id: Uuid::new_v4().to_string(),
-                    name: "invalid_tool_call".to_string(),
-                    arguments: serde_json::json!({}),
-                    result: Some(ConversationToolResult {
-                        content: vec![wisp_conversation::ConversationToolContent::Text {
-                            text: format!(
-                                "Failed to parse tool call. Expected a JSON array of \
-                                 {{\"name\",\"arguments\"}} objects wrapped in \
-                                 `<|tool_calls|>` ... `<|/tool_calls|>`. Raw output:\n{block}"
-                            ),
-                        }],
-                        is_error: true,
-                    }),
-                    qualified_name: None,
-                })
-                .collect();
-        }
+        // rig aggregates streamed tool-call deltas into complete calls with
+        // fully parsed arguments. A user-initiated abort is a graceful stop:
+        // partial text/reasoning is persisted as-is and no tool calls are
+        // executed from a truncated payload.
+        let calls = if outcome.cancelled {
+            Vec::new()
+        } else {
+            conversation_tool_calls(&outcome.tool_calls)
+        };
         let assistant_message = Message {
             id: assistant_message_id.clone(),
-            text: parsed.clean_text.clone(),
+            text: outcome.text.clone(),
             reasoning: if outcome.reasoning.is_empty() {
                 None
             } else {
@@ -644,7 +615,7 @@ async fn run_conversation_rounds_inner<R: tauri::Runtime>(
             app_handle,
             ConversationEventPayload::MessageUpdated {
                 message_id: assistant_message_id.clone(),
-                text: parsed.clean_text,
+                text: assistant_message.text.clone(),
                 reasoning: assistant_message.reasoning.clone(),
                 tool_calls: Some(completed_calls_json.clone()),
             },
@@ -1000,6 +971,37 @@ mod tests {
     use wisp_mcp::McpStdioManager;
     use wisp_mcp::ToolRegistry;
 
+    fn rig_call(id: &str, name: &str, args: serde_json::Value) -> rig_core::message::ToolCall {
+        rig_core::message::ToolCall::new(
+            id.to_string(),
+            rig_core::message::ToolFunction { name: name.to_string(), arguments: args },
+        )
+    }
+
+    #[test]
+    fn conversation_tool_calls_maps_rig_calls() {
+        let calls = conversation_tool_calls(&[rig_call(
+            "call_1",
+            "get_weather",
+            serde_json::json!({ "location": "hz" }),
+        )]);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].id, "call_1");
+        assert_eq!(calls[0].name, "get_weather");
+        assert_eq!(calls[0].arguments["location"], "hz");
+        assert!(calls[0].qualified_name.is_none());
+        assert!(calls[0].result.is_none());
+    }
+
+    #[test]
+    fn conversation_tool_calls_prefers_provider_call_id() {
+        let call = rig_call("rig-id", "search", serde_json::json!({})).with_call_id(
+            "provider-call-9".to_string(),
+        );
+        let calls = conversation_tool_calls(&[call]);
+        assert_eq!(calls[0].id, "provider-call-9");
+    }
+
     /// Create a mock Tauri AppHandle with a managed AppData containing a
     /// conversation ready for use. Returns (handle, conversation_id).
     fn setup_app() -> (tauri::AppHandle<tauri::test::MockRuntime>, String) {
@@ -1069,6 +1071,7 @@ mod tests {
                     display_name: "GPT-4".to_string(),
                     description: None,
                     context_window: None,
+                    owned_by: None,
                 },
                 model_info: ModelInfo::TextGeneration {
                     parameters: Default::default(),

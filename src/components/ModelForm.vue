@@ -332,15 +332,23 @@ const onModalityCreate = (key: keyof MultimodalConfig): ParamEntry => {
         />
       </n-form-item>
     </n-space>
-    <n-form-item label="Context Window">
-      <n-input-number
-        v-model:value="metadata.context_window"
-        :min="0"
-        :step="1024"
-        placeholder="Model context length in tokens (e.g. 128000)"
-        style="width: 100%"
-      />
-    </n-form-item>
+    <div class="metadata-grid">
+      <n-form-item label="Context Window">
+        <n-input-number
+          v-model:value="metadata.context_window"
+          :min="0"
+          :step="1024"
+          placeholder="Model context length in tokens (e.g. 128000)"
+          style="width: 100%"
+        />
+      </n-form-item>
+      <n-form-item label="Owned By">
+        <n-input
+          v-model:value="metadata.owned_by"
+          placeholder="e.g. openai or deepseek"
+        />
+      </n-form-item>
+    </div>
     <n-form-item label="Model Type" required>
       <n-select
         :value="modelType"
@@ -509,6 +517,12 @@ const onModalityCreate = (key: keyof MultimodalConfig): ParamEntry => {
 </template>
 
 <style scoped>
+.metadata-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 16px;
+}
+
 .params-wrap {
   width: 100%;
   display: flex;
@@ -536,5 +550,12 @@ const onModalityCreate = (key: keyof MultimodalConfig): ParamEntry => {
 .modality-label {
   font-size: 0.9em;
   text-transform: capitalize;
+}
+
+@media (max-width: 620px) {
+  .metadata-grid {
+    grid-template-columns: 1fr;
+    gap: 0;
+  }
 }
 </style>

@@ -2,11 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use serde_json::Value;
-use tokio_util::sync::CancellationToken;
 use wisp_configs::model::Model;
-use wisp_configs::provider::Provider;
-
-use crate::error::LlmError;
 
 pub type ChunkCallback = Arc<dyn Fn(&str) + Send + Sync>;
 
@@ -14,27 +10,6 @@ pub type ChunkCallback = Arc<dyn Fn(&str) + Send + Sync>;
 pub struct StreamCallbacks {
     pub on_content: ChunkCallback,
     pub on_reasoning: ChunkCallback,
-}
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct ToolDefinition {
-    pub name: String,
-    pub description: String,
-    pub parameters: serde_json::Value,
-}
-
-#[derive(Debug, Clone)]
-pub enum ToolChoice {
-    Auto,
-    None,
-    Required,
-    Specific(String),
-}
-
-impl Default for ToolChoice {
-    fn default() -> Self {
-        ToolChoice::Auto
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -56,31 +31,17 @@ impl Default for ReasoningConfig {
     }
 }
 
-pub struct StreamRequest {
-    pub messages: Vec<Value>,
-    pub model: String,
-    pub provider: Provider,
-    pub parameters: Option<HashMap<String, Value>>,
-    pub callbacks: StreamCallbacks,
-    pub cancel: CancellationToken,
-    pub tools: Vec<ToolDefinition>,
-    pub tool_choice: ToolChoice,
-}
-
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct StreamOutcome {
     pub text: String,
     pub reasoning: String,
-    pub tool_call_deltas: Vec<Value>,
-}
-
-#[async_trait::async_trait]
-pub trait LlmBackend: Send + Sync {
-    async fn stream(&self, req: StreamRequest) -> Result<StreamOutcome, LlmError>;
-
-    fn reasoning_config(&self) -> ReasoningConfig {
-        ReasoningConfig::default()
-    }
+    /// Complete tool calls aggregated by rig from streamed deltas
+    /// (`StreamingCompletionResponse.choice`). Arguments are fully parsed JSON.
+    pub tool_calls: Vec<rig_core::message::ToolCall>,
+    /// True when the caller cancelled the stream mid-flight. Cancellation is a
+    /// normal termination, not an error: partial content is preserved and the
+    /// caller decides how to persist it.
+    pub cancelled: bool,
 }
 
 /// Resolve the effective request parameters by layering runtime parameters
@@ -103,5 +64,79 @@ pub fn resolve_parameters(
         None
     } else {
         Some(merged)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use wisp_configs::model::{
+        Model, ModelInfo, ModelMetadata, TextGenerationParams, TextModelCapability,
+    };
+
+    fn text_model_with_params(params: TextGenerationParams) -> Model {
+        Model {
+            metadata: ModelMetadata {
+                name: "m1".to_string(),
+                display_name: "M1".to_string(),
+                description: None,
+                context_window: None,
+                owned_by: None,
+            },
+            model_info: ModelInfo::TextGeneration {
+                parameters: params,
+                capabilities: vec![TextModelCapability::ToolUse],
+                multimodal: None,
+            },
+        }
+    }
+
+    #[test]
+    fn resolve_parameters_uses_model_defaults_when_no_runtime() {
+        let model = text_model_with_params(TextGenerationParams {
+            temperature: Some(0.5),
+            max_tokens: Some(1024),
+            ..Default::default()
+        });
+        let resolved = resolve_parameters(Some(&model), None).expect("should have params");
+
+        assert_eq!(resolved.get("temperature"), Some(&serde_json::json!(0.5)));
+        assert_eq!(resolved.get("max_tokens"), Some(&serde_json::json!(1024)));
+        // unset Option fields must be absent
+        assert!(resolved.get("top_p").is_none());
+        assert!(resolved.get("seed").is_none());
+    }
+
+    #[test]
+    fn resolve_parameters_runtime_overrides_model_defaults() {
+        let model = text_model_with_params(TextGenerationParams {
+            temperature: Some(0.5),
+            max_tokens: Some(1024),
+            ..Default::default()
+        });
+        let mut runtime = HashMap::new();
+        runtime.insert("temperature".to_string(), serde_json::json!(0.9));
+
+        let resolved =
+            resolve_parameters(Some(&model), Some(&runtime)).expect("should have params");
+
+        assert_eq!(resolved.get("temperature"), Some(&serde_json::json!(0.9)));
+        assert_eq!(resolved.get("max_tokens"), Some(&serde_json::json!(1024)));
+    }
+
+    #[test]
+    fn resolve_parameters_returns_none_when_both_empty() {
+        let model = text_model_with_params(TextGenerationParams::default());
+        assert!(resolve_parameters(Some(&model), None).is_none());
+        assert!(resolve_parameters(None, None).is_none());
+    }
+
+    #[test]
+    fn resolve_parameters_runtime_only_without_model_config() {
+        let mut runtime = HashMap::new();
+        runtime.insert("temperature".to_string(), serde_json::json!(1.2));
+
+        let resolved = resolve_parameters(None, Some(&runtime)).expect("should have params");
+        assert_eq!(resolved.get("temperature"), Some(&serde_json::json!(1.2)));
     }
 }

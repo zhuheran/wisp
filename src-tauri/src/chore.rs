@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tauri::{AppHandle, Manager, Runtime};
 use tokio_util::sync::CancellationToken;
-use wisp_llm::{backend_for, StreamCallbacks, StreamRequest, ToolChoice};
+use wisp_llm::{stream, StreamCallbacks};
 
 pub fn parse_display_names(raw: &str) -> HashMap<String, String> {
     let trimmed = raw
@@ -88,23 +88,21 @@ pub async fn chore_complete<R: Runtime>(
         serde_json::json!({ "role": "user", "content": user }),
     ];
 
-    let backend = backend_for(&provider);
-    let outcome = backend
-        .stream(StreamRequest {
-            messages,
-            model: model.clone(),
-            provider: provider.clone(),
-            parameters: Some(HashMap::from([
-                ("temperature".to_string(), serde_json::json!(0.0)),
-                ("max_tokens".to_string(), serde_json::json!(2048)),
-            ])),
-            callbacks,
-            cancel: CancellationToken::new(),
-            tools: vec![],
-            tool_choice: ToolChoice::default(),
-        })
-        .await
-        .map_err(|e| format!("chore completion failed for model '{model}': {e}"))?;
+    let outcome = stream(
+        &provider,
+        model.clone(),
+        messages,
+        Some(HashMap::from([
+            ("temperature".to_string(), serde_json::json!(0.0)),
+            ("max_tokens".to_string(), serde_json::json!(2048)),
+        ])),
+        Vec::new(),
+        None,
+        CancellationToken::new(),
+        callbacks,
+    )
+    .await
+    .map_err(|e| format!("chore completion failed for model '{model}': {e}"))?;
 
     Ok(outcome.text)
 }

@@ -4219,19 +4219,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "reqwest-sse"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "97e36f9508407d80f97d0715f92ffdfe7aca394c7fffbf238ae80775b23330cb"
-dependencies = [
- "async-stream",
- "reqwest",
- "tokio",
- "tokio-stream",
- "tokio-util",
-]
-
-[[package]]
 name = "rgb"
 version = "0.8.53"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5615,17 +5602,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tokio-stream"
-version = "0.1.19"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a3d06f0b082ba57c26b79407372e57cf2a1e28124f78e9479fe80322cf53420b"
-dependencies = [
- "futures-core",
- "pin-project-lite",
- "tokio",
-]
-
-[[package]]
 name = "tokio-tungstenite"
 version = "0.28.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6944,6 +6920,7 @@ dependencies = [
  "base64 0.22.1",
  "image",
  "reqwest",
+ "rig-core",
  "rusqlite",
  "schemars 1.2.2",
  "serde",
@@ -7035,17 +7012,13 @@ dependencies = [
 name = "wisp-llm"
 version = "0.1.0"
 dependencies = [
- "async-trait",
  "futures",
- "reqwest",
- "reqwest-sse",
+ "http",
  "rig-core",
- "serde",
  "serde_json",
- "tauri",
  "thiserror 2.0.19",
+ "tokio",
  "tokio-util",
- "uuid",
  "wisp-configs",
  "wisp-keyring",
 ]

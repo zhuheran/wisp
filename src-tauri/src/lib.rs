@@ -10,6 +10,7 @@ mod mcp_http_commands;
 mod mcp_stdio_commands;
 mod native_tools;
 mod orchestrator;
+mod provider_commands;
 mod registry_commands;
 mod settings_commands;
 mod skills_commands;
@@ -161,6 +162,7 @@ pub fn run() {
             commands::configs_get_model,
             commands::configs_update_model,
             commands::configs_delete_model,
+            provider_commands::provider_fetch_models,
             commands::configs_get_characters,
             commands::configs_get_character,
             commands::configs_create_character,

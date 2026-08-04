@@ -137,14 +137,6 @@ export interface PostRequest extends HttpRequest {
   body: string;
 }
 
-export async function getUrl(request: HttpRequest) {
-  return invoke<any>('get_url', {
-    url: request.url,
-    headers: request.headers,
-    parseJson: request.parseJson ?? false
-  });
-}
-
 export async function postUrl(request: PostRequest) {
   return invoke<any>('post_url', {
     url: request.url,
@@ -189,6 +181,14 @@ export async function configsUpdateProvider(name: string, provider: Provider) {
 
 export async function configsDeleteProvider(name: string) {
     return invoke<void>('configs_delete_provider', { name })
+}
+
+/**
+ * Fetch the provider's `/models` listing through the backend rig client.
+ * The API key is resolved server-side and never crosses the Tauri boundary.
+ */
+export async function providerFetchModels(name: string) {
+    return invoke<Model[]>('provider_fetch_models', { name })
 }
 
 export async function configsAddModel(providerName: string, model: Model) {

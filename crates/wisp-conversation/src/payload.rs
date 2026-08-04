@@ -5,13 +5,12 @@ use wisp_db::types::{Message, MessageRole};
 use wisp_llm::{ReasoningConfig, ReasoningPassback};
 
 pub fn build_openai_messages(messages: &[Message]) -> Vec<Value> {
-    build_openai_messages_with_reasoning(messages, &ReasoningConfig::default(), false)
+    build_openai_messages_with_reasoning(messages, &ReasoningConfig::default())
 }
 
 pub fn build_openai_messages_with_reasoning(
     messages: &[Message],
     config: &ReasoningConfig,
-    native_tools: bool,
 ) -> Vec<Value> {
     let mut converted = Vec::with_capacity(messages.len());
 
@@ -19,11 +18,7 @@ pub fn build_openai_messages_with_reasoning(
         match message.sender {
             MessageRole::User => converted.push(convert_user_message(message)),
             MessageRole::Assistant => {
-                converted.push(convert_assistant_message_with_policy(
-                    message,
-                    config,
-                    native_tools,
-                ));
+                converted.push(convert_assistant_message_with_policy(message, config));
             },
             MessageRole::System => converted.push(json!({
                 "role": "system",
@@ -77,12 +72,8 @@ fn convert_user_message(message: &Message) -> Value {
     })
 }
 
-fn convert_assistant_message_with_policy(
-    message: &Message,
-    config: &ReasoningConfig,
-    native_tools: bool,
-) -> Value {
-    let text = reconstruct_tool_call_text(message, native_tools);
+fn convert_assistant_message_with_policy(message: &Message, config: &ReasoningConfig) -> Value {
+    let text = message.text.clone();
 
     let mut msg = serde_json::Map::new();
     msg.insert("role".to_string(), json!("assistant"));
@@ -127,33 +118,6 @@ fn convert_assistant_message_with_policy(
     }
 
     Value::Object(msg)
-}
-
-fn reconstruct_tool_call_text(message: &Message, native_tools: bool) -> String {
-    if native_tools {
-        return message.text.clone();
-    }
-    if let Some(raw_calls) = &message.tool_calls {
-        let simplified: Vec<Value> = serde_json::from_str::<Vec<Value>>(raw_calls)
-            .unwrap_or_default()
-            .into_iter()
-            .map(|call| {
-                json!({
-                    "name": call.get("name"),
-                    "arguments": call.get("arguments"),
-                })
-            })
-            .collect();
-
-        let tag = serde_json::to_string(&simplified).unwrap_or_default();
-        if message.text.is_empty() {
-            format!("<|tool_calls|>{tag}<|/tool_calls|>")
-        } else {
-            format!("{}\n<|tool_calls|>{tag}<|/tool_calls|>", message.text)
-        }
-    } else {
-        message.text.clone()
-    }
 }
 
 pub fn format_tool_result(call: &ConversationToolCall) -> String {
@@ -324,7 +288,7 @@ mod tests {
             field_name: "reasoning_content",
             policy: ReasoningPassback::ToolTurnsOnly,
         };
-        let converted = build_openai_messages_with_reasoning(&[msg], &config, false);
+        let converted = build_openai_messages_with_reasoning(&[msg], &config);
         assert_eq!(converted[0]["reasoning_content"], "thinking...");
     }
 
@@ -335,7 +299,7 @@ mod tests {
             field_name: "reasoning_content",
             policy: ReasoningPassback::ToolTurnsOnly,
         };
-        let converted = build_openai_messages_with_reasoning(&[msg], &config, false);
+        let converted = build_openai_messages_with_reasoning(&[msg], &config);
         assert!(converted[0].get("reasoning_content").is_none());
     }
 
@@ -350,7 +314,7 @@ mod tests {
             field_name: "reasoning_content",
             policy: ReasoningPassback::ToolTurnsOnly,
         };
-        let converted = build_openai_messages_with_reasoning(&[msg], &config, false);
+        let converted = build_openai_messages_with_reasoning(&[msg], &config);
         assert_eq!(converted[0]["reasoning_content"], "");
     }
 
@@ -363,7 +327,7 @@ mod tests {
         );
         let config =
             ReasoningConfig { field_name: "reasoning_content", policy: ReasoningPassback::Always };
-        let converted = build_openai_messages_with_reasoning(&[msg], &config, false);
+        let converted = build_openai_messages_with_reasoning(&[msg], &config);
         assert_eq!(converted[0]["reasoning_content"], "thinking...");
     }
 
@@ -372,7 +336,7 @@ mod tests {
         let msg = message_with_reasoning_and_tools("answer", Some(""), None);
         let config =
             ReasoningConfig { field_name: "reasoning_content", policy: ReasoningPassback::Always };
-        let converted = build_openai_messages_with_reasoning(&[msg], &config, false);
+        let converted = build_openai_messages_with_reasoning(&[msg], &config);
         assert!(converted[0].get("reasoning_content").is_none());
     }
 
@@ -387,7 +351,7 @@ mod tests {
             field_name: "reasoning_content",
             policy: ReasoningPassback::ToolTurnsOnly,
         };
-        let converted = build_openai_messages_with_reasoning(&[msg], &config, false);
+        let converted = build_openai_messages_with_reasoning(&[msg], &config);
         let tool_calls = converted[0]["tool_calls"].as_array().unwrap();
         assert_eq!(tool_calls[0]["id"], "call_1");
         assert_eq!(tool_calls[0]["type"], "function");
@@ -396,47 +360,41 @@ mod tests {
     }
 
     #[test]
-    fn native_tools_skips_tag_reconstruction_in_content() {
+    fn assistant_with_tool_calls_keeps_content_verbatim() {
+        // Native tool calls are the only path now: content is sent verbatim
+        // (no `<|tool_calls|>` reconstruction) alongside the structured
+        // `tool_calls` array.
         let msg = message_with_reasoning_and_tools(
             "Let me check the weather",
             None,
             Some(r#"[{"id":"call_1","name":"get_weather","arguments":{"location":"Hangzhou"}}]"#),
         );
         let converted =
-            build_openai_messages_with_reasoning(&[msg], &ReasoningConfig::default(), true);
+            build_openai_messages_with_reasoning(&[msg], &ReasoningConfig::default());
         let content = converted[0]["content"].as_str().unwrap();
         assert_eq!(content, "Let me check the weather");
         assert!(!content.contains("<|tool_calls|>"));
         let tool_calls = converted[0]["tool_calls"].as_array().unwrap();
         assert_eq!(tool_calls[0]["function"]["name"], "get_weather");
+        assert_eq!(
+            tool_calls[0]["function"]["arguments"],
+            r#"{"location":"Hangzhou"}"#
+        );
     }
 
     #[test]
-    fn native_tools_with_empty_text_keeps_empty_content() {
+    fn assistant_with_tool_calls_and_empty_text_keeps_empty_content() {
         let msg = message_with_reasoning_and_tools(
             "",
             None,
             Some(r#"[{"id":"call_1","name":"search","arguments":{"q":"weather"}}]"#),
         );
         let converted =
-            build_openai_messages_with_reasoning(&[msg], &ReasoningConfig::default(), true);
+            build_openai_messages_with_reasoning(&[msg], &ReasoningConfig::default());
         let content = converted[0]["content"].as_str().unwrap();
         assert_eq!(content, "");
         assert!(!content.contains("<|tool_calls|>"));
         let tool_calls = converted[0]["tool_calls"].as_array().unwrap();
         assert_eq!(tool_calls[0]["function"]["name"], "search");
-    }
-
-    #[test]
-    fn custom_tools_still_reconstructs_tags() {
-        let msg = message_with_reasoning_and_tools(
-            "some text",
-            None,
-            Some(r#"[{"id":"call_1","name":"search","arguments":{"q":"weather"}}]"#),
-        );
-        let converted =
-            build_openai_messages_with_reasoning(&[msg], &ReasoningConfig::default(), false);
-        let content = converted[0]["content"].as_str().unwrap();
-        assert!(content.contains("<|tool_calls|>"));
     }
 }

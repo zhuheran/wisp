@@ -196,57 +196,6 @@ impl ToolRegistry {
 
         handler.execute(args).await
     }
-
-    pub fn build_tools_prompt(&self) -> String {
-        let mut tools = self.list_enabled_tools();
-        if tools.is_empty() {
-            return String::new();
-        }
-        tools.sort_by(|a, b| a.name.cmp(&b.name));
-
-        let mut lines = Vec::new();
-        lines.push("## Available Tools".to_string());
-        lines.push(String::new());
-        lines.push(
-            "You have access to the following tools. Use them via <|tool_calls|> when appropriate."
-                .to_string(),
-        );
-        lines.push(String::new());
-
-        for tool in &tools {
-            let desc = tool.description.as_deref().unwrap_or("No description");
-            lines.push(format!("- **{}**: {desc}", tool.name));
-
-            if let Some(props) = tool
-                .input_schema
-                .get("properties")
-                .and_then(|v| v.as_object())
-            {
-                let mut prop_names: Vec<&String> = props.keys().collect();
-                prop_names.sort();
-                for prop_name in prop_names {
-                    let prop = &props[prop_name];
-                    let desc = prop
-                        .get("description")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("");
-                    let type_str = prop
-                        .get("type")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("string");
-                    lines.push(format!("  - `{prop_name}` ({type_str}): {desc}"));
-                }
-            }
-        }
-
-        lines.push(String::new());
-        lines.push("Call tools by wrapping a JSON array in `<|tool_calls|>` tags:".to_string());
-        lines.push("<|tool_calls|>".to_string());
-        lines.push(r#"[{"name":"tool_name","arguments":{"param1":"value1"}}]"#.to_string());
-        lines.push("<|/tool_calls|>".to_string());
-
-        lines.join("\n")
-    }
 }
 
 impl Default for ToolRegistry {
@@ -378,22 +327,6 @@ mod tests {
         reg.register(make_definition("t"), Arc::new(EchoHandler), vec![]);
         let result = reg.execute("t", Value::Null, Some("anyone")).await;
         assert!(result.is_ok());
-    }
-
-    #[test]
-    fn test_build_tools_prompt_returns_formatted_text() {
-        let reg = ToolRegistry::new();
-        reg.register(make_definition("test_tool"), Arc::new(EchoHandler), vec![]);
-        let prompt = reg.build_tools_prompt();
-        assert!(prompt.contains("## Available Tools"));
-        assert!(prompt.contains("**test_tool**"));
-        assert!(prompt.contains("`q` (string)"));
-    }
-
-    #[test]
-    fn test_build_tools_prompt_empty_when_no_tools() {
-        let reg = ToolRegistry::new();
-        assert!(reg.build_tools_prompt().is_empty());
     }
 
     #[test]

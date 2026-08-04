@@ -29,6 +29,9 @@ export const useProviderStore = defineStore('provider', () => {
 		try {
 			const p = await configsGetProviders()
 			providers.value = p
+			if (currentProviderName.value && !p.some(provider => provider.name === currentProviderName.value)) {
+				currentProviderName.value = null
+			}
 			return p
 		}
 		finally {
@@ -82,7 +85,7 @@ export const useProviderStore = defineStore('provider', () => {
 		}
 	}
 
-	const addModel = async (providerName: string, model: any) => {
+	const addModel = async (providerName: string, model: Model) => {
 		isLoading.value = true
 		try {
 			await configsAddModel(providerName, model)
@@ -108,7 +111,7 @@ export const useProviderStore = defineStore('provider', () => {
 	const updateModel = async (providerName: string, modelName: string, model: Model) => {
 		isLoading.value = true
 		try {
-			configsUpdateModel(providerName, modelName, model)
+			await configsUpdateModel(providerName, modelName, model)
 		}
 		finally {
 			await loadProviders()

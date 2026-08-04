@@ -5,6 +5,7 @@ import { FolderOpen24Regular, ArrowSync24Regular } from '@vicons/fluent'
 import { useSkillsStore } from '../stores/skills'
 import { skillsOpenFolder } from '../libs/commands'
 import type { SkillInfo } from '../libs/types'
+import MarkdownRenderer from '../components/MarkdownRenderer.vue'
 
 const theme = useThemeVars()
 const message = useMessage()
@@ -94,7 +95,7 @@ const handleToggle = async (skill: SkillInfo, enabled: boolean) => {
                   {{ skill.name }}
                 </div>
                 <div class="skill-description" :title="skill.description">
-                  {{ skill.description }}
+                  <markdown-renderer :text="skill.description"/>
                 </div>
                 <div class="skill-path" :title="skill.path">
                   {{ skill.path }}

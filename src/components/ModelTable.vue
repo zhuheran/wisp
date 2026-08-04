@@ -5,8 +5,11 @@ import {
   NDataTable,
   NDrawer,
   NDrawerContent,
+  NEmpty,
   NIcon,
   NSpace,
+  NTag,
+  NTooltip,
   useDialog,
   useMessage,
 } from "naive-ui";
@@ -16,24 +19,29 @@ import {
   Delete16Regular,
   Edit16Regular,
 } from "@vicons/fluent";
-import { h, ref } from "vue";
-import { cloneDeep, uniqBy } from "lodash";
-import { type Model, type ModelInfo, type Provider } from "../libs/types";
-import { useOpenAI } from "../composables/useOpenAI";
+import { computed, h, ref } from "vue";
+import { cloneDeep } from "lodash";
+import { type Model, type ModelInfo, type Provider, type TextModelCapability } from "../libs/types";
+import { providerFetchModels } from "../libs/commands";
+import { appendNewModels } from "../utils/provider";
 import { useProviderStore } from "../stores/provider";
+import { providerDescriptor } from "../libs/provider-descriptors";
 import ModelForm from "./ModelForm.vue";
+import { useWindowSize } from "@vueuse/core";
+
+const { height: windowHeight, _ } = useWindowSize()
 
 const props = defineProps<{ provider: Provider }>();
 
 const store = useProviderStore();
 const message = useMessage();
 const dialog = useDialog();
-const { fetchModels } = useOpenAI();
 
 const showDrawer = ref(false);
 const isAdd = ref(false);
 const selectedModel = ref<Model | null>(null);
 const isFetching = ref(false);
+const supportsModelListing = computed(() => providerDescriptor(props.provider.api_type).supportsModelListing);
 
 function blankModel(): Model {
   const modelInfo: ModelInfo = {
@@ -109,21 +117,25 @@ const handleDelete = async (row: Model) => {
 };
 
 const handleFetch = async () => {
+  if (!supportsModelListing.value) {
+    message.info("This provider does not expose a model listing; add models manually");
+    return;
+  }
   isFetching.value = true;
   try {
-    const key = await import("../libs/commands").then((m) =>
-      m.getCredential(props.provider.name)
-    );
-    const fetched = await fetchModels(props.provider.base_url, key);
-    const merged = uniqBy(
-      fetched.concat(props.provider.models),
-      (m) => m.metadata.name
-    );
-    await store.updateProvider(props.provider.name, {
-      ...props.provider,
-      models: merged,
-    });
-    message.success(`Fetched ${fetched.length} models`);
+    const fetched = await providerFetchModels(props.provider.name);
+    const merged = appendNewModels(props.provider.models, fetched);
+    const addedCount = merged.length - props.provider.models.length;
+
+    if (addedCount > 0) {
+      await store.updateProvider(props.provider.name, {
+        ...props.provider,
+        models: merged,
+      });
+      message.success(`Added ${addedCount} new model${addedCount === 1 ? "" : "s"}`);
+    } else {
+      message.info("All fetched models are already configured");
+    }
   } catch (e) {
     message.error(`Failed to fetch models: ${e}`);
   } finally {
@@ -131,36 +143,91 @@ const handleFetch = async () => {
   }
 };
 
+const formatContextWindow = (value?: number) => {
+  if (!value) return "—";
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1).replace(/\.0$/, "")}M`;
+  if (value >= 1_000) return `${Math.round(value / 1_000)}k`;
+  return String(value);
+};
+
 const columns = [
-  { title: "Name", key: "metadata.name" },
   { title: "Display Name", key: "metadata.display_name" },
+  { title: "Model ID", key: "metadata.name" },
   { title: "Type", key: "model_info.type" },
+  {
+    title: "Context",
+    key: "metadata.context_window",
+    render(row: Model) {
+      return formatContextWindow(row.metadata.context_window);
+    },
+  },
+  {
+    title: "Capabilities",
+    key: "capabilities",
+    render(row: Model) {
+      const capabilities: TextModelCapability[] =
+        row.model_info.type === "text_generation"
+          ? row.model_info.configs.capabilities
+          : [];
+      return h(
+        NSpace,
+        { size: 2 },
+        () =>
+          capabilities.length
+            ? capabilities.map((capability) =>
+                h(
+                  NTag,
+                  { size: "small", type: "info", bordered: false },
+                  { default: () => capability }
+                )
+              )
+            : [h("span", { class: "muted-cell" }, "—")]
+      );
+    },
+  },
+  { title: "Owned By", key: "metadata.owned_by" },
   {
     title: "Actions",
     key: "actions",
     render(row: Model) {
       return h(NSpace, {}, () => [
         h(
-          NButton,
+          NTooltip,
+          null,
           {
-            type: "primary",
-            size: "small",
-            quaternary: true,
-            circle: true,
-            onClick: () => openEdit(row),
-          },
-          { icon: () => h(NIcon, null, { default: () => h(Edit16Regular) }) }
+            trigger: () => h(
+              NButton,
+              {
+                type: "primary",
+                size: "small",
+                quaternary: true,
+                circle: true,
+                "aria-label": `Edit ${row.metadata.display_name || row.metadata.name}`,
+                onClick: () => openEdit(row),
+              },
+              { icon: () => h(NIcon, null, { default: () => h(Edit16Regular) }) }
+            ),
+            default: () => "Edit model",
+          }
         ),
         h(
-          NButton,
+          NTooltip,
+          null,
           {
-            type: "error",
-            size: "small",
-            quaternary: true,
-            circle: true,
-            onClick: () => handleDelete(row),
-          },
-          { icon: () => h(NIcon, null, { default: () => h(Delete16Regular) }) }
+            trigger: () => h(
+              NButton,
+              {
+                type: "error",
+                size: "small",
+                quaternary: true,
+                circle: true,
+                "aria-label": `Delete ${row.metadata.display_name || row.metadata.name}`,
+                onClick: () => handleDelete(row),
+              },
+              { icon: () => h(NIcon, null, { default: () => h(Delete16Regular) }) }
+            ),
+            default: () => "Delete model",
+          }
         ),
       ]);
     },
@@ -169,27 +236,52 @@ const columns = [
 </script>
 
 <template>
-  <n-card title="Models" size="small">
+  <n-card size="small" title="Models">
     <template #header-extra>
       <n-space>
-        <n-button tertiary circle :loading="isFetching" @click="handleFetch">
-          <template #icon>
-            <n-icon :size="20"><CubeSync20Regular /></n-icon>
+        <template v-if="supportsModelListing">
+          <n-tooltip>
+            <template #trigger>
+              <n-button
+                tertiary
+                circle
+                :loading="isFetching"
+                aria-label="Fetch available models"
+                @click="handleFetch"
+              >
+                <template #icon>
+                  <n-icon :size="20"><CubeSync20Regular /></n-icon>
+                                  </template>
+              </n-button>
+            </template>
+            Fetch available models
+          </n-tooltip>
+        </template>
+        <span v-else class="listing-hint">Add models manually</span>
+        <n-tooltip>
+          <template #trigger>
+            <n-button tertiary circle aria-label="Add model" @click="openAdd">
+              <template #icon>
+                <n-icon :size="20"><Add20Regular /></n-icon>
+              </template>
+            </n-button>
           </template>
-        </n-button>
-        <n-button tertiary circle @click="openAdd">
-          <template #icon>
-            <n-icon :size="20"><Add20Regular /></n-icon>
-          </template>
-        </n-button>
+          Add model
+        </n-tooltip>
       </n-space>
     </template>
 
     <n-data-table
+      v-if="props.provider.models.length"
       :columns="columns"
       :data="props.provider.models"
       :bordered="true"
-      :max-height="400"
+      :max-height="windowHeight - 340"
+    />
+    <n-empty
+      v-else
+      description="No models configured"
+      class="empty-models"
     />
 
     <n-drawer v-model:show="showDrawer" :width="600">

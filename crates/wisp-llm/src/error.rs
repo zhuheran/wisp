@@ -1,13 +1,9 @@
+use rig_core::completion::CompletionError;
+
 #[derive(Debug, thiserror::Error)]
 pub enum LlmError {
-    #[error("HTTP request failed: {0}")]
-    Http(#[from] reqwest::Error),
-    #[error("SSE parse error: {0}")]
-    Sse(String),
     #[error("{}", api_error_display(*status, code.as_deref(), message))]
     Api { status: u16, code: Option<String>, message: String },
-    #[error("Stream was cancelled")]
-    Cancelled,
     #[error("Serialization error: {0}")]
     Serde(#[from] serde_json::Error),
     #[error("{0}")]
@@ -51,6 +47,26 @@ impl LlmError {
     }
 }
 
+/// Map a rig `CompletionError` onto the simplified `LlmError`.
+///
+/// Errors that preserve a provider response body (both the `ProviderResponse`
+/// variant and `HttpError` wrapping a non-success HTTP response) become a
+/// structured [`LlmError::Api`] via [`LlmError::api_from_response`]; everything
+/// else becomes [`LlmError::Other`] (or [`LlmError::Serde`] for JSON errors).
+pub fn map_completion_error(error: CompletionError) -> LlmError {
+    if let Some(body) = error.provider_response_body() {
+        let status = error
+            .provider_response_status()
+            .map(|s| s.as_u16())
+            .unwrap_or(0);
+        return LlmError::api_from_response(status, body.to_string());
+    }
+    match error {
+        CompletionError::JsonError(e) => LlmError::Serde(e),
+        other => LlmError::Other(other.to_string()),
+    }
+}
+
 impl From<String> for LlmError {
     fn from(s: String) -> Self {
         LlmError::Other(s)
@@ -60,6 +76,8 @@ impl From<String> for LlmError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use http::StatusCode;
+    use rig_core::ProviderResponseError;
 
     #[test]
     fn parses_openai_style_error_with_code() {
@@ -127,5 +145,36 @@ mod tests {
             },
             other => panic!("expected Api, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn provider_response_maps_to_structured_api_error() {
+        let error = CompletionError::ProviderResponse(ProviderResponseError {
+            status: Some(StatusCode::BAD_REQUEST),
+            body: r#"{"error":{"message":"bad request","type":"invalid_request_error"}}"#
+                .to_string(),
+        });
+        match map_completion_error(error) {
+            LlmError::Api { status, code, message } => {
+                assert_eq!(status, 400);
+                assert_eq!(code.as_deref(), Some("invalid_request_error"));
+                assert_eq!(message, "bad request");
+            },
+            other => panic!("expected Api, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn provider_error_maps_to_other() {
+        let mapped = map_completion_error(CompletionError::ProviderError("boom".to_string()));
+        assert!(matches!(mapped, LlmError::Other(s) if s.contains("boom")));
+    }
+
+    #[test]
+    fn json_error_maps_to_serde() {
+        let mapped = map_completion_error(CompletionError::JsonError(
+            serde_json::from_str::<serde_json::Value>("not json").unwrap_err(),
+        ));
+        assert!(matches!(mapped, LlmError::Serde(_)));
     }
 }

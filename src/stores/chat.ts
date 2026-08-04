@@ -62,7 +62,7 @@ export function createStreamingAccumulator() {
 				reasoning = ''
 			}
 		},
-		/** 用后端权威文本（如解析 `<|tool_calls|>` 后剔除原始标签的 clean_text）
+		/** 用后端权威文本（MessageUpdated 的最终 text）
 		 * 覆盖本地累计的原始流式文本，避免 onFinish / 后续 chunk 回写脏数据。 */
 		setText(mid: string, nextText: string, nextReasoning?: string) {
 			if (currentMid !== mid) {

@@ -57,6 +57,8 @@ export interface ModelMetadata {
 	description?: string;
 	/** The model's primary (text) context window in tokens. Intrinsic model property. */
 	context_window?: number;
+	/** The organization or entity that owns the model (e.g. `openai` / `deepseek`). */
+	owned_by?: string;
 }
 
 export interface ParameterDefinition {
@@ -153,7 +155,30 @@ export interface Model {
 	model_info: ModelInfo;
 }
 
-export type ApiType = 'open_ai' | 'deep_seek' | 'open_ai_compatible';
+export type ApiType =
+  | 'open_ai'
+  | 'deep_seek'
+  | 'anthropic'
+  | 'azure'
+  | 'doubleword'
+  | 'cohere'
+  | 'gemini'
+  | 'groq'
+  | 'hugging_face'
+  | 'hyperbolic'
+  | 'llamafile'
+  | 'minimax'
+  | 'mira'
+  | 'mistral'
+  | 'moonshot'
+  | 'ollama'
+  | 'open_router'
+  | 'perplexity'
+  | 'together'
+  | 'x_ai'
+  | 'xiaomi_mimo'
+  | 'z_ai'
+  | 'open_ai_compatible';
 
 export interface Provider {
 	name: string;

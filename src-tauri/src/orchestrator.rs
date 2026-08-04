@@ -472,7 +472,7 @@ async fn call_llm_with_pal_config<R: tauri::Runtime>(
     stream_target: Option<(&str, &str)>,
 ) -> Result<String, String> {
     use tokio_util::sync::CancellationToken;
-    use wisp_llm::{backend_for, resolve_parameters, StreamCallbacks, StreamRequest, ToolChoice};
+    use wisp_llm::{resolve_parameters, stream, StreamCallbacks};
 
     let api_messages: Vec<serde_json::Value> =
         wisp_conversation::payload::build_openai_messages(messages);
@@ -515,20 +515,18 @@ async fn call_llm_with_pal_config<R: tauri::Runtime>(
         None => StreamCallbacks { on_content: Arc::new(|_| {}), on_reasoning: Arc::new(|_| {}) },
     };
 
-    let backend = backend_for(provider);
-    let outcome = backend
-        .stream(StreamRequest {
-            messages: api_messages,
-            model: pal.model_id.clone(),
-            provider: provider.clone(),
-            parameters: resolved_parameters,
-            callbacks,
-            cancel: CancellationToken::new(),
-            tools: vec![],
-            tool_choice: ToolChoice::default(),
-        })
-        .await
-        .map_err(|e: wisp_llm::LlmError| format!("LLM call failed: {}", e))?;
+    let outcome = stream(
+        provider,
+        pal.model_id.clone(),
+        api_messages,
+        resolved_parameters,
+        Vec::new(),
+        None,
+        CancellationToken::new(),
+        callbacks,
+    )
+    .await
+    .map_err(|e: wisp_llm::LlmError| format!("LLM call failed: {}", e))?;
 
     Ok(outcome.text)
 }
@@ -797,6 +795,7 @@ mod tests {
                     display_name: "GPT-4".to_string(),
                     description: None,
                     context_window: None,
+                    owned_by: None,
                 },
                 model_info: ModelInfo::TextGeneration {
                     parameters: Default::default(),

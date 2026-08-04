@@ -22,6 +22,11 @@ pub struct ModelMetadata {
         skip_serializing_if = "Option::is_none"
     )]
     pub context_window: Option<u32>,
+    /// The organization or entity that owns the model (from provider model
+    /// listing, e.g. `openai` / `deepseek`). Backward compatible with configs
+    /// authored before this field existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owned_by: Option<String>,
 }
 
 fn default_context_window() -> Option<u32> {
@@ -135,5 +140,49 @@ impl Model {
         };
 
         obj.into_iter().filter(|(_, v)| !v.is_null()).collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn metadata(name: &str) -> ModelMetadata {
+        ModelMetadata {
+            name: name.to_string(),
+            display_name: name.to_string(),
+            description: None,
+            context_window: None,
+            owned_by: None,
+        }
+    }
+
+    #[test]
+    fn owned_by_serializes_when_present() {
+        let md = ModelMetadata { owned_by: Some("deepseek".to_string()), ..metadata("m") };
+        let value = serde_json::to_value(&md).unwrap();
+        assert_eq!(value["owned_by"], "deepseek");
+    }
+
+    #[test]
+    fn owned_by_is_omitted_when_absent() {
+        let value = serde_json::to_value(metadata("m")).unwrap();
+        assert!(value.get("owned_by").is_none());
+    }
+
+    #[test]
+    fn owned_by_defaults_to_none_on_legacy_configs() {
+        let md: ModelMetadata =
+            serde_json::from_value(json!({ "name": "m", "display_name": "M" })).unwrap();
+        assert!(md.owned_by.is_none());
+    }
+
+    #[test]
+    fn owned_by_round_trips() {
+        let md = ModelMetadata { owned_by: Some("openai".to_string()), ..metadata("m") };
+        let value = serde_json::to_value(&md).unwrap();
+        let back: ModelMetadata = serde_json::from_value(value).unwrap();
+        assert_eq!(back.owned_by.as_deref(), Some("openai"));
     }
 }

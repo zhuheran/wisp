@@ -6,14 +6,12 @@ edition.workspace = true
 [dependencies]
 wisp-configs.workspace = true
 wisp-keyring.workspace = true
-reqwest.workspace = true
-reqwest-sse.workspace = true
+rig-core.workspace = true
+tokio.workspace = true
 tokio-util.workspace = true
-async-trait.workspace = true
 thiserror.workspace = true
 futures.workspace = true
-serde.workspace = true
 serde_json.workspace = true
-uuid.workspace = true
-tauri.workspace = true
-rig-core.workspace = true
+
+[dev-dependencies]
+http = "1"

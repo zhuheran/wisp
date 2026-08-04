@@ -342,79 +342,6 @@ export const useMcpStore = defineStore('mcp', () => {
     }
   }
 
-  const getToolsPrompt = (enabledTools?: Set<string>): string => {
-    let toolsToUse = tools.value
-    if (enabledTools && enabledTools.size > 0) {
-      toolsToUse = tools.value.filter(t => enabledTools.has(t.name))
-    }
-
-    if (toolsToUse.length === 0) return ''
-
-    const sorted = [...toolsToUse].sort((a, b) => a.name.localeCompare(b.name))
-    const toolList = sorted.map(tool => {
-      const params = tool.inputSchema.properties
-        ? Object.entries(tool.inputSchema.properties)
-            .map(([name, prop]) => `    - \`${name}\` (${(prop as any).type || 'unknown'}): ${(prop as any).description || ''}`)
-            .join('\n')
-        : '    - (no parameters)'
-
-      return `- **${tool.name}**: ${tool.description || 'No description'}\n${params}`
-    }).join('\n\n')
-
-    return `## Available Tools
-
-You have access to the following tools. Use them via <|tool_calls|> when appropriate.
-
-### Tool List
-
-${toolList}
-
-### How to Call
-
-<|tool_calls|>
-[{"name":"tool_name","arguments":{"param":"value"}}]
-<|/tool_calls|>
-`
-  }
-
-  const cleanToolCallTags = (text: string): string => {
-    return text.replace(/<\|tool_calls\|>[\s\S]*?<\|\/tool_calls\|>/g, '').trim()
-  }
-
-  const parseToolCallFromResponse = (response: string): { calls: ToolCallItem[]; cleanText: string } => {
-    const calls: ToolCallItem[] = []
-    const pattern = /<\|tool_calls\|>\s*([\s\S]*?)\s*<\|\/tool_calls\|>/g
-    let match: RegExpExecArray | null
-    let callIndex = 0
-
-    while ((match = pattern.exec(response)) !== null) {
-      try {
-        const parsed = JSON.parse(match[1].trim())
-        if (Array.isArray(parsed)) {
-          for (const item of parsed) {
-            if (item?.name && item?.arguments && typeof item.arguments === 'object' && !Array.isArray(item.arguments)) {
-              calls.push({
-                id: typeof item.id === 'string' && item.id.length > 0 ? item.id : `tc_${callIndex}`,
-                name: String(item.name),
-                arguments: item.arguments as Record<string, unknown>,
-              })
-              callIndex++
-            }
-          }
-        }
-      } catch (e) {
-        console.warn('[Registry] Failed to parse tool calls block:', e)
-      }
-    }
-
-    return { calls, cleanText: cleanToolCallTags(response) }
-  }
-
-  const parseSingleToolCallFromResponse = (response: string): ToolCallItem | null => {
-    const { calls } = parseToolCallFromResponse(response)
-    return calls.length > 0 ? calls[0] : null
-  }
-
   // Server management
   const loadServers = async () => {
     isLoading.value = true
@@ -586,10 +513,6 @@ ${toolList}
     getEnabledToolNames,
     executeTool,
     executeToolStructured,
-    getToolsPrompt,
-    cleanToolCallTags,
-    parseToolCallFromResponse,
-    parseSingleToolCallFromResponse,
     getConnectionStatus,
   }
 })
